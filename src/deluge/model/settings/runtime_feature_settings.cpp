@@ -204,6 +204,10 @@ void RuntimeFeatureSettings::init() {
 	// Rounded Corners
 	SetupOnOffSetting(settings[RuntimeFeatureSettingType::RoundedCorners], STRING_FOR_COMMUNITY_FEATURE_ROUNDED_CORNERS,
 	                  "roundedCorners", RuntimeFeatureStateToggle::On);
+
+	// Loop Station is intentionally opt-in while its community workflow evolves.
+	SetupOnOffSetting(settings[RuntimeFeatureSettingType::EnableLoopStation], STRING_FOR_COMMUNITY_FEATURE_LOOP_STATION,
+	                  "enableLoopStation", RuntimeFeatureStateToggle::Off);
 }
 
 void RuntimeFeatureSettings::factoryReset(bool showPopup) {

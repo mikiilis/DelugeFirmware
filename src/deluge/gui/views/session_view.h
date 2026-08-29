@@ -133,6 +133,7 @@ public:
 	UIModControllableContext getUIModControllableContext() override { return UIModControllableContext::SONG; }
 
 	Clip* createNewClip(OutputType outputType, int32_t yDisplay);
+	AudioClip* createLoopStationClip(uint8_t slotIndex);
 	bool createClip{false};
 	OutputType lastTypeCreated{OutputType::NONE};
 

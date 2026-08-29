@@ -39,7 +39,11 @@ public:
 	void processCurrentPos(ModelStackWithTimelineCounter* modelStack, uint32_t ticksSinceLast) override;
 	void expectNoFurtherTicks(Song* song, bool actuallySoundChange = true) override;
 	Error clone(ModelStackWithTimelineCounter* modelStack, bool shouldFlattenReversing = false) const override;
-	void render(ModelStackWithTimelineCounter* modelStack, std::span<q31_t> output, int32_t amplitude,
+	// Returns true only when the complete requested buffer was rendered from the
+	// backing Sample. Loop Station overdubs use this as a hard commit invariant:
+	// an attempted render which late-started, lost its voice, or otherwise wrote
+	// no backing audio must never be accepted as a cumulative revision.
+	bool render(ModelStackWithTimelineCounter* modelStack, std::span<q31_t> output, int32_t amplitude,
 	            int32_t amplitudeIncrement, int32_t pitchAdjust);
 	void detachFromOutput(ModelStackWithTimelineCounter* modelStack, bool shouldRememberDrumName,
 	                      bool shouldDeleteEmptyNoteRowsAtEndOfList = false, bool shouldRetainLinksToSounds = false,
@@ -108,6 +112,14 @@ public:
 	SampleRecorder* recorder; // Will be set to NULL right at the end of the loop's recording, even though the
 	                          // SampleRecorder itself will usually persist slightly longer
 	int32_t attack;
+
+	// 1..8 identifies a Loop Station slot, 0 is an ordinary Audio Clip. This is
+	// intentionally not copied by generic clip cloning.
+	uint8_t loopStationSlotId = 0;
+	// Logical loop phase represented by sample position zero. A mid-loop
+	// overdub creates a rotated replacement WAV, but must not move the first
+	// take's musical phase-zero. This value is in clip ticks and is persisted.
+	uint32_t loopStationSampleZeroTicks = 0;
 
 	VoicePriority voicePriority;
 

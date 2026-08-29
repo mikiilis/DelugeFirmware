@@ -20,6 +20,7 @@
 #include "definitions_cxx.hpp"
 #include "gui/menu_item/reverb/model.h"
 #include "io/midi/learned_midi.h"
+#include "loop_station/loop_station.h"
 #include "model/clip/clip.h"
 #include "model/clip/clip_array.h"
 #include "model/global_effectable/global_effectable_for_song.h"
@@ -36,6 +37,7 @@
 #include "modulation/params/param_manager.h"
 #include "storage/flash_storage.h"
 #include "util/container/array/ordered_resizeable_array_with_multi_word_key.h"
+#include "util/containers.h"
 #include "util/d_string.h"
 
 class MidiCommand;
@@ -61,6 +63,7 @@ class Output;
 class AudioOutput;
 class ModelStack;
 class ModelStackWithTimelineCounter;
+class Sample;
 Clip* getCurrentClip();
 InstrumentClip* getCurrentInstrumentClip();
 AudioClip* getCurrentAudioClip();
@@ -98,6 +101,54 @@ struct SessionMacro {
 	Clip* clip{nullptr};
 	Output* output{nullptr};
 	uint8_t section{0};
+};
+
+// Every Loop Station revision is a complete cumulative WAV. The Sample reason
+// held here is intentionally separate from the active AudioClip's reason: old
+// revisions must remain available for undo and must be discovered by the normal
+// Save Song pass so TEMP recordings are moved to their permanent paths.
+struct LoopStationRevision {
+	String filePath{};
+	Sample* sample = nullptr;
+	uint64_t startPos = 0;
+	uint64_t endPos = 0;
+	int32_t loopLength = 1;
+	int32_t originalLength = 1;
+	uint32_t sampleZeroTicks = 0;
+
+	LoopStationRevision() = default;
+	LoopStationRevision(LoopStationRevision const& other);
+	LoopStationRevision& operator=(LoopStationRevision const& other);
+	LoopStationRevision(LoopStationRevision&& other) noexcept;
+	LoopStationRevision& operator=(LoopStationRevision&& other) noexcept;
+	~LoopStationRevision();
+
+	void setSample(Sample* newSample);
+	void capture(AudioClip const& clip);
+	Error loadSample(bool mayActuallyReadFile);
+};
+
+struct LoopStationRevisionHistory {
+	deluge::vector<LoopStationRevision> revisions{};
+	// -1 is the undoable empty state before the initial take.
+	int32_t cursor = -1;
+
+	LoopStationRevisionHistory() = default;
+	LoopStationRevisionHistory(LoopStationRevisionHistory const&) = delete;
+	LoopStationRevisionHistory& operator=(LoopStationRevisionHistory const&) = delete;
+
+	[[nodiscard]] bool hasCurrent() const;
+	[[nodiscard]] bool canUndo() const;
+	[[nodiscard]] bool canRedo() const;
+	[[nodiscard]] LoopStationRevision const* current() const;
+	void clear();
+	bool seedFromClip(AudioClip& clip);
+	// Reserve all metadata needed by the next successful capture before its
+	// recorder starts. This keeps allocation failure on the safe side of commit.
+	bool prepareAppend(AudioClip& clip, bool preserveCurrent);
+	void appendCurrent(AudioClip& clip);
+	Error loadSamples(AudioClip* currentClip, bool mayActuallyReadFiles);
+	Error navigate(AudioClip& clip, bool redo);
 };
 
 class Song final : public TimelineCounter {
@@ -257,6 +308,12 @@ public:
 	String dirPath;
 
 	std::array<SessionMacro, 8> sessionMacros{};
+
+	// Persistent Loop Station settings. Runtime capture state and undo audio are
+	// stored separately: SongModel remains host-testable while revision history
+	// owns firmware Sample objects and their SD lifecycle.
+	deluge::loop_station::SongModel loopStation{};
+	std::array<LoopStationRevisionHistory, deluge::loop_station::kTrackCount> loopStationRevisionHistory{};
 
 	bool getAnyClipsSoloing() const;
 	Clip* getCurrentClip();

@@ -86,6 +86,9 @@ public:
 	int32_t getNumSwungTicksInSinceLastActionedSwungTick(uint32_t* timeRemainder = nullptr);
 	int64_t getActualSwungTickCount(uint32_t* timeRemainder = nullptr);
 	int64_t getCurrentInternalTickCount(uint32_t* remainder = nullptr);
+	// Fractional song-tick position used by tempo-synchronised visualisation
+	// while following an external MIDI or analog clock.
+	float getCurrentInternalTickFloatFollowingExternalClock();
 	void scheduleSwungTick();
 	int32_t getInternalTickTime(int64_t internalTickCount);
 	void scheduleTriggerClockOutTick();
@@ -273,7 +276,6 @@ private:
 	bool tryGlobalMIDICommands(MIDICable& cable, int32_t channel, int32_t note);
 	bool tryGlobalMIDICommandsOff(MIDICable& cable, int32_t channel, int32_t note);
 	void decideOnCurrentPlaybackMode();
-	float getCurrentInternalTickFloatFollowingExternalClock();
 	void scheduleTriggerClockOutTickParamsKnown(uint32_t analogOutTicksPer, uint64_t fractionLastTimerTick,
 	                                            uint64_t fractionNextAnalogOutTick);
 	void scheduleTriggerClockOutTickFromExternalClock();

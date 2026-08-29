@@ -39,6 +39,7 @@
 #include "gui/views/audio_clip_view.h"
 #include "gui/views/automation_view.h"
 #include "gui/views/instrument_clip_view.h"
+#include "gui/views/loop_station_view.h"
 #include "gui/views/performance_view.h"
 #include "gui/views/view.h"
 #include "gui/waveform/waveform_renderer.h"
@@ -215,6 +216,24 @@ ActionResult SessionView::buttonAction(deluge::hid::Button b, bool on, bool inCa
 	}
 
 	OutputType newOutputType;
+
+	// A short, otherwise-unused cross-screen gesture enters the community Loop
+	// Station. Arrangement playback/recording is deliberately rejected because
+	// its timeline cannot safely own parallel Session captures.
+	if (b == CROSS_SCREEN_EDIT && !on && currentUIMode == UI_MODE_NONE
+	    && Buttons::considerCrossScreenReleaseForCrossScreenMode
+	    && runtimeFeatureSettings.isOn(RuntimeFeatureSettingType::EnableLoopStation)) {
+		if (playbackHandler.recording == RecordingMode::ARRANGEMENT
+		    || (playbackHandler.playbackState && currentPlaybackMode == &arrangement)) {
+			display->displayPopup(l10n::get(l10n::String::STRING_FOR_LOOP_STATION_UNAVAILABLE_IN_ARRANGEMENT));
+			return ActionResult::DEALT_WITH;
+		}
+		if (inCardRoutine) {
+			return ActionResult::REMIND_ME_OUTSIDE_CARD_ROUTINE;
+		}
+		changeRootUI(&loopStationView);
+		return ActionResult::DEALT_WITH;
+	}
 
 	if (currentUIMode == UI_MODE_CREATING_CLIP) {
 		if (inCardRoutine) {
@@ -1730,6 +1749,43 @@ Clip* SessionView::createNewAudioClip(int32_t yDisplay) {
 	}
 
 	return newClip;
+}
+
+AudioClip* SessionView::createLoopStationClip(uint8_t slotIndex) {
+	if (slotIndex >= deluge::loop_station::kTrackCount) {
+		return nullptr;
+	}
+	void* clipMemory = GeneralMemoryAllocator::get().allocMaxSpeed(sizeof(AudioClip));
+	if (!clipMemory) {
+		return nullptr;
+	}
+	auto* clip = new (clipMemory) AudioClip();
+	if (!createNewTrackForAudioClip(clip)) {
+		clip->~AudioClip();
+		delugeDealloc(clipMemory);
+		return nullptr;
+	}
+	setupNewClip(clip);
+	int32_t activeSection = session.getCurrentSection();
+	clip->section = activeSection >= 0 && activeSection < kMaxNumSections ? activeSection : 0;
+	clip->loopStationSlotId = slotIndex + 1;
+	char name[] = "LOOP 1";
+	name[5] = '1' + slotIndex;
+	clip->name.set(name);
+	clip->output->name.set(name);
+	if (currentSong->sessionClips.insertClipAtIndex(clip, currentSong->sessionClips.getNumElements()) != Error::NONE) {
+		clip->~AudioClip();
+		delugeDealloc(clipMemory);
+		return nullptr;
+	}
+	currentSong->loopStation.tracks[slotIndex].clipSlotId = slotIndex + 1;
+	char modelStackMemory[MODEL_STACK_MAX_SIZE];
+	auto* modelStack = setupModelStackWithSong(modelStackMemory, currentSong)->addTimelineCounter(clip);
+	if (!clip->output->getActiveClip()) {
+		clip->output->setActiveClip(modelStack);
+	}
+	resyncNewClip(clip, modelStack);
+	return clip;
 }
 
 Clip* SessionView::createNewInstrumentClip(OutputType outputType, int32_t yDisplay) {

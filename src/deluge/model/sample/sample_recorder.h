@@ -111,6 +111,18 @@ public:
 
 	bool allowFileAlterationAfter = false;
 	bool allowNormalization = true;
+	// Loop Station output overdubs capture the dry Audio Clip plus monitored
+	// input before track FX / level / pan. Other output recorders retain the
+	// legacy post-FX tap.
+	bool captureOutputPreFX = false;
+	// Independent of audible monitoring: true only while the performer is
+	// actively adding input to a Loop Station overdub. It is cleared while the
+	// recorder copies the untouched remainder of the fixed-length phrase.
+	bool captureOutputInputActive = false;
+	// A replacement overdub is never allowed to commit if any capture buffer
+	// omitted the previous phrase. Input-only or zero-filled data would otherwise
+	// destructively replace the backing WAV.
+	bool captureOutputBackingMissing = false;
 	bool autoDeleteWhenDone = false;
 	bool keepingReasonsForFirstClusters;
 	uint8_t recordingNumChannels;

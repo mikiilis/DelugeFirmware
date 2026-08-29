@@ -3347,6 +3347,13 @@
               "code": "BATT",
               "children": [],
               "tag": "c1.3"
+            },
+            {
+              "varName": "menuEnableLoopStation",
+              "token": "STRING_FOR_COMMUNITY_FEATURE_LOOP_STATION",
+              "oled": "Enable Loop Station",
+              "code": "LOOP",
+              "children": []
             }
           ],
           "tag": "c1.0"

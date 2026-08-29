@@ -44,6 +44,7 @@
 #include "model/instrument/midi_instrument.h"
 #include "model/mod_controllable/mod_controllable_audio.h"
 #include "model/sample/sample_recorder.h"
+#include "model/sample/sample.h"
 #include "model/scale/preset_scales.h"
 #include "model/scale/scale_change.h"
 #include "model/scale/utils.h"
@@ -60,6 +61,8 @@
 #include "processing/sound/sound_instrument.h"
 #include "processing/stem_export/stem_export.h"
 #include "storage/flash_storage.h"
+#include "storage/audio/audio_file_manager.h"
+#include "util/exceptions.h"
 #include "storage/storage_manager.h"
 #include "util/lookuptables/lookuptables.h"
 #include "util/try.h"
@@ -129,6 +132,211 @@ OutputType getCurrentOutputType() {
 }
 
 using namespace deluge;
+
+LoopStationRevision::LoopStationRevision(LoopStationRevision const& other)
+    : filePath(other.filePath), startPos(other.startPos), endPos(other.endPos), loopLength(other.loopLength),
+      originalLength(other.originalLength), sampleZeroTicks(other.sampleZeroTicks) {
+	setSample(other.sample);
+}
+
+LoopStationRevision& LoopStationRevision::operator=(LoopStationRevision const& other) {
+	if (this != &other) {
+		filePath = other.filePath;
+		startPos = other.startPos;
+		endPos = other.endPos;
+		loopLength = other.loopLength;
+		originalLength = other.originalLength;
+		sampleZeroTicks = other.sampleZeroTicks;
+		setSample(other.sample);
+	}
+	return *this;
+}
+
+LoopStationRevision::LoopStationRevision(LoopStationRevision&& other) noexcept
+    : filePath(other.filePath), sample(other.sample), startPos(other.startPos), endPos(other.endPos),
+      loopLength(other.loopLength), originalLength(other.originalLength), sampleZeroTicks(other.sampleZeroTicks) {
+	other.filePath.clear();
+	other.sample = nullptr;
+}
+
+LoopStationRevision& LoopStationRevision::operator=(LoopStationRevision&& other) noexcept {
+	if (this != &other) {
+		setSample(nullptr);
+		filePath = other.filePath;
+		other.filePath.clear();
+		sample = other.sample;
+		other.sample = nullptr;
+		startPos = other.startPos;
+		endPos = other.endPos;
+		loopLength = other.loopLength;
+		originalLength = other.originalLength;
+		sampleZeroTicks = other.sampleZeroTicks;
+	}
+	return *this;
+}
+
+LoopStationRevision::~LoopStationRevision() {
+	setSample(nullptr);
+}
+
+void LoopStationRevision::setSample(Sample* newSample) {
+	if (sample == newSample) {
+		return;
+	}
+	if (sample) {
+		sample->removeReason("LSRH");
+	}
+	sample = newSample;
+	if (sample) {
+		sample->addReason();
+	}
+}
+
+void LoopStationRevision::capture(AudioClip const& clip) {
+	filePath.set(clip.sampleHolder.audioFile ? &clip.sampleHolder.audioFile->filePath : &clip.sampleHolder.filePath);
+	setSample(static_cast<Sample*>(clip.sampleHolder.audioFile));
+	startPos = clip.sampleHolder.startPos;
+	endPos = clip.sampleHolder.endPos;
+	loopLength = std::max<int32_t>(1, clip.loopLength);
+	originalLength = std::max<int32_t>(1, clip.originalLength);
+	sampleZeroTicks = clip.loopStationSampleZeroTicks;
+}
+
+Error LoopStationRevision::loadSample(bool mayActuallyReadFile) {
+	if (sample || filePath.isEmpty()) {
+		return Error::NONE;
+	}
+	Error error = Error::NONE;
+	AudioFile* loaded = audioFileManager.getAudioFileFromFilename(filePath, mayActuallyReadFile, &error, nullptr,
+	                                                             AudioFileType::SAMPLE);
+	if (loaded) {
+		setSample(static_cast<Sample*>(loaded));
+	}
+	return error;
+}
+
+bool LoopStationRevisionHistory::hasCurrent() const {
+	return cursor >= 0 && cursor < static_cast<int32_t>(revisions.size());
+}
+
+bool LoopStationRevisionHistory::canUndo() const {
+	return hasCurrent();
+}
+
+bool LoopStationRevisionHistory::canRedo() const {
+	return cursor + 1 < static_cast<int32_t>(revisions.size());
+}
+
+LoopStationRevision const* LoopStationRevisionHistory::current() const {
+	return hasCurrent() ? &revisions[cursor] : nullptr;
+}
+
+void LoopStationRevisionHistory::clear() {
+	revisions.clear();
+	cursor = -1;
+}
+
+bool LoopStationRevisionHistory::seedFromClip(AudioClip& clip) {
+	if (!revisions.empty() || !clip.sampleHolder.audioFile) {
+		return !revisions.empty();
+	}
+	try {
+		revisions.emplace_back();
+	}
+	catch (deluge::exception error) {
+		if (error == deluge::exception::BAD_ALLOC) {
+			return false;
+		}
+		throw;
+	}
+	revisions.back().capture(clip);
+	cursor = 0;
+	return true;
+}
+
+bool LoopStationRevisionHistory::prepareAppend(AudioClip& clip, bool preserveCurrent) {
+	// If this is the first overdub of a legacy/current clip, reserve both its
+	// seed revision and the provisional revision which will follow it.
+	size_t required = static_cast<size_t>(std::max<int32_t>(1, cursor + 2));
+	if (preserveCurrent && revisions.empty()) {
+		required = 2;
+	}
+	try {
+		revisions.reserve(required);
+	}
+	catch (deluge::exception error) {
+		if (error == deluge::exception::BAD_ALLOC) {
+			return false;
+		}
+		throw;
+	}
+	return !preserveCurrent || seedFromClip(clip);
+}
+
+void LoopStationRevisionHistory::appendCurrent(AudioClip& clip) {
+	// Do not destroy a redo branch until a new revision has actually
+	// committed. This method is called only after the new Sample is valid.
+	auto firstRedo = revisions.begin() + std::min<size_t>(revisions.size(), static_cast<size_t>(cursor + 1));
+	revisions.erase(firstRedo, revisions.end());
+	revisions.emplace_back();
+	revisions.back().capture(clip);
+	cursor = static_cast<int32_t>(revisions.size()) - 1;
+}
+
+Error LoopStationRevisionHistory::loadSamples(AudioClip* currentClip, bool mayActuallyReadFiles) {
+	Error firstError = Error::NONE;
+	for (auto& revision : revisions) {
+		if (currentClip && currentClip->sampleHolder.audioFile
+		    && !strcmp(revision.filePath.get(), currentClip->sampleHolder.audioFile->filePath.get())) {
+			revision.setSample(static_cast<Sample*>(currentClip->sampleHolder.audioFile));
+			continue;
+		}
+		Error error = revision.loadSample(mayActuallyReadFiles);
+		if (error != Error::NONE && firstError == Error::NONE) {
+			firstError = error;
+		}
+	}
+	return firstError;
+}
+
+Error LoopStationRevisionHistory::navigate(AudioClip& clip, bool redo) {
+	int32_t target = cursor + (redo ? 1 : -1);
+	if (target < -1 || target >= static_cast<int32_t>(revisions.size())) {
+		return Error::RESULT_TAG_UNUSED;
+	}
+
+	LoopStationRevision* revision = target >= 0 ? &revisions[target] : nullptr;
+	if (revision) {
+		Error error = revision->loadSample(true);
+		if (error != Error::NONE || !revision->sample) {
+			return error == Error::NONE ? Error::FILE_NOT_FOUND : error;
+		}
+	}
+
+	clip.unassignVoiceSample(true);
+	clip.sampleHolder.setAudioFile(revision ? revision->sample : nullptr);
+	if (revision) {
+		clip.sampleHolder.filePath.set(revision->sample ? &revision->sample->filePath : &revision->filePath);
+		clip.sampleHolder.startPos = revision->startPos;
+		clip.sampleHolder.endPos = revision->endPos;
+		clip.loopLength = revision->loopLength;
+		clip.originalLength = revision->originalLength;
+		clip.loopStationSampleZeroTicks = revision->sampleZeroTicks;
+	}
+	else {
+		clip.sampleHolder.filePath.clear();
+		clip.sampleHolder.startPos = 0;
+		clip.sampleHolder.endPos = 0;
+		clip.loopStationSampleZeroTicks = 0;
+		if (!revisions.empty()) {
+			clip.loopLength = revisions.front().loopLength;
+			clip.originalLength = revisions.front().originalLength;
+		}
+	}
+	clip.renderData.xScroll = -1;
+	cursor = target;
+	return Error::NONE;
+}
 
 Song::Song() : backedUpParamManagers(sizeof(BackedUpParamManager)) {
 	outputClipInstanceListIsCurrentlyInvalid = false;
@@ -1399,6 +1607,54 @@ weAreInArrangementEditorOrInClipInstance:
 		writer.writeArrayEnding("sessionMacros");
 	}
 
+	// Loop Station metadata is deliberately separate from the ordinary Audio
+	// Clips and Outputs so older firmware can ignore it and still play them.
+	writer.writeOpeningTagBeginning("loopStation");
+	writer.writeAttribute("recordAction", util::to_underlying(loopStation.global.recordAction));
+	writer.writeAttribute("quantize", util::to_underlying(loopStation.global.quantize));
+	writer.writeAttribute("dimBorderColour", util::to_underlying(loopStation.global.dimBorderColour));
+	writer.writeOpeningTagEnd();
+	writer.writeArrayStart("tracks");
+	for (size_t i = 0; i < loopStation.tracks.size(); ++i) {
+		auto const& binding = loopStation.tracks[i];
+		auto const& settings = binding.settings;
+		writer.writeOpeningTagBeginning("track", true);
+		writer.writeAttribute("slot", i + 1);
+		writer.writeAttribute("clipSlotId", binding.clipSlotId);
+		writer.writeAttribute("source", util::to_underlying(settings.source));
+		writer.writeAttribute("sourceTrackId", settings.sourceTrackId);
+		writer.writeAttribute("monitoring", settings.monitoring);
+		writer.writeAttribute("durationBars", settings.durationBars);
+		writer.writeAttribute("progressColour", util::to_underlying(settings.progressColour));
+		writer.writeAttribute("playback", util::to_underlying(settings.playback));
+		writer.writeAttribute("loopSync", settings.loopSync);
+		writer.writeAttribute("startMode", util::to_underlying(settings.startMode));
+		writer.writeAttribute("stopMode", util::to_underlying(settings.stopMode));
+		writer.writeAttribute("fadeTimeBars", settings.fadeTimeBars);
+		auto const& history = loopStationRevisionHistory[i];
+		writer.writeAttribute("historyCursor", history.cursor);
+		if (history.revisions.empty()) {
+			writer.closeTag(true);
+			continue;
+		}
+		writer.writeOpeningTagEnd();
+		writer.writeArrayStart("revisions");
+		for (auto const& revision : history.revisions) {
+			writer.writeOpeningTagBeginning("revision", true);
+			writer.writeAttribute("filePath", revision.sample ? revision.sample->filePath.get() : revision.filePath.get());
+			writer.writeAttribute("startSamplePos", revision.startPos);
+			writer.writeAttribute("endSamplePos", revision.endPos);
+			writer.writeAttribute("loopLength", revision.loopLength);
+			writer.writeAttribute("originalLength", revision.originalLength);
+			writer.writeAttribute("sampleZeroTicks", revision.sampleZeroTicks);
+			writer.closeTag(true);
+		}
+		writer.writeArrayEnding("revisions");
+		writer.writeClosingTag("track", true, true);
+	}
+	writer.writeArrayEnding("tracks");
+	writer.writeClosingTag("loopStation");
+
 	// Scale stuff
 	writer.writeOpeningTag("scales");
 	writer.writeTag("userScale", userScaleNotes.toBits());
@@ -1896,6 +2152,126 @@ unknownTag:
 				reader.exitTag("sessionMacros");
 			}
 
+			else if (!strcmp(tagName, "loopStation")) {
+				using namespace deluge::loop_station;
+				reader.match('{');
+				while (*(tagName = reader.readNextTagOrAttributeName())) {
+					if (!strcmp(tagName, "recordAction")) {
+						loopStation.global.recordAction =
+						    static_cast<RecordAction>(reader.readTagOrAttributeValueInt());
+						reader.exitTag(tagName);
+					}
+					else if (!strcmp(tagName, "quantize")) {
+						loopStation.global.quantize = static_cast<QuantizeMode>(reader.readTagOrAttributeValueInt());
+						reader.exitTag(tagName);
+					}
+					else if (!strcmp(tagName, "dimBorderColour")) {
+						loopStation.global.dimBorderColour =
+						    static_cast<PadColour>(reader.readTagOrAttributeValueInt());
+						reader.exitTag(tagName);
+					}
+					else if (!strcmp(tagName, "tracks")) {
+						reader.match('[');
+						while (reader.match('{') && *(tagName = reader.readNextTagOrAttributeName())) {
+							if (strcmp(tagName, "track")) {
+								reader.exitTag(tagName);
+								continue;
+							}
+							reader.match('{');
+							uint32_t slot = 0;
+							TrackBinding parsed{};
+							int32_t historyCursor = -1;
+							deluge::vector<LoopStationRevision> parsedRevisions;
+							while (*(tagName = reader.readNextTagOrAttributeName())) {
+								if (!strcmp(tagName, "revisions")) {
+									reader.match('[');
+									while (reader.match('{') && *(tagName = reader.readNextTagOrAttributeName())) {
+										if (strcmp(tagName, "revision")) {
+											reader.exitTag(tagName);
+											continue;
+										}
+										reader.match('{');
+										LoopStationRevision revision;
+										while (*(tagName = reader.readNextTagOrAttributeName())) {
+											if (!strcmp(tagName, "filePath")) {
+												reader.readTagOrAttributeValueString(&revision.filePath);
+											}
+											else {
+												uint64_t value = reader.readTagOrAttributeValueInt();
+												if (!strcmp(tagName, "startSamplePos"))
+													revision.startPos = value;
+												else if (!strcmp(tagName, "endSamplePos"))
+													revision.endPos = value;
+												else if (!strcmp(tagName, "loopLength"))
+													revision.loopLength = std::max<int32_t>(1, value);
+												else if (!strcmp(tagName, "originalLength"))
+													revision.originalLength = std::max<int32_t>(1, value);
+												else if (!strcmp(tagName, "sampleZeroTicks"))
+													revision.sampleZeroTicks = value;
+											}
+											reader.exitTag(tagName);
+										}
+										if (!revision.filePath.isEmpty()) {
+											parsedRevisions.emplace_back(std::move(revision));
+										}
+										reader.match('}');
+										reader.exitTag("revision", true);
+									}
+									reader.exitTag("revisions");
+									reader.match(']');
+									continue;
+								}
+								int32_t value = reader.readTagOrAttributeValueInt();
+								if (!strcmp(tagName, "slot"))
+									slot = value;
+								else if (!strcmp(tagName, "clipSlotId"))
+									parsed.clipSlotId = value;
+								else if (!strcmp(tagName, "source"))
+									parsed.settings.source = static_cast<SourceType>(value);
+								else if (!strcmp(tagName, "sourceTrackId"))
+									parsed.settings.sourceTrackId = value;
+								else if (!strcmp(tagName, "monitoring"))
+									parsed.settings.monitoring = value;
+								else if (!strcmp(tagName, "durationBars"))
+									parsed.settings.durationBars = value;
+								else if (!strcmp(tagName, "progressColour"))
+									parsed.settings.progressColour = static_cast<PadColour>(value);
+								else if (!strcmp(tagName, "playback"))
+									parsed.settings.playback = static_cast<deluge::loop_station::PlaybackMode>(value);
+								else if (!strcmp(tagName, "loopSync"))
+									parsed.settings.loopSync = value;
+								else if (!strcmp(tagName, "startMode"))
+									parsed.settings.startMode = static_cast<StartMode>(value);
+								else if (!strcmp(tagName, "stopMode"))
+									parsed.settings.stopMode = static_cast<StopMode>(value);
+								else if (!strcmp(tagName, "fadeTimeBars"))
+									parsed.settings.fadeTimeBars = value;
+								else if (!strcmp(tagName, "historyCursor"))
+									historyCursor = value;
+								reader.exitTag(tagName);
+							}
+							if (slot >= 1 && slot <= kTrackCount) {
+								loopStation.tracks[slot - 1] = parsed;
+								auto& history = loopStationRevisionHistory[slot - 1];
+								history.clear();
+								history.revisions = std::move(parsedRevisions);
+								history.cursor = std::clamp<int32_t>(historyCursor, -1,
+								                                             static_cast<int32_t>(history.revisions.size()) - 1);
+							}
+							reader.match('}');
+							reader.exitTag("track", true);
+						}
+						reader.exitTag("tracks");
+						reader.match(']');
+					}
+					else {
+						reader.exitTag(tagName);
+					}
+				}
+				reader.exitTag("loopStation", true);
+				loopStation.sanitize();
+			}
+
 			else if (!strcmp(tagName, "scales")) {
 				reader.match('{');
 				while (*(tagName = reader.readNextTagOrAttributeName())) {
@@ -2168,6 +2544,31 @@ loadOutput:
 		}
 	}
 
+	// Resolve stable slot IDs after all clips have loaded. The first valid clip
+	// wins; duplicates remain ordinary Audio Clips and therefore cannot steal a
+	// binding merely by being reordered later.
+	std::array<bool, deluge::loop_station::kTrackCount> slotSeen{};
+	for (ClipArray* clipArray : arrays) {
+		for (int32_t c = 0; c < clipArray->getNumElements(); ++c) {
+			Clip* clip = clipArray->getClipAtIndex(c);
+			if (clip->type != ClipType::AUDIO)
+				continue;
+			auto* audioClip = static_cast<AudioClip*>(clip);
+			if (audioClip->loopStationSlotId == 0)
+				continue;
+			size_t slot = audioClip->loopStationSlotId - 1;
+			if (slotSeen[slot]) {
+				audioClip->loopStationSlotId = 0;
+				continue;
+			}
+			slotSeen[slot] = true;
+			loopStation.tracks[slot].clipSlotId = audioClip->loopStationSlotId;
+			if (audioClip->output->type == OutputType::AUDIO) {
+				static_cast<AudioOutput*>(audioClip->output)->mode = AudioOutputMode::player;
+			}
+		}
+	}
+
 	AudioEngine::logAction("matched up");
 
 	AudioEngine::routineWithClusterLoading();
@@ -2408,6 +2809,24 @@ void Song::loadAllSamples(bool mayActuallyReadFiles) {
 		if (clip->type == ClipType::AUDIO) {
 			((AudioClip*)clip)->loadSample(mayActuallyReadFiles);
 		}
+	}
+
+	// Resolve every historical Loop Station WAV after the song file is closed,
+	// just like ordinary samples. The retained Sample reasons make all revisions
+	// participate in TEMP-file movement when this song is saved.
+	for (size_t slot = 0; slot < loopStationRevisionHistory.size(); ++slot) {
+		AudioClip* boundClip = nullptr;
+		for (AudioClip* clip : AudioClips::everywhere(this)) {
+			if (clip->loopStationSlotId == slot + 1) {
+				boundClip = clip;
+				break;
+			}
+		}
+		auto& history = loopStationRevisionHistory[slot];
+		if (boundClip) {
+			history.seedFromClip(*boundClip); // Legacy songs have no explicit history.
+		}
+		history.loadSamples(boundClip, mayActuallyReadFiles);
 	}
 }
 
@@ -5422,6 +5841,15 @@ lookAtNextOne:
 
 // Please stop the Clip from soloing before calling this
 void Song::removeSessionClipLowLevel(Clip* clip, int32_t clipIndex) {
+	if (clip->type == ClipType::AUDIO) {
+		auto* audioClip = static_cast<AudioClip*>(clip);
+		if (audioClip->loopStationSlotId >= 1 && audioClip->loopStationSlotId <= deluge::loop_station::kTrackCount) {
+			auto slot = audioClip->loopStationSlotId - 1;
+			loopStation.tracks[slot].clipSlotId = deluge::loop_station::kInvalidSlotBinding;
+			loopStationRevisionHistory[slot].clear();
+			audioClip->loopStationSlotId = 0;
+		}
+	}
 
 	if (playbackHandler.isEitherClockActive() && currentPlaybackMode == &session && clip->activeIfNoSolo) {
 		clip->expectNoFurtherTicks(this);

@@ -1848,7 +1848,7 @@ doMIDIOrCV:
 			}
 		}
 	}
-	else if (clip->type == ClipType::AUDIO) {
+	else if (clip && clip->type == ClipType::AUDIO) {
 		AudioClip* audioClip = (AudioClip*)clip;
 		currentSampleControls = &audioClip->sampleControls;
 		currentPriority = &audioClip->voicePriority;

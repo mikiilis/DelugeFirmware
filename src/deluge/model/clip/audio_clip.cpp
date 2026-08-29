@@ -549,11 +549,11 @@ int64_t AudioClip::getNumSamplesTilLoop(ModelStackWithTimelineCounter* modelStac
 	return loopTime - AudioEngine::audioSampleTimer;
 }
 
-void AudioClip::render(ModelStackWithTimelineCounter* modelStack, std::span<q31_t> outputBuffer, int32_t amplitude,
+bool AudioClip::render(ModelStackWithTimelineCounter* modelStack, std::span<q31_t> outputBuffer, int32_t amplitude,
                        int32_t amplitudeIncrement, int32_t pitchAdjust) {
 
 	if (!voiceSample) {
-		return;
+		return false;
 	}
 
 	Sample* sample = ((Sample*)sampleHolder.audioFile);
@@ -568,7 +568,7 @@ void AudioClip::render(ModelStackWithTimelineCounter* modelStack, std::span<q31_
 			if (result == LateStartAttemptStatus::FAILURE) {
 				unassignVoiceSample(false);
 			}
-			return;
+			return false;
 		}
 
 		doingLateStart = false;
@@ -774,7 +774,9 @@ justDontTimeStretch:
 	if (!stillActive) {
 doUnassign:
 		unassignVoiceSample(false);
+		return false;
 	}
+	return true;
 }
 
 // Returns the "looping" parameter that gets passed into a lot of functions.
@@ -1078,6 +1080,12 @@ void AudioClip::writeDataToFile(Serializer& writer, Song* song) {
 	}
 
 	writer.writeAttribute("overdubsShouldCloneAudioTrack", overdubsShouldCloneOutput);
+	if (loopStationSlotId != 0) {
+		writer.writeAttribute("loopStationSlot", loopStationSlotId);
+		if (loopStationSampleZeroTicks != 0) {
+			writer.writeAttribute("loopStationSampleZeroTicks", loopStationSampleZeroTicks);
+		}
+	}
 
 	if (onAutomationClipView) {
 		writer.writeAttribute("onAutomationInstrumentClipView", 1);
@@ -1137,6 +1145,15 @@ someError:
 
 		else if (!strcmp(tagName, "overdubsShouldCloneAudioTrack")) {
 			overdubsShouldCloneOutput = reader.readTagOrAttributeValueInt();
+		}
+
+		else if (!strcmp(tagName, "loopStationSlot")) {
+			uint32_t raw = reader.readTagOrAttributeValueInt();
+			loopStationSlotId = raw >= 1 && raw <= deluge::loop_station::kTrackCount ? raw : 0;
+		}
+
+		else if (!strcmp(tagName, "loopStationSampleZeroTicks")) {
+			loopStationSampleZeroTicks = reader.readTagOrAttributeValueInt();
 		}
 
 		else if (!strcmp(tagName, "startSamplePos")) {

@@ -1,0 +1,156 @@
+---
+title: Loop Station
+sidebar:
+  order: 25
+---
+
+import { Aside, Badge } from "@astrojs/starlight/components"
+
+The Loop Station is an experimental, eight-track performance view arranged as eight 4×4 cells on the main pad matrix. It is opt-in and is disabled by default.
+
+<Aside type="caution" title="Development preview">
+  The current implementation provides the view, musical scheduler, song
+  metadata, clip bindings, state machine, physical-input monitoring, settings,
+  Audio Clip recording, persistent WAV revision history, and pre-FX dry additive
+  overdubbing. The dedicated eight-way fan-out is not yet complete. Do not use this
+  build for irreplaceable performances or recordings.
+</Aside>
+
+## Enable the view
+
+1. Open `SETTINGS > COMMUNITY FEATURES`.
+2. Set `ENABLE LOOP STATION` to `ON`.
+3. Return to Song View.
+
+The setting is stored in `SETTINGS/CommunityFeatures.XML`. Turning it off prevents entry into Loop Station but does not remove Loop Station metadata or its ordinary Audio Clips from a song.
+
+## Enter and leave
+
+From Song View, short-press and release :key[CrossScreen] to enter Loop Station. Entry works while Session playback is running or stopped. Arrangement playback or recording rejects entry and shows `ARR` on seven-segment displays.
+
+Press :key[CrossScreen] or :key[Song] to leave. Captures which are already active are asked to finish according to the song's quantization setting. The view stays open while asynchronous commits finish, then returns to Song View.
+
+If the first recording gesture is made while playback is stopped, Session playback starts at song tick zero.
+
+## Pad layout
+
+The 16×8 main matrix contains two rows of four tracks:
+
+| Matrix area            | Tracks     |
+| ---------------------- | ---------- |
+| Columns 0–15, rows 0–3 | 1, 2, 3, 4 |
+| Columns 0–15, rows 4–7 | 5, 6, 7, 8 |
+
+Each track uses a 4×4 cell. Its twelve outside pads form a clockwise progress border beginning at the top-left. The four pads in the 2×2 centre are one logical button; pressing more than one centre pad at once still produces only one gesture. The two sidebar columns are unused.
+
+Press any border pad to select that track; its complete border brightens while selected. If the slot is unused, this
+creates its backing Audio Clip so Monitoring can become audible immediately. Press a border pad on the same track again
+to deselect it. The selection highlight is hidden while Recording or Overdubbing so it cannot tint the red/orange state
+animation. Centre gestures do not change the selected track, so opening settings with :key[Shift] + centre neither
+selects the track nor enables its monitor.
+
+## Controls
+
+| Control                             | Action                                                                 |
+| ----------------------------------- | ---------------------------------------------------------------------- |
+| Centre, empty track                 | Start or queue an initial recording                                    |
+| Centre, recording                   | Finish recording and follow the configured record action               |
+| Centre, playing loop                | Start overdubbing immediately; one-shot retriggers instead             |
+| Centre, overdubbing                 | Return to Play immediately and complete the untouched remainder safely |
+| Double-tap centre                   | Stop the phrase; a provisional overdub is aborted                      |
+| Hold stopped centre for two seconds | Clear the phrase and its revision history, retaining the slot settings |
+| Any border pad                      | Select that track; press its border again to deselect                  |
+| :key[Shift] + centre                | Create the backing clip if needed and open the track-settings menu     |
+| :key[Back]                          | Move the selected loop to the previous revision                         |
+| :key[Shift] + :key[Back]            | Move the selected loop to the next revision                             |
+| :key[Shift] + :key[Tap Tempo]       | Toggle the metronome                                                    |
+| Press :key[Select]                  | Open the song-level Loop Station settings menu                         |
+
+The song menu contains Record Action, Record Quantize, and Dim Border Colour. The track menu contains source,
+monitoring, duration, progress colour, playback and synchronization behavior, start/stop/fade behavior, and the normal
+Audio Clip actions, source, master, compressor, filters, sidechain, sample, attack, and priority controls. Overdub is
+always additive: there are no Replace or Feedback modes. `FX` appears once and directly opens that loop track's EQ,
+delay, reverb, stutter, modulation, and distortion effects. Because every slot has its own Audio Output, these settings
+are independent per track.
+
+Border selection also targets that loop with the normal quick-FX buttons and gold modulation encoders. Deselecting the
+loop returns those controls to the song.
+
+## Pad states
+
+| State             | Centre                       | Border                                        |
+| ----------------- | ---------------------------- | --------------------------------------------- |
+| Empty             | Gray                         | Dim song colour                               |
+| Recording         | Red                          | Red beat pulse                                |
+| Overdubbing       | Orange                       | Orange beat pulse                             |
+| Playing           | Green                        | Track colour fades in clockwise over one loop |
+| Stopped           | Dim green                    | Static dim track colour                       |
+| Pending operation | Destination colour, blinking | Matches the blinking destination              |
+| Committing        | Orange, blinking             | Orange, blinking                              |
+| Error             | Red, blinking                | Dim red                                       |
+
+Animation is derived from the high-resolution musical tick and clip position. On the physical pad matrix, Y coordinates
+increase upward; playing progress therefore begins at the top-left border pad, proceeds clockwise, and smoothly fades in each leading LED. Recording and overdub borders continuously
+fade between dim and bright, peaking exactly on each song beat. The animation therefore follows tempo changes and
+external sync rather than advancing from wall-clock time.
+
+Progress colour offers yellow, cyan, blue, purple, magenta, and white. Green, red, and orange are reserved for Play,
+Record, and Overdub, so old or malformed settings using those colours are replaced with that slot's deterministic
+default.
+
+With Monitoring enabled, a physical input is heard through the border-selected idle track and through tracks that are
+actively recording or overdubbing. Border selection—not :key[Shift] + centre—owns the idle monitor. Identical physical
+returns are de-duplicated, and monitoring is released when Loop Station closes. Internal mix and track sources are
+already audible in the song and do not add a second monitor return.
+
+BACK operates directly on the loop selected with a border press. Each press moves back one revision; SHIFT + BACK moves
+forward one revision. The state before the initial take is an empty revision, so it can also be undone and redone.
+Centre presses keep their normal record/play/overdub action, and no separate undo mode is entered. If a historical WAV
+cannot be reloaded, the current phrase and cursor remain unchanged. Starting a new successful recording after undo
+discards the redo branch. Revision history is saved with the song and restored when it is loaded again.
+
+## Quantization and playback behavior
+
+The song model supports these recording quantization modes:
+
+- `SMART` starts immediately. Stops within one eighth note of a bar boundary are cropped or extended to that boundary.
+- `MEASURE` queues starts and stops at the next bar boundary.
+- `OFF` starts and stops at the performed tick.
+
+A fixed track duration schedules completion of a fresh recording after the selected number of bars and clamps the event
+to the maximum supported sequence length. The completed first take establishes the permanent phrase length (including
+any small Smart trim to the tempo boundary). Record and overdub state changes occur on the first centre-pad press, not
+when the pad is released. A manual overdub starts immediately at the current loop phase and captures
+one complete pass of the existing loop plus monitored input. It never extends or shortens the phrase. Pressing centre
+again returns to Play immediately while the unchanged remainder is completed in the background. One-shot phrases stop
+after one pass and cannot enter overdub.
+
+The two record actions are `REC > DUB > PLAY` and `REC > PLAY > DUB`. `REC > PLAY > DUB` is the default.
+
+## Song and clip data
+
+Each used slot is backed by an ordinary Session Audio Clip and its own Audio Output. The clip is created lazily on the first recording or settings gesture and receives a stable slot ID from 1 through 8. This lets clips remain usable in Session and Arrangement views.
+
+Song files store global settings, eight slot records, and each slot's ordered WAV revision list and current history
+cursor in a `loopStation` object. The Audio Clip stores its slot ID as `loopStationSlot`. Missing fields use defaults and
+invalid enum values are sanitized. Legacy songs seed history from their current bound clip. If a file contains duplicate
+slot IDs, the first valid clip remains bound and later clips load as ordinary unbound Audio Clips.
+
+Cloning a bound clip does not copy the slot ID. Deleting the bound Session clip empties the binding and releases its
+revision history. A bound Audio Output cannot be switched into the legacy Looper mode.
+
+Older firmware can still see the underlying Audio Clips, although it may discard Loop Station-specific metadata when it saves the song.
+
+Fresh takes use the Deluge's normal Audio Clip recorder and produce ordinary WAV files. The performed musical length is
+assigned to the clip when recording finishes; a late Smart snap also trims the recorder loop endpoint. The track begins
+playing the captured sample immediately. Clicking an individually stopped loop while Session transport is stopped first
+starts the playback clock, then safely resumes the Audio Clip. Allocation, SD-card, and maximum-file-size failures abort
+only the affected slot.
+
+## Current limitations
+
+- Initial takes use the normal `SampleRecorder` and SD streaming path. The dedicated eight-way shared-source fan-out is not yet connected.
+- Overdubs use a dedicated pre-FX dry tap. The old loop is copied at unity and physical input is added with saturation only while Overdub is active, even when the audible Monitoring return is Off; silence therefore preserves earlier layers, and track FX, level, pan, compression, and normalization do not enter the cumulative WAV.
+- Persistent history retains one ordinary WAV per completed revision and is limited by available SD-card space and metadata memory rather than a fixed take count.
+- Input FX parameters are not yet connected to the capture path, even though normal playback FX for the backing Audio Clip can be edited from the track menu.
+- Hardware acceptance testing for eight simultaneous recordings, external clock, OLED, and seven-segment displays remains outstanding.

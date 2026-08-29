@@ -102,6 +102,10 @@ public:
 	int16_t outputRecordingFromIndex{-1}; // int16 so it fits with the bool and mode
 
 	AudioOutputMode mode{AudioOutputMode::player};
+	// Runtime-only monitoring path used by bound Loop Station slots. This does
+	// not change the persistent legacy Player/Sampler/Looper mode.
+	bool loopStationMonitoring{false};
+	void setLoopStationMonitoring(bool enabled) { loopStationMonitoring = enabled; }
 
 	Output* getOutputRecordingFrom() override { return outputRecordingFrom; }
 	void clearRecordingFrom() override { setOutputRecordingFrom(nullptr); }
@@ -142,36 +146,15 @@ public:
 	ModelStackWithAutoParam* getModelStackWithParam(ModelStackWithTimelineCounter* modelStack, Clip* clip,
 	                                                int32_t paramID, deluge::modulation::params::Kind paramKind,
 	                                                bool affectEntire, bool useMenuStack) override;
-	void scrollAudioOutputMode(int offset) {
-		auto modeInt = util::to_underlying(mode);
-		modeInt = (modeInt + offset) % kNumAudioOutputModes;
-
-		mode = static_cast<AudioOutputMode>(std::clamp<int>(modeInt, 0, kNumAudioOutputModes - 1));
-		// update the output we're recording from on whether we're monitoring
-		updateMonitoringClaim();
-		renderUIsForOled(); // oled shows the type on the clip screen (including while holding a clip in song view)
-		if (display->have7SEG()) {
-			const char* type;
-			switch (mode) {
-			case AudioOutputMode::player:
-				type = "PLAY";
-				break;
-			case AudioOutputMode::sampler:
-				type = "SAMP";
-				break;
-			case AudioOutputMode::looper:
-				type = "LOOP";
-			}
-			display->displayPopup(type);
-		}
-	}
+	void scrollAudioOutputMode(int offset);
 
 protected:
 	Clip* createNewClipForArrangementRecording(ModelStack* modelStack) override;
 	bool wantsToBeginArrangementRecording() override;
 	bool willRenderAsOneChannelOnlyWhichWillNeedCopying() override;
 
-	/// returns true for loopers and samplers without a file
+	/// Returns true for loopers, samplers without a file, and a physical-input
+	/// Loop Station monitor explicitly enabled by the active view.
 	bool modeAllowsMonitoring() const;
 	/// Which output to record from. Only valid when inputChannel is AudioInputChannel::SPECIFIC_OUTPUT.
 	Output* outputRecordingFrom{nullptr};

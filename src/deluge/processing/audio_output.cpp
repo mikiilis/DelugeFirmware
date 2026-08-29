@@ -24,6 +24,7 @@
 #include "model/clip/audio_clip.h"
 #include "model/model_stack.h"
 #include "model/song/song.h"
+#include "loop_station/loop_station.h"
 #include "modulation/params/param_manager.h"
 #include "playback/mode/arrangement.h"
 #include "playback/mode/playback_mode.h"
@@ -33,6 +34,7 @@
 #include "storage/storage_manager.h"
 #include "util/lookuptables/lookuptables.h"
 #include <algorithm>
+#include <array>
 #include <new>
 #include <ranges>
 
@@ -52,6 +54,65 @@ AudioOutputMode stringToAOMode(char const* string) {
 char const* aoModeToString(AudioOutputMode mode) {
 	return aoModeStringMap(mode);
 }
+
+namespace {
+bool isPhysicalInput(AudioInputChannel channel) {
+	return channel >= AudioInputChannel::LEFT && channel < AUDIO_INPUT_CHANNEL_FIRST_INTERNAL_OPTION;
+}
+
+void addPhysicalInput(std::span<StereoSample> output, AudioInputChannel requestedChannel, int32_t amplitudeAtStart,
+	                  int32_t amplitudeAtEnd, uint8_t gainShift, bool saturate = false) {
+	int32_t const* inputPtr = reinterpret_cast<int32_t const*>(AudioEngine::i2sRXBufferPos);
+	AudioInputChannel channel = requestedChannel;
+	if (channel == AudioInputChannel::STEREO && !AudioEngine::renderInStereo) {
+		channel = AudioInputChannel::NONE; // Combine both inputs when the render path is mono.
+	}
+
+	auto amplitudeIncrement = static_cast<int32_t>(
+	    static_cast<double>(amplitudeAtEnd - amplitudeAtStart) / static_cast<double>(output.size()));
+	int32_t amplitude = amplitudeAtStart;
+	for (StereoSample& outputSample : output) {
+		amplitude += amplitudeIncrement;
+		StereoSample input = {
+		    .l = multiply_32x32_rshift32(inputPtr[0], amplitude) << gainShift,
+		    .r = multiply_32x32_rshift32(inputPtr[1], amplitude) << gainShift,
+		};
+
+		auto add = [&outputSample, saturate](StereoSample value) {
+			if (saturate) {
+				outputSample.l = deluge::loop_station::saturatingAdd(outputSample.l, value.l);
+				outputSample.r = deluge::loop_station::saturatingAdd(outputSample.r, value.r);
+			}
+			else {
+				outputSample += value;
+			}
+		};
+		switch (channel) {
+		case AudioInputChannel::LEFT:
+			add(StereoSample::fromMono(input.l));
+			break;
+		case AudioInputChannel::RIGHT:
+			add(StereoSample::fromMono(input.r));
+			break;
+		case AudioInputChannel::BALANCED:
+			add(StereoSample::fromMono((input.l / 2) - (input.r / 2)));
+			break;
+		case AudioInputChannel::NONE:
+			add(StereoSample::fromMono((input.l / 2) + (input.r / 2)));
+			break;
+		default: // STEREO
+			add(input);
+			break;
+		}
+
+		inputPtr += NUM_MONO_INPUT_CHANNELS;
+		if (inputPtr >= getRxBufferEnd()) {
+			inputPtr -= SSI_RX_BUFFER_NUM_SAMPLES * NUM_MONO_INPUT_CHANNELS;
+		}
+	}
+}
+} // namespace
+
 AudioOutput::AudioOutput() : Output(OutputType::AUDIO) {
 	modKnobMode = 0;
 	inputChannel = AudioInputChannel::LEFT;
@@ -60,6 +121,37 @@ AudioOutput::AudioOutput() : Output(OutputType::AUDIO) {
 
 AudioOutput::~AudioOutput() {
 	releaseMonitoringClaim();
+}
+
+void AudioOutput::scrollAudioOutputMode(int offset) {
+	auto modeInt = util::to_underlying(mode);
+	modeInt = (modeInt + offset) % kNumAudioOutputModes;
+	auto requested = static_cast<AudioOutputMode>(std::clamp<int>(modeInt, 0, kNumAudioOutputModes - 1));
+	Clip* clip = getActiveClip();
+	bool loopStationBound =
+	    clip && clip->type == ClipType::AUDIO && static_cast<AudioClip*>(clip)->loopStationSlotId != 0;
+	if (loopStationBound && requested == AudioOutputMode::looper) {
+		display->displayPopup("LOOP SLOT");
+		return;
+	}
+	mode = requested;
+	updateMonitoringClaim();
+	renderUIsForOled();
+	if (display->have7SEG()) {
+		const char* type;
+		switch (mode) {
+		case AudioOutputMode::player:
+			type = "PLAY";
+			break;
+		case AudioOutputMode::sampler:
+			type = "SAMP";
+			break;
+		case AudioOutputMode::looper:
+			type = "LOOP";
+			break;
+		}
+		display->displayPopup(type);
+	}
 }
 
 void AudioOutput::cloneFrom(ModControllableAudio* other) {
@@ -115,6 +207,10 @@ void AudioOutput::resetEnvelope() {
 }
 
 bool AudioOutput::modeAllowsMonitoring() const {
+	if (loopStationMonitoring && inputChannel >= AudioInputChannel::LEFT
+	    && inputChannel < AUDIO_INPUT_CHANNEL_FIRST_INTERNAL_OPTION) {
+		return true;
+	}
 	if (mode == AudioOutputMode::player) {
 		return false;
 	}
@@ -141,8 +237,13 @@ bool AudioOutput::renderGlobalEffectableForClip(ModelStackWithTimelineCounter* m
                                                 bool isClipActive, int32_t pitchAdjust, int32_t amplitudeAtStart,
                                                 int32_t amplitudeAtEnd) {
 	bool rendered = false;
-	// audio outputs can have an activeClip while being muted
-	if (isClipActive) {
+	bool capturingPreFXOverdub = recorder && recorder->captureOutputPreFX
+	                             && recorder->status < RecorderStatus::FINISHED_CAPTURING_BUT_STILL_WRITING;
+	bool backingRenderedForCapture = false;
+	// Audio outputs can have an activeClip while being muted. A Loop Station
+	// overdub must still render that backing clip into its private capture pass;
+	// activity bookkeeping must never turn an Add overdub into input-only Replace.
+	if ((isClipActive || capturingPreFXOverdub) && activeClip) {
 		auto& activeAudioClip = static_cast<AudioClip&>(*activeClip);
 		if (activeAudioClip.voiceSample) {
 
@@ -181,9 +282,9 @@ renderEnvelope:
 				                         / static_cast<double>(render.size()));
 
 				std::span render_mono{reinterpret_cast<q31_t*>(render.data()), render.size()};
-				activeAudioClip.render(modelStack, render_mono, amplitudeEffectiveStart, amplitudeIncrementEffective,
-				                       pitchAdjust);
-				rendered = true;
+				backingRenderedForCapture = activeAudioClip.render(
+				    modelStack, render_mono, amplitudeEffectiveStart, amplitudeIncrementEffective, pitchAdjust);
+				rendered = isClipActive;
 				amplitudeLastTime = amplitudeLocal;
 
 				// If we need to duplicate mono to stereo...
@@ -208,58 +309,41 @@ renderEnvelope:
 	                                     ? std::span{reinterpret_cast<StereoSample*>(bufferToTransferTo), render.size()}
 	                                     : render;
 
+	// A Loop Station overdub records a dry cumulative pass. Copy the old
+	// loop before audible monitoring and track FX, then add the physical input
+	// only while Overdub is visibly enabled. This deliberately does not depend on
+	// the Monitoring setting: monitoring controls the live return, not recording.
+	if (capturingPreFXOverdub) {
+		if (!backingRenderedForCapture) {
+			// Preserve the previous take. The view checks this latch before asking
+			// the view commits its sample and aborts the provisional recorder.
+			recorder->captureOutputBackingMissing = true;
+		}
+		else {
+			alignas(CACHE_LINE_SIZE) std::array<StereoSample, SSI_TX_BUFFER_NUM_SAMPLES> captureMemory;
+			std::span<StereoSample> capture{captureMemory.data(), output.size()};
+			std::ranges::copy(output, capture.begin());
+			if (recorder->captureOutputInputActive && isPhysicalInput(inputChannel)) {
+				// The Audio Clip dry render has quarter-scale headroom here. Shift the
+				// input by three so the recorder's fixed x4 compensation restores both
+				// the stored loop and new input to unity.
+				addPhysicalInput(capture, inputChannel, amplitudeAtStart, amplitudeAtEnd, 3, true);
+			}
+			recorder->feedAudio(capture, true, 2);
+		}
+		if (!isClipActive) {
+			// The backing render above existed only for the private recorder. Keep
+			// normal mute/solo routing intact in the audible output.
+			std::ranges::fill(output, StereoSample{});
+		}
+	}
+
 	// add in the monitored audio if in sampler or looper mode
 	if (modeAllowsMonitoring() && modelStack->song->isOutputActiveInArrangement(this)
 	    && inputChannel != AudioInputChannel::SPECIFIC_OUTPUT) {
 		rendered = true;
-		int32_t const* __restrict__ input_ptr = (int32_t const*)AudioEngine::i2sRXBufferPos;
-
-		AudioInputChannel input_channel = this->inputChannel;
-		if (input_channel == AudioInputChannel::STEREO && !AudioEngine::renderInStereo) {
-			input_channel = AudioInputChannel::NONE; // 0 means combine channels
-		}
-
-		auto amplitude_increment = static_cast<int32_t>((static_cast<double>(amplitudeAtEnd - amplitudeAtStart) //
-		                                                 / static_cast<double>(render.size())));
-		int32_t amplitude = amplitudeAtStart;
-
-		for (StereoSample& output_sample : output) {
-			amplitude += amplitude_increment;
-
-			StereoSample input = {
-			    .l = multiply_32x32_rshift32(input_ptr[0], amplitude) << 2,
-			    .r = multiply_32x32_rshift32(input_ptr[1], amplitude) << 2,
-			};
-
-			switch (input_channel) {
-			case AudioInputChannel::LEFT:
-				output_sample += StereoSample::fromMono(input.l);
-				break;
-
-			case AudioInputChannel::RIGHT:
-				output_sample += StereoSample::fromMono(input.r);
-				break;
-
-			case AudioInputChannel::BALANCED:
-				output_sample += StereoSample::fromMono((input.l / 2) - (input.r / 2));
-				break;
-
-			case AudioInputChannel::NONE: // Means combine channels
-				output_sample += StereoSample::fromMono((input.l / 2) + (input.r / 2));
-				break;
-
-			default: // STEREO
-				output_sample += input;
-				break;
-				// Remember, there is no case for echoing out the "output" channel - that function doesn't exist, cos
-				// you're obviously already hearing the output channel
-			}
-
-			input_ptr += NUM_MONO_INPUT_CHANNELS;
-			if (input_ptr >= getRxBufferEnd()) {
-				input_ptr -= SSI_RX_BUFFER_NUM_SAMPLES * NUM_MONO_INPUT_CHANNELS;
-			}
-		}
+		// The audible monitor path retains its normal 6dB of mix headroom.
+		addPhysicalInput(output, inputChannel, amplitudeAtStart, amplitudeAtEnd, 2);
 	}
 	// Only render the record-source if it has an active clip: Output::renderOutput is documented to be called only
 	// when there's an activeClip, but this branch bypasses the inValidState guard in Song::renderAudio.
@@ -417,7 +501,8 @@ bool AudioOutput::setActiveClip(ModelStackWithTimelineCounter* modelStack, PgmCh
 }
 
 bool AudioOutput::isSkippingRendering() {
-	return mode == AudioOutputMode::player && (!activeClip || !((AudioClip*)activeClip)->voiceSample);
+	return !loopStationMonitoring && mode == AudioOutputMode::player
+	       && (!activeClip || !((AudioClip*)activeClip)->voiceSample);
 }
 
 void AudioOutput::getThingWithMostReverb(Sound** soundWithMostReverb, ParamManager** paramManagerWithMostReverb,
