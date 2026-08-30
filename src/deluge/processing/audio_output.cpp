@@ -527,9 +527,12 @@ renderEnvelope:
 				// The Audio Clip dry render has quarter-scale headroom here. Shift the
 				// input by three so the recorder's fixed x4 compensation restores both
 				// the stored loop and new input to unity.
-				// Recording should ALWAYS capture original audio without pitch shift.
-				// Pitch shift only applies to monitoring (what user hears).
-				addPhysicalInput(capture, inputChannel, amplitudeAtStart, amplitudeAtEnd, 3, true);
+				float pitchRatio = 1.0f;
+				if (loopStationMonitoring && (loopStationTranspose != 0 || loopStationTransposeCents != 0)) {
+					pitchRatio = semitonesToRatio(loopStationTranspose, loopStationTransposeCents);
+				}
+				addPhysicalInputWithPitchShift(capture, inputChannel, amplitudeAtStart, amplitudeAtEnd, 3, true,
+				                               pitchRatio);
 			}
 			recorder->feedAudio(capture, true, 2);
 		}
