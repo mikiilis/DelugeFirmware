@@ -37,6 +37,7 @@ public:
 		return selectedSlot_ ? UIModControllableContext::CLIP : UIModControllableContext::SONG;
 	}
 	ClipMinder* toClipMinder() override { return clipMenuContext_ ? this : nullptr; }
+	[[nodiscard]] bool hasActiveEngine() const { return engine_.has_value(); }
 
 private:
 	deluge::loop_station::Transport transport() const;

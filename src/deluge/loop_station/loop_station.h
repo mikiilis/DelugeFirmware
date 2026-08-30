@@ -71,7 +71,8 @@ enum class TrackParameter : uint8_t {
 	LOOP_SYNC,
 	START_MODE,
 	STOP_MODE,
-	FADE_TIME_BARS
+	FADE_TIME_BARS,
+	TRANSPOSE
 };
 
 template <typename Enum, Enum Last>
@@ -105,6 +106,8 @@ struct TrackSettings {
 	StartMode startMode = StartMode::IMMEDIATE;
 	StopMode stopMode = StopMode::LOOP_END;
 	uint16_t fadeTimeBars = 1;
+	int16_t transpose = 0;
+	int8_t transposeCents = 0;
 };
 
 struct TrackBinding {

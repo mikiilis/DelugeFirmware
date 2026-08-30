@@ -547,6 +547,7 @@
     "STRING_FOR_LOOP_STATION_START_MODE": "Start Mode",
     "STRING_FOR_LOOP_STATION_STOP_MODE": "Stop Mode",
     "STRING_FOR_LOOP_STATION_FADE_TIME": "Fade Time",
+    "STRING_FOR_LOOP_STATION_TRANSPOSE": "Transpose",
     "STRING_FOR_TRACK_STILL_HAS_CLIPS_IN_SESSION": "Track still has clips in session",
     "STRING_FOR_DELETE_ALL_TRACKS_CLIPS_FIRST": "Delete all track's clips first",
     "STRING_FOR_CANT_DELETE_FINAL_CLIP": "Can't delete final Clip",

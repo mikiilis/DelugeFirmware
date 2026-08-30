@@ -154,8 +154,8 @@ void LoopStationView::restoreBoundPhrases() {
 				phraseLength = history.revisions.front().loopLength;
 			}
 			bool hasPhrase = !audioClip->isEmpty(false) && history.hasCurrent();
-			engine_->restoreBoundPhrase(slot, phraseLength, hasPhrase && currentSong->isClipActive(audioClip), hasPhrase,
-			                            history.revisions.size(), history.cursor);
+			engine_->restoreBoundPhrase(slot, phraseLength, hasPhrase && currentSong->isClipActive(audioClip),
+			                            hasPhrase, history.revisions.size(), history.cursor);
 		}
 	}
 }
@@ -252,10 +252,10 @@ bool LoopStationView::beginCapture(SlotId slot, bool overdub, uint32_t tick) {
 	if (overdub && !clip->voiceSample && playbackHandler.isEitherClockActive()) {
 		uint32_t length = std::max<int32_t>(1, clip->loopLength);
 		uint32_t logicalPhase = loopPhaseAt(tick, engine_->track(slot).playbackStartTick, length);
-		clip->setPos(modelStack,
-		             static_cast<int32_t>(samplePhaseForLoopPhase(
-		                 logicalPhase, clip->loopStationSampleZeroTicks, length)),
-		             true);
+		clip->setPos(
+		    modelStack,
+		    static_cast<int32_t>(samplePhaseForLoopPhase(logicalPhase, clip->loopStationSampleZeroTicks, length)),
+		    true);
 		clip->resumePlayback(modelStack, true);
 	}
 	playbackHandler.recording = RecordingMode::NORMAL;
@@ -295,8 +295,7 @@ CaptureFinish LoopStationView::finishCapture(SlotId slot, bool overdub, uint32_t
 	uint32_t replacementSampleZero = 0;
 	if (overdub && engine_) {
 		auto const& runtime = engine_->track(slot);
-		replacementSampleZero =
-		    loopPhaseAt(runtime.captureStartTick, runtime.playbackStartTick, targetLength);
+		replacementSampleZero = loopPhaseAt(runtime.captureStartTick, runtime.playbackStartTick, targetLength);
 	}
 	int32_t oldLength = clip->loopLength;
 	clip->loopLength = targetLength;
@@ -344,6 +343,15 @@ CaptureFinish LoopStationView::finishCapture(SlotId slot, bool overdub, uint32_t
 	bool accepted = clip->sampleHolder.audioFile && (!overdub || clip->sampleHolder.audioFile != oldAudioFile);
 	if (accepted) {
 		clip->loopStationSampleZeroTicks = overdub ? replacementSampleZero : 0;
+
+		// Apply Loop Station track transpose to the recorded clip
+		auto const& settings = currentSong->loopStation.tracks[static_cast<size_t>(slot)].settings;
+		if (settings.transpose != 0 || settings.transposeCents != 0) {
+			clip->sampleHolder.transpose = settings.transpose;
+			clip->sampleHolder.cents = settings.transposeCents;
+			clip->sampleHolder.recalculateNeutralPhaseIncrement();
+		}
+
 		if (!overdub) {
 			// AudioClip normally time-stretches its sample to loopLength. Derive a
 			// playable whole-tick endpoint which never exceeds the actual take,
@@ -371,8 +379,8 @@ CaptureFinish LoopStationView::finishCapture(SlotId slot, bool overdub, uint32_t
 		auto const& runtime = engine_->track(slot);
 		uint32_t currentTick = static_cast<uint32_t>(musicalPositionQ16() >> 16);
 		uint32_t logicalPhase = loopPhaseAt(currentTick, runtime.playbackStartTick, targetLength);
-		int32_t position = static_cast<int32_t>(
-		    samplePhaseForLoopPhase(logicalPhase, clip->loopStationSampleZeroTicks, targetLength));
+		int32_t position =
+		    static_cast<int32_t>(samplePhaseForLoopPhase(logicalPhase, clip->loopStationSampleZeroTicks, targetLength));
 		clip->setPos(modelStack, position, true);
 		clip->resumePlayback(modelStack, true);
 	}
@@ -445,10 +453,10 @@ void LoopStationView::stateChanged(SlotId slot, TrackState state) {
 			uint32_t playbackStart = engine_->track(slot).playbackStartTick;
 			uint32_t length = std::max<int32_t>(1, clip->loopLength);
 			uint32_t logicalPhase = loopPhaseAt(currentTick, playbackStart, length);
-			clip->setPos(modelStack,
-			             static_cast<int32_t>(samplePhaseForLoopPhase(
-			                 logicalPhase, clip->loopStationSampleZeroTicks, length)),
-			             true);
+			clip->setPos(
+			    modelStack,
+			    static_cast<int32_t>(samplePhaseForLoopPhase(logicalPhase, clip->loopStationSampleZeroTicks, length)),
+			    true);
 			clip->resumePlayback(modelStack, true);
 		}
 		refreshMonitoring();
@@ -467,10 +475,10 @@ void LoopStationView::stateChanged(SlotId slot, TrackState state) {
 			uint32_t playbackStart = engine_->track(slot).playbackStartTick;
 			uint32_t length = std::max<int32_t>(1, clip->loopLength);
 			uint32_t logicalPhase = loopPhaseAt(currentTick, playbackStart, length);
-			clip->setPos(modelStack,
-			             static_cast<int32_t>(samplePhaseForLoopPhase(
-			                 logicalPhase, clip->loopStationSampleZeroTicks, length)),
-			             true);
+			clip->setPos(
+			    modelStack,
+			    static_cast<int32_t>(samplePhaseForLoopPhase(logicalPhase, clip->loopStationSampleZeroTicks, length)),
+			    true);
 			clip->resumePlayback(modelStack, true);
 		}
 		// Non-empty Audio Clips overdub by recording their own output. The
@@ -531,7 +539,7 @@ void LoopStationView::refreshMonitoring() {
 				enabled = !physicalSourceClaimed[sourceIndex];
 				physicalSourceClaimed[sourceIndex] = true;
 			}
-			output->setLoopStationMonitoring(enabled);
+			output->setLoopStationMonitoring(enabled, settings.transpose, settings.transposeCents);
 		}
 	}
 }
@@ -563,8 +571,7 @@ void LoopStationView::dispatchCentreGesture(SlotId slot, uint32_t pressSample) {
 		playbackHandler.setupPlaybackUsingInternalClock(0, false, false, true);
 	}
 	auto now = transport();
-	uint32_t gestureMs =
-	    static_cast<uint32_t>((static_cast<uint64_t>(pressSample) * 1000) / kSampleRate);
+	uint32_t gestureMs = static_cast<uint32_t>((static_cast<uint64_t>(pressSample) * 1000) / kSampleRate);
 	engine_->centrePressed(slot, now, gestureMs);
 	updateRecordingMode();
 	refreshMonitoring();
@@ -648,8 +655,7 @@ ActionResult LoopStationView::padAction(int32_t x, int32_t y, int32_t velocity) 
 	bool dispatchedOnPress = centreGestureDispatched_[index];
 	centreGestureDispatched_[index] = false;
 	uint32_t heldSamples = AudioEngine::audioSampleTimer - centrePressSample_[index];
-	if (!dispatchedOnPress && heldSamples >= 2 * kSampleRate
-	    && engine_->track(slot).state == TrackState::STOPPED) {
+	if (!dispatchedOnPress && heldSamples >= 2 * kSampleRate && engine_->track(slot).state == TrackState::STOPPED) {
 		clearBackingClip(slot);
 		engine_->clearHeld(slot);
 	}
@@ -899,10 +905,8 @@ bool LoopStationView::renderSidebar(uint32_t whichRows, RGB image[][kDisplayWidt
 
 void LoopStationView::renderOLED(deluge::hid::display::oled_canvas::Canvas& canvas) {
 	canvas.clearAreaExact(0, OLED_MAIN_TOPMOST_PIXEL, OLED_MAIN_WIDTH_PIXELS - 1, OLED_MAIN_HEIGHT_PIXELS - 1);
-	int32_t y = OLED_MAIN_TOPMOST_PIXEL
-	            + (OLED_MAIN_HEIGHT_PIXELS - OLED_MAIN_TOPMOST_PIXEL - kTextTitleSizeY) / 2;
-	canvas.drawStringCentred(l10n::get(l10n::String::STRING_FOR_LOOP_STATION), y, kTextTitleSpacingX,
-	                         kTextTitleSizeY);
+	int32_t y = OLED_MAIN_TOPMOST_PIXEL + (OLED_MAIN_HEIGHT_PIXELS - OLED_MAIN_TOPMOST_PIXEL - kTextTitleSizeY) / 2;
+	canvas.drawStringCentred(l10n::get(l10n::String::STRING_FOR_LOOP_STATION), y, kTextTitleSpacingX, kTextTitleSizeY);
 }
 
 void LoopStationView::graphicsRoutine() {

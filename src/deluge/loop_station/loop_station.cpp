@@ -47,6 +47,8 @@ void SongModel::sanitize() {
 		settings.stopMode =
 		    clampEnum<StopMode, StopMode::FADE>(static_cast<uint32_t>(settings.stopMode), StopMode::LOOP_END);
 		settings.fadeTimeBars = std::max<uint16_t>(settings.fadeTimeBars, 1);
+		settings.transpose = std::clamp<int16_t>(settings.transpose, -24, 24);
+		settings.transposeCents = std::clamp<int8_t>(settings.transposeCents, -50, 50);
 	}
 }
 
@@ -102,6 +104,8 @@ int32_t readTrackParameter(SongModel const& model, SlotId slot, TrackParameter p
 		return static_cast<int32_t>(settings.stopMode);
 	case TrackParameter::FADE_TIME_BARS:
 		return settings.fadeTimeBars;
+	case TrackParameter::TRANSPOSE:
+		return settings.transpose * 100 + settings.transposeCents;
 	}
 	return 0;
 }
@@ -144,6 +148,11 @@ void writeTrackParameter(SongModel& model, SlotId slot, TrackParameter parameter
 	case TrackParameter::FADE_TIME_BARS:
 		settings.fadeTimeBars = static_cast<uint16_t>(std::clamp<int32_t>(value, 1, UINT16_MAX));
 		break;
+	case TrackParameter::TRANSPOSE: {
+		int32_t valueInCents = std::clamp<int32_t>(value, -2400, 2400);
+		settings.transpose = static_cast<int16_t>(valueInCents / 100);
+		settings.transposeCents = static_cast<int8_t>(valueInCents % 100);
+	} break;
 	}
 }
 
@@ -157,8 +166,8 @@ void Engine::resetRuntime() {
 	nextRevision_ = 1;
 }
 
-void Engine::restoreBoundPhrase(SlotId slot, uint32_t phraseLength, bool playing, bool hasPhrase,
-                                uint32_t historySize, int32_t historyCursor) {
+void Engine::restoreBoundPhrase(SlotId slot, uint32_t phraseLength, bool playing, bool hasPhrase, uint32_t historySize,
+                                int32_t historyCursor) {
 	auto& runtime = track(slot);
 	runtime = {};
 	runtime.phraseLength = phraseLength;

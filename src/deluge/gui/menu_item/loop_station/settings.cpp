@@ -6,12 +6,13 @@
 #include "gui/menu_item/loop_station/settings.h"
 
 #include "definitions.h"
-#include "gui/menu_item/value_scaling.h"
 #include "gui/menu_item/audio_clip/attack.h"
+#include "gui/menu_item/decimal.h"
 #include "gui/menu_item/horizontal_menu.h"
 #include "gui/menu_item/integer.h"
 #include "gui/menu_item/selection.h"
 #include "gui/menu_item/toggle.h"
+#include "gui/menu_item/value_scaling.h"
 #include "gui/menu_item/voice/priority.h"
 #include "gui/ui/menus.h"
 #include "gui/views/loop_station_view.h"
@@ -173,6 +174,36 @@ public:
 	const char* getUnit() override { return " bars"; }
 };
 
+class TrackTranspose final : public Decimal {
+public:
+	using Decimal::Decimal;
+
+	void readCurrentValue() override {
+		auto const& settings = model().tracks[static_cast<size_t>(activeSlot)].settings;
+		this->setValue(computeCurrentValueForTranspose(settings.transpose, settings.transposeCents));
+	}
+	void writeCurrentValue() override {
+		int32_t transpose, cents;
+		computeFinalValuesForTranspose(this->getValue(), &transpose, &cents);
+
+		auto& settings = model().tracks[static_cast<size_t>(activeSlot)].settings;
+		settings.transpose = static_cast<int16_t>(transpose);
+		settings.transposeCents = static_cast<int8_t>(cents);
+		writeTrackParameter(model(), activeSlot, TrackParameter::TRANSPOSE, this->getValue());
+
+		// Apply immediately to live monitoring if active
+		if (loopStationView.hasActiveEngine()) {
+			loopStationView.refreshMonitoring();
+		}
+	}
+
+	[[nodiscard]] int32_t getMinValue() const override { return -2400; }
+	[[nodiscard]] int32_t getMaxValue() const override { return 2400; }
+	[[nodiscard]] int32_t getNumDecimalPlaces() const override { return 2; }
+	const char* getUnit() { return "st"; }
+};
+} // namespace
+
 PLACE_SDRAM_BSS GlobalSelection recordAction{l10n::String::STRING_FOR_LOOP_STATION_RECORD_ACTION,
                                              GlobalParameter::RECORD_ACTION};
 PLACE_SDRAM_BSS GlobalSelection recordQuantize{l10n::String::STRING_FOR_LOOP_STATION_RECORD_QUANTIZE,
@@ -191,17 +222,32 @@ PLACE_SDRAM_BSS TrackToggle loopSync{l10n::String::STRING_FOR_LOOP_STATION_LOOP_
 PLACE_SDRAM_BSS TrackSelection startMode{l10n::String::STRING_FOR_LOOP_STATION_START_MODE, TrackParameter::START_MODE};
 PLACE_SDRAM_BSS TrackSelection stopMode{l10n::String::STRING_FOR_LOOP_STATION_STOP_MODE, TrackParameter::STOP_MODE};
 PLACE_SDRAM_BSS FadeTime fadeTime{l10n::String::STRING_FOR_LOOP_STATION_FADE_TIME};
-} // namespace
+PLACE_SDRAM_BSS TrackTranspose transpose{l10n::String::STRING_FOR_LOOP_STATION_TRANSPOSE};
 
 PLACE_SDRAM_BSS Submenu globalSettingsMenu{l10n::String::STRING_FOR_LOOP_STATION,
                                            {&recordAction, &recordQuantize, &dimBorderColour}};
 
 PLACE_SDRAM_BSS Submenu trackSettingsMenu{l10n::String::STRING_FOR_LOOP_STATION_TRACK,
-	                                      {&source, &sourceTrack, &monitoring, &duration, &progressColour, &playback,
-	                                       &loopSync, &startMode, &stopMode, &fadeTime, &audioClipActionsMenu,
-	                                       &audioClipMasterMenu, &audioCompMenu, &globalFiltersMenu, &audioClipFXMenu,
-	                                       &globalSidechainMenu, &audioClipSampleMenu, &audioClipAttackMenu,
-	                                       &priorityMenu}};
+                                          {&source,
+                                           &sourceTrack,
+                                           &monitoring,
+                                           &duration,
+                                           &progressColour,
+                                           &playback,
+                                           &loopSync,
+                                           &startMode,
+                                           &stopMode,
+                                           &fadeTime,
+                                           &transpose,
+                                           &audioClipActionsMenu,
+                                           &audioClipMasterMenu,
+                                           &audioCompMenu,
+                                           &globalFiltersMenu,
+                                           &audioClipFXMenu,
+                                           &globalSidechainMenu,
+                                           &audioClipSampleMenu,
+                                           &audioClipAttackMenu,
+                                           &priorityMenu}};
 
 void selectTrack(SlotId slot) {
 	activeSlot = slot;
