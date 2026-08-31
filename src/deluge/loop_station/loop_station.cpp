@@ -224,11 +224,10 @@ void Engine::centrePressed(SlotId slot, Transport const& transport, uint32_t ges
 		return;
 	}
 	bool doubleTap = isDoubleTap(runtime, gestureTimeMs);
-	if (doubleTap && runtime.provisionalOverdub && runtime.state == TrackState::OVERDUBBING) {
+	if (doubleTap && runtime.state == TrackState::OVERDUBBING) {
 		if (delegate_) {
 			delegate_->abortCapture(slot, true);
 		}
-		runtime.provisionalOverdub = false;
 		runtime.event = {};
 		transition(slot, TrackState::PLAYING);
 		stop(slot, transport.tick);
@@ -264,40 +263,33 @@ void Engine::centrePressed(SlotId slot, Transport const& transport, uint32_t ges
 		break;
 	}
 	case TrackState::PLAYING:
-		if (runtime.finishingOverdub) {
-			break;
-		}
 		if (doubleTap) {
 			stop(slot, transport.tick);
 		}
 		else if (settings.playback == PlaybackMode::ONE_SHOT) {
 			runtime.playbackStartTick = transport.tick;
 		}
+		else if (runtime.finishingOverdub) {
+			// Previous overdub still finishing in background - ignore new overdub request
+		}
 		else {
-			// A loop-station gesture is immediate. Capture one complete pass from
-			// the current phase instead of waiting for the next phrase boundary.
+			// Overdub starts immediately at current position.
 			execute(slot, PendingAction::START_OVERDUB, transport, transport.tick);
-			runtime.provisionalOverdub = runtime.state == TrackState::OVERDUBBING;
 		}
 		break;
 	case TrackState::OVERDUBBING:
-		if (doubleTap && runtime.provisionalOverdub) {
+		if (doubleTap) {
 			if (delegate_) {
 				delegate_->abortCapture(slot, true);
 			}
-			runtime.provisionalOverdub = false;
 			stop(slot, transport.tick);
 		}
 		else {
-			uint32_t target = runtime.overdubEndTick;
-			if (target > transport.tick) {
-				// Return to Play immediately while the recorder fills the untouched
-				// remainder of this fixed-length pass in the background.
+			// Press center to stop overdub early - return to PLAY immediately,
+			// but recorder continues in background for the full phrase.
+			if (!runtime.finishingOverdub) {
 				runtime.finishingOverdub = true;
 				transition(slot, TrackState::PLAYING);
-			}
-			else {
-				finishCapture(slot, true, transport.tick, transport.tick);
 			}
 		}
 		break;
@@ -352,10 +344,13 @@ void Engine::beginCapture(SlotId slot, bool overdub, uint32_t tick, Transport co
 	}
 	runtime.captureStartTick = tick;
 	runtime.event = {};
+	runtime.overdubStartTick = 0;
 	runtime.overdubEndTick = 0;
 	runtime.finishingOverdub = false;
 	runtime.error = Error::NONE;
 	if (overdub) {
+		runtime.overdubStartTick = tick;
+		// Overdub recorder runs for exactly one full phrase length.
 		setOverdubEnd(runtime, tick);
 	}
 	transition(slot, overdub ? TrackState::OVERDUBBING : TrackState::RECORDING);
@@ -376,7 +371,12 @@ void Engine::finishCapture(SlotId slot, bool overdub, uint32_t tick, uint32_t re
 		transition(slot, overdub ? TrackState::PLAYING : TrackState::EMPTY);
 		return;
 	}
-	bool crop = requestedTick < tick;
+	if (overdub) {
+		runtime.overdubEndTick = tick;
+	}
+	// Overdubs always capture exactly one full phrase length - never crop.
+	// Crop only applies to initial recording with Smart quantization.
+	bool crop = !overdub && requestedTick < tick;
 	auto finish = delegate_ ? delegate_->finishCapture(slot, overdub, length, crop) : CaptureFinish{};
 	if (!finish.accepted) {
 		fail(slot, Error::SD_CARD);
@@ -384,7 +384,6 @@ void Engine::finishCapture(SlotId slot, bool overdub, uint32_t tick, uint32_t re
 	}
 	uint32_t committedLength = finish.committedLength ? finish.committedLength : length;
 	runtime.event = {};
-	runtime.provisionalOverdub = false;
 	if (finish.asynchronous) {
 		runtime.committingLength = committedLength;
 		runtime.committingOverdub = overdub;
@@ -401,12 +400,8 @@ void Engine::finishCapture(SlotId slot, bool overdub, uint32_t tick, uint32_t re
 
 void Engine::completeCapture(SlotId slot, bool overdub, uint32_t length) {
 	auto& runtime = track(slot);
-	runtime.finishingOverdub = false;
 	if (overdub) {
 		runtime.currentRevision = nextRevision_++;
-		// Keep the first take's logical phase-zero. The delegate records the
-		// cumulative WAV's physical sample-zero separately when an overdub starts
-		// mid-loop, so rebasing playback here would incorrectly move the phrase.
 	}
 	else {
 		runtime.currentRevision = nextRevision_++;
@@ -421,7 +416,6 @@ void Engine::completeCapture(SlotId slot, bool overdub, uint32_t length) {
 	runtime.historyCursor++;
 	refreshHistoryAvailability(slot);
 	TrackState destination = TrackState::PLAYING;
-	runtime.provisionalOverdub = false;
 	if (!exiting_ && !overdub && model_.global.recordAction == RecordAction::RECORD_OVERDUB_PLAY
 	    && model_.tracks[indexOf(slot)].settings.playback == PlaybackMode::LOOP) {
 		// REC→DUB starts one overdub pass at the fresh phrase boundary.
@@ -433,11 +427,6 @@ void Engine::completeCapture(SlotId slot, bool overdub, uint32_t length) {
 		}
 		else {
 			setOverdubEnd(runtime, runtime.captureStartTick);
-			// REC→DUB enters overdub immediately after committing the first
-			// take. Treat that automatically opened layer like a manually opened
-			// provisional overdub so a quick skip aborts it without replacing the
-			// newly recorded phrase.
-			runtime.provisionalOverdub = true;
 		}
 	}
 	transition(slot, destination);
@@ -456,7 +445,6 @@ void Engine::stop(SlotId slot, uint32_t tick) {
 	auto& runtime = track(slot);
 	runtime.event = {};
 	runtime.overdubEndTick = 0;
-	runtime.provisionalOverdub = false;
 	if (runtime.state == TrackState::RECORDING || runtime.state == TrackState::OVERDUBBING) {
 		finishCapture(slot, runtime.state == TrackState::OVERDUBBING, tick, tick);
 		if (runtime.state == TrackState::COMMITTING) {
@@ -482,9 +470,8 @@ void Engine::processTick(Transport const& transport) {
 			execute(slot, event.action, transport, event.requestedTick);
 		}
 
-		// An overdub never establishes a new duration. It records only until
-		// the next boundary of the existing phrase, then immediately returns
-		// the track to Play.
+		// An overdub records for exactly one full phrase length from its start tick,
+		// then auto-commits and returns to PLAYING.
 		if ((runtime.state == TrackState::OVERDUBBING || runtime.finishingOverdub) && runtime.overdubEndTick != 0
 		    && transport.tick >= runtime.overdubEndTick) {
 			uint32_t endTick = runtime.overdubEndTick;
@@ -518,9 +505,11 @@ bool Engine::requestExit(Transport const& transport) {
 	for (size_t i = 0; i < runtime_.size(); ++i) {
 		auto slot = static_cast<SlotId>(i);
 		auto& runtime = runtime_[i];
-		if (runtime.state == TrackState::RECORDING || runtime.state == TrackState::OVERDUBBING) {
+		if (runtime.state == TrackState::RECORDING || runtime.state == TrackState::OVERDUBBING
+		    || runtime.finishingOverdub) {
 			uint32_t target = transport.tick;
-			if (runtime.state == TrackState::OVERDUBBING && runtime.overdubEndTick > transport.tick) {
+			if ((runtime.state == TrackState::OVERDUBBING || runtime.finishingOverdub)
+			    && runtime.overdubEndTick > transport.tick) {
 				// The output-bounce overdub must commit a complete, aligned pass.
 				target = runtime.overdubEndTick;
 			}
@@ -536,7 +525,8 @@ bool Engine::requestExit(Transport const& transport) {
 				schedule(slot, action, target, target);
 			}
 			else {
-				finishCapture(slot, runtime.state == TrackState::OVERDUBBING, transport.tick, target);
+				finishCapture(slot, runtime.state == TrackState::OVERDUBBING || runtime.finishingOverdub,
+				              transport.tick, target);
 			}
 		}
 		else {
@@ -665,7 +655,6 @@ void Engine::fail(SlotId slot, Error error) {
 	}
 	runtime.event = {};
 	runtime.overdubEndTick = 0;
-	runtime.provisionalOverdub = false;
 	runtime.finishingOverdub = false;
 	runtime.error = error;
 	transition(slot, TrackState::ERROR);
