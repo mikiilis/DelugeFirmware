@@ -1,0 +1,44 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="17.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <CustomBuild Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\etl-subbuild\CMakeFiles\f5b721eb81924d7be4ef289c93cb9d34\etl-populate-mkdir.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+    <CustomBuild Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\etl-subbuild\CMakeFiles\f5b721eb81924d7be4ef289c93cb9d34\etl-populate-download.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+    <CustomBuild Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\etl-subbuild\CMakeFiles\f5b721eb81924d7be4ef289c93cb9d34\etl-populate-update.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+    <CustomBuild Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\etl-subbuild\CMakeFiles\f5b721eb81924d7be4ef289c93cb9d34\etl-populate-patch.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+    <CustomBuild Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\etl-subbuild\CMakeFiles\f5b721eb81924d7be4ef289c93cb9d34\etl-populate-configure.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+    <CustomBuild Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\etl-subbuild\CMakeFiles\f5b721eb81924d7be4ef289c93cb9d34\etl-populate-build.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+    <CustomBuild Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\etl-subbuild\CMakeFiles\f5b721eb81924d7be4ef289c93cb9d34\etl-populate-install.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+    <CustomBuild Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\etl-subbuild\CMakeFiles\f5b721eb81924d7be4ef289c93cb9d34\etl-populate-test.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+    <CustomBuild Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\etl-subbuild\CMakeFiles\c8d1dd28e93834f5794ab1b23c820f4d\etl-populate-complete.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+    <CustomBuild Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\etl-subbuild\CMakeFiles\b57d0395cd9079ff60ea080d06dfb5ec\etl-populate.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+    <CustomBuild Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\etl-subbuild\CMakeLists.txt" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\etl-subbuild\CMakeFiles\etl-populate" />
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="CMake Rules">
+      <UniqueIdentifier>{3B834EC6-8177-3E01-8FB2-8A2ADEF478E4}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+</Project>

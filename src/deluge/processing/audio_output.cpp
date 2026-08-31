@@ -536,11 +536,8 @@ renderEnvelope:
 			}
 			recorder->feedAudio(capture, true, 2);
 		}
-		if (!isClipActive) {
-			// The backing render above existed only for the private recorder. Keep
-			// normal mute/solo routing intact in the audible output.
-			std::ranges::fill(output, StereoSample{});
-		}
+		// During overdub, the existing loop should remain audible.
+		// Don't zero the output - the clip has an existing loop that was just rendered.
 	}
 
 	// add in the monitored audio if in sampler or looper mode

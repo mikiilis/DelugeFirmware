@@ -1,0 +1,22 @@
+# Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
+# file Copyright.txt or https://cmake.org/licensing for details.
+
+cmake_minimum_required(VERSION 3.5)
+
+file(MAKE_DIRECTORY
+  "C:/Users/Mikiilis/Documents/code/DelugeFirmware/tests/unit/build_tests/_deps/etl-src"
+  "C:/Users/Mikiilis/Documents/code/DelugeFirmware/tests/unit/build_tests/_deps/etl-build"
+  "C:/Users/Mikiilis/Documents/code/DelugeFirmware/tests/unit/build_tests/_deps/etl-subbuild/etl-populate-prefix"
+  "C:/Users/Mikiilis/Documents/code/DelugeFirmware/tests/unit/build_tests/_deps/etl-subbuild/etl-populate-prefix/tmp"
+  "C:/Users/Mikiilis/Documents/code/DelugeFirmware/tests/unit/build_tests/_deps/etl-subbuild/etl-populate-prefix/src/etl-populate-stamp"
+  "C:/Users/Mikiilis/Documents/code/DelugeFirmware/tests/unit/build_tests/_deps/etl-subbuild/etl-populate-prefix/src"
+  "C:/Users/Mikiilis/Documents/code/DelugeFirmware/tests/unit/build_tests/_deps/etl-subbuild/etl-populate-prefix/src/etl-populate-stamp"
+)
+
+set(configSubDirs Debug)
+foreach(subDir IN LISTS configSubDirs)
+    file(MAKE_DIRECTORY "C:/Users/Mikiilis/Documents/code/DelugeFirmware/tests/unit/build_tests/_deps/etl-subbuild/etl-populate-prefix/src/etl-populate-stamp/${subDir}")
+endforeach()
+if(cfgdir)
+  file(MAKE_DIRECTORY "C:/Users/Mikiilis/Documents/code/DelugeFirmware/tests/unit/build_tests/_deps/etl-subbuild/etl-populate-prefix/src/etl-populate-stamp${cfgdir}") # cfgdir has leading slash
+endif()

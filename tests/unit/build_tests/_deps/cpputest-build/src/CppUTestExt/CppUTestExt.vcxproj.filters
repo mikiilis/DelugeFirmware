@@ -1,0 +1,123 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="17.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <ClCompile Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\src\CppUTestExt\CodeMemoryReportFormatter.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\src\CppUTestExt\GTest.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\src\CppUTestExt\IEEE754ExceptionsPlugin.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\src\CppUTestExt\MemoryReporterPlugin.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\src\CppUTestExt\MockFailure.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\src\CppUTestExt\MockSupportPlugin.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\src\CppUTestExt\MockActualCall.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\src\CppUTestExt\MockSupport_c.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\src\CppUTestExt\MemoryReportAllocator.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\src\CppUTestExt\MockExpectedCall.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\src\CppUTestExt\MockNamedValue.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\src\CppUTestExt\OrderedTest.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\src\CppUTestExt\MemoryReportFormatter.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\src\CppUTestExt\MockExpectedCallsList.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\src\CppUTestExt\MockSupport.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\include\CppUTestExt\CodeMemoryReportFormatter.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\include\CppUTestExt\IEEE754ExceptionsPlugin.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\include\CppUTestExt\MemoryReportAllocator.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\include\CppUTestExt\MockExpectedCall.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\include\CppUTestExt\MockCheckedExpectedCall.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\include\CppUTestExt\MockExpectedCallsList.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\include\CppUTestExt\MockSupportPlugin.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\include\CppUTestExt\MemoryReportFormatter.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\include\CppUTestExt\MockFailure.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\include\CppUTestExt\MockSupport.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\include\CppUTestExt\MockSupport_c.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\include\CppUTestExt\GMock.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\include\CppUTestExt\GTest.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\include\CppUTestExt\GTestSupport.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\include\CppUTestExt\MemoryReporterPlugin.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\include\CppUTestExt\OrderedTest.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\include\CppUTestExt\GTestConvertor.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\include\CppUTestExt\MockActualCall.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\include\CppUTestExt\MockCheckedActualCall.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\include\CppUTestExt\MockNamedValue.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <CustomBuild Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\src\CppUTestExt\CMakeLists.txt" />
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="Header Files">
+      <UniqueIdentifier>{1DD059A2-F6E5-3C6B-B9EA-00F85950FEA5}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files">
+      <UniqueIdentifier>{0DDDA4B0-C06E-3762-BB19-30B3101CE06A}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+</Project>

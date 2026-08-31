@@ -1,0 +1,13 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="17.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <CustomBuild Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\CMakeFiles\a0e92583d13f8fb9f28fb695b549999a\generate.stamp.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="CMake Rules">
+      <UniqueIdentifier>{96AA9F13-7838-39E8-9C60-82F88747F8CA}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+</Project>

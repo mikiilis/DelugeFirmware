@@ -1,3 +1,6 @@
+cmake_minimum_required(VERSION 3.23)
+project(DelugeUnitTests LANGUAGES CXX)
+
 # CppUTest
 include(FetchContent)
 FetchContent_Declare(

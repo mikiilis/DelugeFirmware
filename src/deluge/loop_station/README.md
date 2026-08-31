@@ -33,28 +33,27 @@ An event is expressed in song ticks. `processTick()` executes every due event an
 The state transition implemented by a centre gesture is:
 
 ```text
-EMPTY -> RECORDING -> OVERDUBBING -> PLAYING  (REC > DUB > PLAY)
-EMPTY -> RECORDING -> PLAYING -> OVERDUBBING  (REC > PLAY > DUB)
-PLAYING -> OVERDUBBING -> PLAYING             (immediate gestures)
-PLAYING -> STOPPED                            (double tap)
-STOPPED -> PLAYING                            (centre)
-STOPPED -> EMPTY                              (two-second hold in the view)
+EMPTY -> RECORDING -> PLAYING              (first pass)
+PLAYING -> OVERDUBBING -> PLAYING          (overdub: press to start, press to stop)
+PLAYING -> STOPPED                         (double tap)
+STOPPED -> PLAYING                         (centre)
+STOPPED -> EMPTY                           (two-second hold in the view)
 ```
 
 Record and overdub transitions happen on the first centre-pad down event, rather than waiting for release of the
 coalesced 2x2 gesture. A stopped phrase remains release-dispatched so the view can distinguish Play from a two-second
 Clear hold. `SHIFT + centre` remains a menu gesture and never triggers the performance action.
 
-The first completed recording establishes `phraseLength`. A manual overdub starts immediately at the current phrase
-position and captures exactly one complete pass while preserving that length and ignoring the fresh-take fixed-duration
-setting. Pressing centre during the pass returns the visible state to `PLAYING` immediately; monitored input stops and
-the recorder fills the untouched remainder with the old loop before committing the new cumulative WAV. One-shot tracks
-retrigger from `PLAYING` and transition to `STOPPED` after `phraseLength` ticks. They never start an overdub.
+The first completed recording establishes `phraseLength`. An overdub starts **immediately** at the current position
+(no quantization) and records for exactly one full phrase length. The overdub captures the existing loop output plus
+monitored input before track FX (pre-FX dry tap). Pressing centre during overdub returns to `PLAYING` immediately;
+the recorder continues in background for the remainder of the phrase, then commits the new cumulative WAV.
+The original phrase length is preserved. One-shot tracks retrigger from `PLAYING` and transition to `STOPPED` after
+`phraseLength` ticks. They never start an overdub.
 
-The first take also permanently establishes the phrase's logical phase-zero. Because a cumulative WAV captured by a
-mid-loop overdub physically begins at that mid-loop phase, the backing Audio Clip persists the logical phase represented
-by sample-zero. Playback translates between those phases instead of rebasing `playbackStartTick`, so every layer remains
-at the performed position and the original start and length remain unchanged.
+The overdub is a copy-on-write additive layer: the existing loop is rendered at unity gain, new input is added with
+saturating addition. Silence during overdub preserves the previous revision sample-for-sample. There are no
+Replace or Feedback modes. The existing loop remains **audible** during overdub so the performer hears the context.
 
 `COMMITTING` prevents another gesture until `notifyCommitComplete()` arrives. `ERROR` is a visual failure latch. Capture and commit implementations must fail only the affected slot and preserve the previously completed phrase.
 
@@ -122,6 +121,10 @@ no-active-clock assertion.
 - Pitch, reverse, track FX, level, and pan are playback operations and must not enter stored samples.
 - Every overdub copies the old sample at unity and sums new input with signed 32-bit saturation.
 - There are no Replace or Feedback modes: silence during overdub preserves the previous revision sample-for-sample.
+- Overdub starts immediately at press position (no quantization), records for exactly one full phrase length.
+- The existing loop remains **audible** during overdub (rendered at unity gain) so the performer hears context.
+- Overdub captures a pre-FX dry tap: loop output + monitored input, both at unity, merged with saturating addition.
+- The Monitoring setting controls only the audible live return of physical input; physical input continues to be recorded when Monitoring is Off.
 - A shared tap source renders once. Physical monitor returns deduplicate only when source and input-FX fingerprint both match.
 - Bound Player-mode Audio Outputs use a runtime-only monitoring override for physical inputs. It is active only while
   the Loop Station view owns monitoring and is never serialized as the legacy Audio Output mode. Capturing tracks have

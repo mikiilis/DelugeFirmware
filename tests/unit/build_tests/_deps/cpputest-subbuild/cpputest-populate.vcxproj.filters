@@ -1,0 +1,44 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="17.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <CustomBuild Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-subbuild\CMakeFiles\a0da57379b02e4bc7e0acf2cdda7cd49\cpputest-populate-mkdir.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+    <CustomBuild Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-subbuild\CMakeFiles\a0da57379b02e4bc7e0acf2cdda7cd49\cpputest-populate-download.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+    <CustomBuild Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-subbuild\CMakeFiles\a0da57379b02e4bc7e0acf2cdda7cd49\cpputest-populate-update.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+    <CustomBuild Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-subbuild\CMakeFiles\a0da57379b02e4bc7e0acf2cdda7cd49\cpputest-populate-patch.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+    <CustomBuild Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-subbuild\CMakeFiles\a0da57379b02e4bc7e0acf2cdda7cd49\cpputest-populate-configure.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+    <CustomBuild Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-subbuild\CMakeFiles\a0da57379b02e4bc7e0acf2cdda7cd49\cpputest-populate-build.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+    <CustomBuild Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-subbuild\CMakeFiles\a0da57379b02e4bc7e0acf2cdda7cd49\cpputest-populate-install.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+    <CustomBuild Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-subbuild\CMakeFiles\a0da57379b02e4bc7e0acf2cdda7cd49\cpputest-populate-test.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+    <CustomBuild Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-subbuild\CMakeFiles\b75cc54796ff142f34fbc526eff486d5\cpputest-populate-complete.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+    <CustomBuild Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-subbuild\CMakeFiles\75a6a7f36deefe52f0f9215c1b289dfc\cpputest-populate.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+    <CustomBuild Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-subbuild\CMakeLists.txt" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-subbuild\CMakeFiles\cpputest-populate" />
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="CMake Rules">
+      <UniqueIdentifier>{605F7A1A-33E8-3265-B9C7-5392DC03C1AE}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+</Project>

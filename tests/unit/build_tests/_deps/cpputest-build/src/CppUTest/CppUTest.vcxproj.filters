@@ -1,0 +1,159 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="17.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <ClCompile Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\src\CppUTest\CommandLineArguments.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\src\CppUTest\MemoryLeakWarningPlugin.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\src\CppUTest\TestHarness_c.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\src\CppUTest\TestRegistry.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\src\CppUTest\CommandLineTestRunner.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\src\CppUTest\SimpleString.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\src\CppUTest\SimpleStringInternalCache.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\src\CppUTest\TestMemoryAllocator.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\src\CppUTest\TestResult.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\src\CppUTest\JUnitTestOutput.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\src\CppUTest\TeamCityTestOutput.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\src\CppUTest\TestFailure.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\src\CppUTest\TestOutput.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\src\CppUTest\MemoryLeakDetector.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\src\CppUTest\TestFilter.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\src\CppUTest\TestPlugin.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\src\CppUTest\TestTestingFixture.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\src\CppUTest\SimpleMutex.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\src\CppUTest\Utest.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\src\Platforms\VisualCpp\UtestPlatform.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\include\CppUTest\CommandLineArguments.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\include\CppUTest\PlatformSpecificFunctions.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\include\CppUTest\TestMemoryAllocator.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\include\CppUTest\CommandLineTestRunner.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\include\CppUTest\PlatformSpecificFunctions_c.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\include\CppUTest\TestOutput.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\include\CppUTest\CppUTestConfig.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\include\CppUTest\SimpleString.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\include\CppUTest\SimpleStringInternalCache.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\include\CppUTest\TestPlugin.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\include\CppUTest\JUnitTestOutput.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\include\CppUTest\TeamCityTestOutput.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\include\CppUTest\StandardCLibrary.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\include\CppUTest\TestRegistry.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\include\CppUTest\MemoryLeakDetector.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\include\CppUTest\TestFailure.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\include\CppUTest\TestResult.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\include\CppUTest\MemoryLeakDetectorMallocMacros.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\include\CppUTest\TestFilter.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\include\CppUTest\TestTestingFixture.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\include\CppUTest\MemoryLeakDetectorNewMacros.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\include\CppUTest\TestHarness.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\include\CppUTest\Utest.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\include\CppUTest\MemoryLeakWarningPlugin.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\include\CppUTest\TestHarness_c.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\include\CppUTest\UtestMacros.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\include\CppUTest\SimpleMutex.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <CustomBuild Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\src\CppUTest\CMakeLists.txt" />
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="Header Files">
+      <UniqueIdentifier>{1DD059A2-F6E5-3C6B-B9EA-00F85950FEA5}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files">
+      <UniqueIdentifier>{0DDDA4B0-C06E-3762-BB19-30B3101CE06A}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+</Project>

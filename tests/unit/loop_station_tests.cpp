@@ -359,15 +359,17 @@ TEST(LoopStationState, OneShotRetriggersAndStopsAtPhraseEnd) {
 	CHECK(engine.track(SlotId::ONE).state == TrackState::PLAYING);
 }
 
-TEST(LoopStationState, DoubleTapAbortsProvisionalOverdubThenStops) {
+TEST(LoopStationState, DoubleTapDuringOverdubStops) {
 	SongModel model;
 	model.global.recordAction = RecordAction::RECORD_PLAY_OVERDUB;
 	Delegate delegate;
 	Engine engine(model, &delegate);
 	engine.centrePressed(SlotId::ONE, at(0), 0);
 	engine.centrePressed(SlotId::ONE, at(48), 1000);
+	// Start overdub at next phrase boundary (96)
 	engine.centrePressed(SlotId::ONE, at(96), 2000);
 	CHECK(engine.track(SlotId::ONE).state == TrackState::OVERDUBBING);
+	// Double tap aborts overdub and stops
 	engine.centrePressed(SlotId::ONE, at(97), 2200);
 	CHECK(engine.track(SlotId::ONE).state == TrackState::STOPPED);
 	CHECK_EQUAL(1, delegate.aborts[0]);
@@ -381,11 +383,12 @@ TEST(LoopStationState, QuickSkipOfAutomaticOverdubPreservesInitialRecording) {
 
 	engine.centrePressed(SlotId::ONE, at(0), 0);
 	engine.centrePressed(SlotId::ONE, at(48), 1000);
+	// Recording finishes, auto-overdub scheduled at next phrase boundary (96)
 	CHECK(engine.track(SlotId::ONE).state == TrackState::OVERDUBBING);
-	CHECK_TRUE(engine.track(SlotId::ONE).provisionalOverdub);
 	CHECK_EQUAL(1, delegate.finishes[0]);
 	auto initialRevision = engine.track(SlotId::ONE).currentRevision;
 
+	// Skip the auto-overdub before it begins (at tick 49, before 96)
 	engine.centrePressed(SlotId::ONE, at(49), 1200);
 	CHECK(engine.track(SlotId::ONE).state == TrackState::STOPPED);
 	CHECK_EQUAL(1, delegate.aborts[0]);
@@ -465,33 +468,37 @@ TEST(LoopStationState, InitialTakeAndLatestOverdubCanBothBeUndoneAndRedone) {
 	CHECK(engine.track(SlotId::ONE).state == TrackState::PLAYING);
 }
 
-TEST(LoopStationState, LeavingOverdubReturnsToPlayImmediatelyAndFinishesRemainder) {
+TEST(LoopStationState, OverdubStartsImmediatelyRunsFullPhrase) {
 	SongModel model;
 	model.global.recordAction = RecordAction::RECORD_PLAY_OVERDUB;
 	Delegate delegate;
 	Engine engine(model, &delegate);
 	engine.centrePressed(SlotId::ONE, at(0), 0);
 	engine.centrePressed(SlotId::ONE, at(48), 1000);
-	engine.centrePressed(SlotId::ONE, at(60), 2000);
+	// Start overdub immediately at tick 96 (not quantized)
+	engine.centrePressed(SlotId::ONE, at(96), 2000);
 	CHECK(engine.track(SlotId::ONE).state == TrackState::OVERDUBBING);
-	engine.centrePressed(SlotId::ONE, at(61), 2500);
+	// Pressing centre again during overdub returns to PLAY immediately (finishingOverdub)
+	engine.centrePressed(SlotId::ONE, at(97), 2500);
 	CHECK(engine.track(SlotId::ONE).state == TrackState::PLAYING);
 	CHECK_TRUE(engine.track(SlotId::ONE).finishingOverdub);
 	CHECK_FALSE(engine.track(SlotId::ONE).event.pending());
 	CHECK_EQUAL(2, delegate.begins[0]);
 	CHECK_EQUAL(0, delegate.aborts[0]);
 	CHECK_TRUE(engine.anyCapturing());
-	engine.processTick(at(107));
+	// Overdub completes at phrase end (96 + 48 = 144)
+	engine.processTick(at(143));
 	CHECK_EQUAL(1, delegate.finishes[0]);
-	engine.processTick(at(108));
+	engine.processTick(at(144));
 	CHECK_EQUAL(2, delegate.finishes[0]);
+	CHECK(engine.track(SlotId::ONE).state == TrackState::PLAYING);
 	CHECK_FALSE(engine.track(SlotId::ONE).finishingOverdub);
 	CHECK_TRUE(engine.track(SlotId::ONE).undoAvailable);
 }
 
-TEST(LoopStationState, MidLoopOverdubPreservesInitialTakePhaseAndLength) {
+TEST(LoopStationState, OverdubStartsImmediatelyIgnoresQuantize) {
 	SongModel model;
-	model.global.quantize = QuantizeMode::OFF;
+	model.global.quantize = QuantizeMode::MEASURE;
 	model.global.recordAction = RecordAction::RECORD_PLAY_OVERDUB;
 	Engine engine(model);
 
@@ -500,12 +507,15 @@ TEST(LoopStationState, MidLoopOverdubPreservesInitialTakePhaseAndLength) {
 	CHECK_EQUAL(96, engine.track(SlotId::ONE).phraseLength);
 	CHECK_EQUAL(10, engine.track(SlotId::ONE).playbackStartTick);
 
+	// Overdub at tick 130 starts immediately (no quantization)
 	engine.centrePressed(SlotId::ONE, at(130), 2000);
-	CHECK_EQUAL(24, loopPhaseAt(engine.track(SlotId::ONE).captureStartTick,
-	                            engine.track(SlotId::ONE).playbackStartTick,
-	                            engine.track(SlotId::ONE).phraseLength));
+	CHECK_FALSE(engine.track(SlotId::ONE).event.pending());
+	CHECK(engine.track(SlotId::ONE).state == TrackState::OVERDUBBING);
+	// Overdub runs for full phrase length from start tick (130 + 96 = 226)
+	engine.processTick(at(225));
+	CHECK(engine.track(SlotId::ONE).state == TrackState::OVERDUBBING);
 	engine.processTick(at(226));
-
+	CHECK(engine.track(SlotId::ONE).state == TrackState::PLAYING);
 	CHECK_EQUAL(96, engine.track(SlotId::ONE).phraseLength);
 	CHECK_EQUAL(10, engine.track(SlotId::ONE).playbackStartTick);
 }

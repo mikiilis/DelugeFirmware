@@ -1,0 +1,150 @@
+^C:\USERS\MIKIILIS\DOCUMENTS\CODE\DELUGEFIRMWARE\TESTS\UNIT\BUILD_TESTS\_DEPS\ETL-SUBBUILD\CMAKEFILES\F5B721EB81924D7BE4EF289C93CB9D34\ETL-POPULATE-MKDIR.RULE
+setlocal
+C:\Users\Mikiilis\Documents\code\DelugeFirmware\toolchain\v22\win32-x86_64\cmake\bin\cmake.exe -Dcfgdir=/Debug -P C:/Users/Mikiilis/Documents/code/DelugeFirmware/tests/unit/build_tests/_deps/etl-subbuild/etl-populate-prefix/tmp/etl-populate-mkdirs.cmake
+if %errorlevel% neq 0 goto :cmEnd
+C:\Users\Mikiilis\Documents\code\DelugeFirmware\toolchain\v22\win32-x86_64\cmake\bin\cmake.exe -E touch C:/Users/Mikiilis/Documents/code/DelugeFirmware/tests/unit/build_tests/_deps/etl-subbuild/etl-populate-prefix/src/etl-populate-stamp/Debug/etl-populate-mkdir
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd
+^C:\USERS\MIKIILIS\DOCUMENTS\CODE\DELUGEFIRMWARE\TESTS\UNIT\BUILD_TESTS\_DEPS\ETL-SUBBUILD\CMAKEFILES\F5B721EB81924D7BE4EF289C93CB9D34\ETL-POPULATE-DOWNLOAD.RULE
+setlocal
+cd C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps
+if %errorlevel% neq 0 goto :cmEnd
+C:
+if %errorlevel% neq 0 goto :cmEnd
+C:\Users\Mikiilis\Documents\code\DelugeFirmware\toolchain\v22\win32-x86_64\cmake\bin\cmake.exe -P C:/Users/Mikiilis/Documents/code/DelugeFirmware/tests/unit/build_tests/_deps/etl-subbuild/etl-populate-prefix/tmp/etl-populate-gitclone.cmake
+if %errorlevel% neq 0 goto :cmEnd
+C:\Users\Mikiilis\Documents\code\DelugeFirmware\toolchain\v22\win32-x86_64\cmake\bin\cmake.exe -E touch C:/Users/Mikiilis/Documents/code/DelugeFirmware/tests/unit/build_tests/_deps/etl-subbuild/etl-populate-prefix/src/etl-populate-stamp/Debug/etl-populate-download
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd
+^C:\USERS\MIKIILIS\DOCUMENTS\CODE\DELUGEFIRMWARE\TESTS\UNIT\BUILD_TESTS\_DEPS\ETL-SUBBUILD\CMAKEFILES\F5B721EB81924D7BE4EF289C93CB9D34\ETL-POPULATE-UPDATE.RULE
+setlocal
+cd C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\etl-src
+if %errorlevel% neq 0 goto :cmEnd
+C:
+if %errorlevel% neq 0 goto :cmEnd
+C:\Users\Mikiilis\Documents\code\DelugeFirmware\toolchain\v22\win32-x86_64\cmake\bin\cmake.exe -Dcan_fetch=YES -P C:/Users/Mikiilis/Documents/code/DelugeFirmware/tests/unit/build_tests/_deps/etl-subbuild/etl-populate-prefix/tmp/etl-populate-gitupdate.cmake
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd
+^C:\USERS\MIKIILIS\DOCUMENTS\CODE\DELUGEFIRMWARE\TESTS\UNIT\BUILD_TESTS\_DEPS\ETL-SUBBUILD\CMAKEFILES\F5B721EB81924D7BE4EF289C93CB9D34\ETL-POPULATE-PATCH.RULE
+setlocal
+C:\Users\Mikiilis\Documents\code\DelugeFirmware\toolchain\v22\win32-x86_64\cmake\bin\cmake.exe -E echo_append
+if %errorlevel% neq 0 goto :cmEnd
+C:\Users\Mikiilis\Documents\code\DelugeFirmware\toolchain\v22\win32-x86_64\cmake\bin\cmake.exe -E touch C:/Users/Mikiilis/Documents/code/DelugeFirmware/tests/unit/build_tests/_deps/etl-subbuild/etl-populate-prefix/src/etl-populate-stamp/Debug/etl-populate-patch
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd
+^C:\USERS\MIKIILIS\DOCUMENTS\CODE\DELUGEFIRMWARE\TESTS\UNIT\BUILD_TESTS\_DEPS\ETL-SUBBUILD\CMAKEFILES\F5B721EB81924D7BE4EF289C93CB9D34\ETL-POPULATE-CONFIGURE.RULE
+setlocal
+cd C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\etl-build
+if %errorlevel% neq 0 goto :cmEnd
+C:
+if %errorlevel% neq 0 goto :cmEnd
+C:\Users\Mikiilis\Documents\code\DelugeFirmware\toolchain\v22\win32-x86_64\cmake\bin\cmake.exe -E echo_append
+if %errorlevel% neq 0 goto :cmEnd
+C:\Users\Mikiilis\Documents\code\DelugeFirmware\toolchain\v22\win32-x86_64\cmake\bin\cmake.exe -E touch C:/Users/Mikiilis/Documents/code/DelugeFirmware/tests/unit/build_tests/_deps/etl-subbuild/etl-populate-prefix/src/etl-populate-stamp/Debug/etl-populate-configure
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd
+^C:\USERS\MIKIILIS\DOCUMENTS\CODE\DELUGEFIRMWARE\TESTS\UNIT\BUILD_TESTS\_DEPS\ETL-SUBBUILD\CMAKEFILES\F5B721EB81924D7BE4EF289C93CB9D34\ETL-POPULATE-BUILD.RULE
+setlocal
+cd C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\etl-build
+if %errorlevel% neq 0 goto :cmEnd
+C:
+if %errorlevel% neq 0 goto :cmEnd
+C:\Users\Mikiilis\Documents\code\DelugeFirmware\toolchain\v22\win32-x86_64\cmake\bin\cmake.exe -E echo_append
+if %errorlevel% neq 0 goto :cmEnd
+C:\Users\Mikiilis\Documents\code\DelugeFirmware\toolchain\v22\win32-x86_64\cmake\bin\cmake.exe -E touch C:/Users/Mikiilis/Documents/code/DelugeFirmware/tests/unit/build_tests/_deps/etl-subbuild/etl-populate-prefix/src/etl-populate-stamp/Debug/etl-populate-build
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd
+^C:\USERS\MIKIILIS\DOCUMENTS\CODE\DELUGEFIRMWARE\TESTS\UNIT\BUILD_TESTS\_DEPS\ETL-SUBBUILD\CMAKEFILES\F5B721EB81924D7BE4EF289C93CB9D34\ETL-POPULATE-INSTALL.RULE
+setlocal
+cd C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\etl-build
+if %errorlevel% neq 0 goto :cmEnd
+C:
+if %errorlevel% neq 0 goto :cmEnd
+C:\Users\Mikiilis\Documents\code\DelugeFirmware\toolchain\v22\win32-x86_64\cmake\bin\cmake.exe -E echo_append
+if %errorlevel% neq 0 goto :cmEnd
+C:\Users\Mikiilis\Documents\code\DelugeFirmware\toolchain\v22\win32-x86_64\cmake\bin\cmake.exe -E touch C:/Users/Mikiilis/Documents/code/DelugeFirmware/tests/unit/build_tests/_deps/etl-subbuild/etl-populate-prefix/src/etl-populate-stamp/Debug/etl-populate-install
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd
+^C:\USERS\MIKIILIS\DOCUMENTS\CODE\DELUGEFIRMWARE\TESTS\UNIT\BUILD_TESTS\_DEPS\ETL-SUBBUILD\CMAKEFILES\F5B721EB81924D7BE4EF289C93CB9D34\ETL-POPULATE-TEST.RULE
+setlocal
+cd C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\etl-build
+if %errorlevel% neq 0 goto :cmEnd
+C:
+if %errorlevel% neq 0 goto :cmEnd
+C:\Users\Mikiilis\Documents\code\DelugeFirmware\toolchain\v22\win32-x86_64\cmake\bin\cmake.exe -E echo_append
+if %errorlevel% neq 0 goto :cmEnd
+C:\Users\Mikiilis\Documents\code\DelugeFirmware\toolchain\v22\win32-x86_64\cmake\bin\cmake.exe -E touch C:/Users/Mikiilis/Documents/code/DelugeFirmware/tests/unit/build_tests/_deps/etl-subbuild/etl-populate-prefix/src/etl-populate-stamp/Debug/etl-populate-test
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd
+^C:\USERS\MIKIILIS\DOCUMENTS\CODE\DELUGEFIRMWARE\TESTS\UNIT\BUILD_TESTS\_DEPS\ETL-SUBBUILD\CMAKEFILES\C8D1DD28E93834F5794AB1B23C820F4D\ETL-POPULATE-COMPLETE.RULE
+setlocal
+C:\Users\Mikiilis\Documents\code\DelugeFirmware\toolchain\v22\win32-x86_64\cmake\bin\cmake.exe -E make_directory C:/Users/Mikiilis/Documents/code/DelugeFirmware/tests/unit/build_tests/_deps/etl-subbuild/CMakeFiles/Debug
+if %errorlevel% neq 0 goto :cmEnd
+C:\Users\Mikiilis\Documents\code\DelugeFirmware\toolchain\v22\win32-x86_64\cmake\bin\cmake.exe -E touch C:/Users/Mikiilis/Documents/code/DelugeFirmware/tests/unit/build_tests/_deps/etl-subbuild/CMakeFiles/Debug/etl-populate-complete
+if %errorlevel% neq 0 goto :cmEnd
+C:\Users\Mikiilis\Documents\code\DelugeFirmware\toolchain\v22\win32-x86_64\cmake\bin\cmake.exe -E touch C:/Users/Mikiilis/Documents/code/DelugeFirmware/tests/unit/build_tests/_deps/etl-subbuild/etl-populate-prefix/src/etl-populate-stamp/Debug/etl-populate-done
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd
+^C:\USERS\MIKIILIS\DOCUMENTS\CODE\DELUGEFIRMWARE\TESTS\UNIT\BUILD_TESTS\_DEPS\ETL-SUBBUILD\CMAKEFILES\B57D0395CD9079FF60EA080D06DFB5EC\ETL-POPULATE.RULE
+setlocal
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd
+^C:\USERS\MIKIILIS\DOCUMENTS\CODE\DELUGEFIRMWARE\TESTS\UNIT\BUILD_TESTS\_DEPS\ETL-SUBBUILD\CMAKELISTS.TXT
+setlocal
+C:\Users\Mikiilis\Documents\code\DelugeFirmware\toolchain\v22\win32-x86_64\cmake\bin\cmake.exe -SC:/Users/Mikiilis/Documents/code/DelugeFirmware/tests/unit/build_tests/_deps/etl-subbuild -BC:/Users/Mikiilis/Documents/code/DelugeFirmware/tests/unit/build_tests/_deps/etl-subbuild --check-stamp-file C:/Users/Mikiilis/Documents/code/DelugeFirmware/tests/unit/build_tests/_deps/etl-subbuild/CMakeFiles/generate.stamp
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd

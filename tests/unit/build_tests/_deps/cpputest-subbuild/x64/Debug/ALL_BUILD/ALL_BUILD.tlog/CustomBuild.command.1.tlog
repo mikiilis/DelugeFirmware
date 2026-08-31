@@ -1,0 +1,10 @@
+^C:\USERS\MIKIILIS\DOCUMENTS\CODE\DELUGEFIRMWARE\TESTS\UNIT\BUILD_TESTS\_DEPS\CPPUTEST-SUBBUILD\CMAKELISTS.TXT
+setlocal
+C:\Users\Mikiilis\Documents\code\DelugeFirmware\toolchain\v22\win32-x86_64\cmake\bin\cmake.exe -SC:/Users/Mikiilis/Documents/code/DelugeFirmware/tests/unit/build_tests/_deps/cpputest-subbuild -BC:/Users/Mikiilis/Documents/code/DelugeFirmware/tests/unit/build_tests/_deps/cpputest-subbuild --check-stamp-file C:/Users/Mikiilis/Documents/code/DelugeFirmware/tests/unit/build_tests/_deps/cpputest-subbuild/CMakeFiles/generate.stamp
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd

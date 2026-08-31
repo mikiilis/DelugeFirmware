@@ -1,0 +1,10 @@
+^C:\USERS\MIKIILIS\DOCUMENTS\CODE\DELUGEFIRMWARE\TESTS\UNIT\BUILD_TESTS\_DEPS\ETL-SUBBUILD\CMAKEFILES\B57D0395CD9079FF60EA080D06DFB5EC\GENERATE.STAMP.RULE
+setlocal
+C:\Users\Mikiilis\Documents\code\DelugeFirmware\toolchain\v22\win32-x86_64\cmake\bin\cmake.exe -SC:/Users/Mikiilis/Documents/code/DelugeFirmware/tests/unit/build_tests/_deps/etl-subbuild -BC:/Users/Mikiilis/Documents/code/DelugeFirmware/tests/unit/build_tests/_deps/etl-subbuild --check-stamp-list CMakeFiles/generate.stamp.list --vs-solution-file C:/Users/Mikiilis/Documents/code/DelugeFirmware/tests/unit/build_tests/_deps/etl-subbuild/etl-populate.sln
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd

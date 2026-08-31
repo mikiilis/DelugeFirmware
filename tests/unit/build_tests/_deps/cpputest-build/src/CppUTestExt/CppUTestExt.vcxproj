@@ -1,0 +1,315 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" ToolsVersion="17.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <PreferredToolArchitecture>x64</PreferredToolArchitecture>
+  </PropertyGroup>
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="MinSizeRel|x64">
+      <Configuration>MinSizeRel</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="RelWithDebInfo|x64">
+      <Configuration>RelWithDebInfo</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <ProjectGuid>{433D0F96-6D0E-3B99-A73E-37ACC1664D2D}</ProjectGuid>
+    <Keyword>Win32Proj</Keyword>
+    <WindowsTargetPlatformVersion>10.0.22621.0</WindowsTargetPlatformVersion>
+    <Platform>x64</Platform>
+    <ProjectName>CppUTestExt</ProjectName>
+    <VCProjectUpgraderObjectName>NoUpgrade</VCProjectUpgraderObjectName>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
+    <ConfigurationType>StaticLibrary</ConfigurationType>
+    <CharacterSet>MultiByte</CharacterSet>
+    <PlatformToolset>v143</PlatformToolset>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
+    <ConfigurationType>StaticLibrary</ConfigurationType>
+    <CharacterSet>MultiByte</CharacterSet>
+    <PlatformToolset>v143</PlatformToolset>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'" Label="Configuration">
+    <ConfigurationType>StaticLibrary</ConfigurationType>
+    <CharacterSet>MultiByte</CharacterSet>
+    <PlatformToolset>v143</PlatformToolset>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'" Label="Configuration">
+    <ConfigurationType>StaticLibrary</ConfigurationType>
+    <CharacterSet>MultiByte</CharacterSet>
+    <PlatformToolset>v143</PlatformToolset>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ImportGroup Label="ExtensionSettings">
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <PropertyGroup Label="UserMacros" />
+  <PropertyGroup>
+    <_ProjectFileVersion>10.0.20506.1</_ProjectFileVersion>
+    <OutDir Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-build\src\CppUTestExt\Debug\</OutDir>
+    <IntDir Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CppUTestExt.dir\Debug\</IntDir>
+    <TargetName Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CppUTestExt</TargetName>
+    <TargetExt Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">.lib</TargetExt>
+    <OutDir Condition="'$(Configuration)|$(Platform)'=='Release|x64'">C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-build\src\CppUTestExt\Release\</OutDir>
+    <IntDir Condition="'$(Configuration)|$(Platform)'=='Release|x64'">CppUTestExt.dir\Release\</IntDir>
+    <TargetName Condition="'$(Configuration)|$(Platform)'=='Release|x64'">CppUTestExt</TargetName>
+    <TargetExt Condition="'$(Configuration)|$(Platform)'=='Release|x64'">.lib</TargetExt>
+    <OutDir Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-build\src\CppUTestExt\MinSizeRel\</OutDir>
+    <IntDir Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">CppUTestExt.dir\MinSizeRel\</IntDir>
+    <TargetName Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">CppUTestExt</TargetName>
+    <TargetExt Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">.lib</TargetExt>
+    <OutDir Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-build\src\CppUTestExt\RelWithDebInfo\</OutDir>
+    <IntDir Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">CppUTestExt.dir\RelWithDebInfo\</IntDir>
+    <TargetName Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">CppUTestExt</TargetName>
+    <TargetExt Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">.lib</TargetExt>
+  </PropertyGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <ClCompile>
+      <AdditionalIncludeDirectories>C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\include;C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\src\CppUTest\..\..\include\Platforms\VisualCpp;C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-build;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AssemblerListingLocation>$(IntDir)</AssemblerListingLocation>
+      <BasicRuntimeChecks>EnableFastChecks</BasicRuntimeChecks>
+      <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
+      <ExceptionHandling>Sync</ExceptionHandling>
+      <ForcedIncludeFiles>CppUTest/MemoryLeakDetectorMallocMacros.h;CppUTest/MemoryLeakDetectorNewMacros.h</ForcedIncludeFiles>
+      <InlineFunctionExpansion>Disabled</InlineFunctionExpansion>
+      <Optimization>Disabled</Optimization>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <RuntimeLibrary>MultiThreadedDebugDLL</RuntimeLibrary>
+      <UseFullPaths>false</UseFullPaths>
+      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;IN_UNIT_TESTS=1;_CRT_SECURE_NO_WARNINGS=1;HAVE_CONFIG_H;CMAKE_INTDIR="Debug"</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)</ObjectFileName>
+    </ClCompile>
+    <ResourceCompile>
+      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_DEBUG;_WINDOWS;IN_UNIT_TESTS=1;_CRT_SECURE_NO_WARNINGS=1;HAVE_CONFIG_H;CMAKE_INTDIR=\"Debug\"</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\include;C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\src\CppUTest\..\..\include\Platforms\VisualCpp;C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-build;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ResourceCompile>
+    <Midl>
+      <AdditionalIncludeDirectories>C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\include;C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\src\CppUTest\..\..\include\Platforms\VisualCpp;C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-build;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <OutputDirectory>$(ProjectDir)/$(IntDir)</OutputDirectory>
+      <HeaderFileName>%(Filename).h</HeaderFileName>
+      <TypeLibraryName>%(Filename).tlb</TypeLibraryName>
+      <InterfaceIdentifierFileName>%(Filename)_i.c</InterfaceIdentifierFileName>
+      <ProxyFileName>%(Filename)_p.c</ProxyFileName>
+    </Midl>
+    <Lib>
+      <AdditionalOptions>%(AdditionalOptions) /machine:x64</AdditionalOptions>
+    </Lib>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <ClCompile>
+      <AdditionalIncludeDirectories>C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\include;C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\src\CppUTest\..\..\include\Platforms\VisualCpp;C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-build;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AssemblerListingLocation>$(IntDir)</AssemblerListingLocation>
+      <ExceptionHandling>Sync</ExceptionHandling>
+      <ForcedIncludeFiles>CppUTest/MemoryLeakDetectorMallocMacros.h;CppUTest/MemoryLeakDetectorNewMacros.h</ForcedIncludeFiles>
+      <InlineFunctionExpansion>AnySuitable</InlineFunctionExpansion>
+      <Optimization>MaxSpeed</Optimization>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
+      <UseFullPaths>false</UseFullPaths>
+      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;NDEBUG;IN_UNIT_TESTS=1;_CRT_SECURE_NO_WARNINGS=1;HAVE_CONFIG_H;CMAKE_INTDIR="Release"</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)</ObjectFileName>
+      <DebugInformationFormat>
+      </DebugInformationFormat>
+    </ClCompile>
+    <ResourceCompile>
+      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;NDEBUG;IN_UNIT_TESTS=1;_CRT_SECURE_NO_WARNINGS=1;HAVE_CONFIG_H;CMAKE_INTDIR=\"Release\"</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\include;C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\src\CppUTest\..\..\include\Platforms\VisualCpp;C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-build;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ResourceCompile>
+    <Midl>
+      <AdditionalIncludeDirectories>C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\include;C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\src\CppUTest\..\..\include\Platforms\VisualCpp;C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-build;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <OutputDirectory>$(ProjectDir)/$(IntDir)</OutputDirectory>
+      <HeaderFileName>%(Filename).h</HeaderFileName>
+      <TypeLibraryName>%(Filename).tlb</TypeLibraryName>
+      <InterfaceIdentifierFileName>%(Filename)_i.c</InterfaceIdentifierFileName>
+      <ProxyFileName>%(Filename)_p.c</ProxyFileName>
+    </Midl>
+    <Lib>
+      <AdditionalOptions>%(AdditionalOptions) /machine:x64</AdditionalOptions>
+    </Lib>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">
+    <ClCompile>
+      <AdditionalIncludeDirectories>C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\include;C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\src\CppUTest\..\..\include\Platforms\VisualCpp;C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-build;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AssemblerListingLocation>$(IntDir)</AssemblerListingLocation>
+      <ExceptionHandling>Sync</ExceptionHandling>
+      <ForcedIncludeFiles>CppUTest/MemoryLeakDetectorMallocMacros.h;CppUTest/MemoryLeakDetectorNewMacros.h</ForcedIncludeFiles>
+      <InlineFunctionExpansion>OnlyExplicitInline</InlineFunctionExpansion>
+      <Optimization>MinSpace</Optimization>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
+      <UseFullPaths>false</UseFullPaths>
+      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;NDEBUG;IN_UNIT_TESTS=1;_CRT_SECURE_NO_WARNINGS=1;HAVE_CONFIG_H;CMAKE_INTDIR="MinSizeRel"</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)</ObjectFileName>
+      <DebugInformationFormat>
+      </DebugInformationFormat>
+    </ClCompile>
+    <ResourceCompile>
+      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;NDEBUG;IN_UNIT_TESTS=1;_CRT_SECURE_NO_WARNINGS=1;HAVE_CONFIG_H;CMAKE_INTDIR=\"MinSizeRel\"</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\include;C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\src\CppUTest\..\..\include\Platforms\VisualCpp;C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-build;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ResourceCompile>
+    <Midl>
+      <AdditionalIncludeDirectories>C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\include;C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\src\CppUTest\..\..\include\Platforms\VisualCpp;C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-build;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <OutputDirectory>$(ProjectDir)/$(IntDir)</OutputDirectory>
+      <HeaderFileName>%(Filename).h</HeaderFileName>
+      <TypeLibraryName>%(Filename).tlb</TypeLibraryName>
+      <InterfaceIdentifierFileName>%(Filename)_i.c</InterfaceIdentifierFileName>
+      <ProxyFileName>%(Filename)_p.c</ProxyFileName>
+    </Midl>
+    <Lib>
+      <AdditionalOptions>%(AdditionalOptions) /machine:x64</AdditionalOptions>
+    </Lib>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">
+    <ClCompile>
+      <AdditionalIncludeDirectories>C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\include;C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\src\CppUTest\..\..\include\Platforms\VisualCpp;C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-build;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AssemblerListingLocation>$(IntDir)</AssemblerListingLocation>
+      <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
+      <ExceptionHandling>Sync</ExceptionHandling>
+      <ForcedIncludeFiles>CppUTest/MemoryLeakDetectorMallocMacros.h;CppUTest/MemoryLeakDetectorNewMacros.h</ForcedIncludeFiles>
+      <InlineFunctionExpansion>OnlyExplicitInline</InlineFunctionExpansion>
+      <Optimization>MaxSpeed</Optimization>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
+      <UseFullPaths>false</UseFullPaths>
+      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;NDEBUG;IN_UNIT_TESTS=1;_CRT_SECURE_NO_WARNINGS=1;HAVE_CONFIG_H;CMAKE_INTDIR="RelWithDebInfo"</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)</ObjectFileName>
+    </ClCompile>
+    <ResourceCompile>
+      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;NDEBUG;IN_UNIT_TESTS=1;_CRT_SECURE_NO_WARNINGS=1;HAVE_CONFIG_H;CMAKE_INTDIR=\"RelWithDebInfo\"</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\include;C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\src\CppUTest\..\..\include\Platforms\VisualCpp;C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-build;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ResourceCompile>
+    <Midl>
+      <AdditionalIncludeDirectories>C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\include;C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\src\CppUTest\..\..\include\Platforms\VisualCpp;C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-build;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <OutputDirectory>$(ProjectDir)/$(IntDir)</OutputDirectory>
+      <HeaderFileName>%(Filename).h</HeaderFileName>
+      <TypeLibraryName>%(Filename).tlb</TypeLibraryName>
+      <InterfaceIdentifierFileName>%(Filename)_i.c</InterfaceIdentifierFileName>
+      <ProxyFileName>%(Filename)_p.c</ProxyFileName>
+    </Midl>
+    <Lib>
+      <AdditionalOptions>%(AdditionalOptions) /machine:x64</AdditionalOptions>
+    </Lib>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <CustomBuild Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\src\CppUTestExt\CMakeLists.txt">
+      <UseUtf8Encoding>Always</UseUtf8Encoding>
+      <Message Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Building Custom Rule C:/Users/Mikiilis/Documents/code/DelugeFirmware/tests/unit/build_tests/_deps/cpputest-src/src/CppUTestExt/CMakeLists.txt</Message>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">setlocal
+C:\Users\Mikiilis\Documents\code\DelugeFirmware\toolchain\v22\win32-x86_64\cmake\bin\cmake.exe -SC:/Users/Mikiilis/Documents/code/DelugeFirmware/tests/unit -BC:/Users/Mikiilis/Documents/code/DelugeFirmware/tests/unit/build_tests --check-stamp-file C:/Users/Mikiilis/Documents/code/DelugeFirmware/tests/unit/build_tests/_deps/cpputest-build/src/CppUTestExt/CMakeFiles/generate.stamp
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal &amp; call :cmErrorLevel %errorlevel% &amp; goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd</Command>
+      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">%(AdditionalInputs)</AdditionalInputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-build\src\CppUTestExt\CMakeFiles\generate.stamp</Outputs>
+      <LinkObjects Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">false</LinkObjects>
+      <Message Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Building Custom Rule C:/Users/Mikiilis/Documents/code/DelugeFirmware/tests/unit/build_tests/_deps/cpputest-src/src/CppUTestExt/CMakeLists.txt</Message>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Release|x64'">setlocal
+C:\Users\Mikiilis\Documents\code\DelugeFirmware\toolchain\v22\win32-x86_64\cmake\bin\cmake.exe -SC:/Users/Mikiilis/Documents/code/DelugeFirmware/tests/unit -BC:/Users/Mikiilis/Documents/code/DelugeFirmware/tests/unit/build_tests --check-stamp-file C:/Users/Mikiilis/Documents/code/DelugeFirmware/tests/unit/build_tests/_deps/cpputest-build/src/CppUTestExt/CMakeFiles/generate.stamp
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal &amp; call :cmErrorLevel %errorlevel% &amp; goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd</Command>
+      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='Release|x64'">%(AdditionalInputs)</AdditionalInputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Release|x64'">C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-build\src\CppUTestExt\CMakeFiles\generate.stamp</Outputs>
+      <LinkObjects Condition="'$(Configuration)|$(Platform)'=='Release|x64'">false</LinkObjects>
+      <Message Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">Building Custom Rule C:/Users/Mikiilis/Documents/code/DelugeFirmware/tests/unit/build_tests/_deps/cpputest-src/src/CppUTestExt/CMakeLists.txt</Message>
+      <Command Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">setlocal
+C:\Users\Mikiilis\Documents\code\DelugeFirmware\toolchain\v22\win32-x86_64\cmake\bin\cmake.exe -SC:/Users/Mikiilis/Documents/code/DelugeFirmware/tests/unit -BC:/Users/Mikiilis/Documents/code/DelugeFirmware/tests/unit/build_tests --check-stamp-file C:/Users/Mikiilis/Documents/code/DelugeFirmware/tests/unit/build_tests/_deps/cpputest-build/src/CppUTestExt/CMakeFiles/generate.stamp
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal &amp; call :cmErrorLevel %errorlevel% &amp; goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd</Command>
+      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">%(AdditionalInputs)</AdditionalInputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-build\src\CppUTestExt\CMakeFiles\generate.stamp</Outputs>
+      <LinkObjects Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">false</LinkObjects>
+      <Message Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">Building Custom Rule C:/Users/Mikiilis/Documents/code/DelugeFirmware/tests/unit/build_tests/_deps/cpputest-src/src/CppUTestExt/CMakeLists.txt</Message>
+      <Command Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">setlocal
+C:\Users\Mikiilis\Documents\code\DelugeFirmware\toolchain\v22\win32-x86_64\cmake\bin\cmake.exe -SC:/Users/Mikiilis/Documents/code/DelugeFirmware/tests/unit -BC:/Users/Mikiilis/Documents/code/DelugeFirmware/tests/unit/build_tests --check-stamp-file C:/Users/Mikiilis/Documents/code/DelugeFirmware/tests/unit/build_tests/_deps/cpputest-build/src/CppUTestExt/CMakeFiles/generate.stamp
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal &amp; call :cmErrorLevel %errorlevel% &amp; goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd</Command>
+      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">%(AdditionalInputs)</AdditionalInputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-build\src\CppUTestExt\CMakeFiles\generate.stamp</Outputs>
+      <LinkObjects Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">false</LinkObjects>
+    </CustomBuild>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\src\CppUTestExt\CodeMemoryReportFormatter.cpp" />
+    <ClCompile Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\src\CppUTestExt\GTest.cpp" />
+    <ClCompile Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\src\CppUTestExt\IEEE754ExceptionsPlugin.cpp" />
+    <ClCompile Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\src\CppUTestExt\MemoryReporterPlugin.cpp" />
+    <ClCompile Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\src\CppUTestExt\MockFailure.cpp" />
+    <ClCompile Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\src\CppUTestExt\MockSupportPlugin.cpp" />
+    <ClCompile Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\src\CppUTestExt\MockActualCall.cpp" />
+    <ClCompile Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\src\CppUTestExt\MockSupport_c.cpp" />
+    <ClCompile Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\src\CppUTestExt\MemoryReportAllocator.cpp" />
+    <ClCompile Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\src\CppUTestExt\MockExpectedCall.cpp" />
+    <ClCompile Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\src\CppUTestExt\MockNamedValue.cpp" />
+    <ClCompile Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\src\CppUTestExt\OrderedTest.cpp" />
+    <ClCompile Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\src\CppUTestExt\MemoryReportFormatter.cpp" />
+    <ClCompile Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\src\CppUTestExt\MockExpectedCallsList.cpp" />
+    <ClCompile Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\src\CppUTestExt\MockSupport.cpp" />
+    <ClInclude Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\include\CppUTestExt\CodeMemoryReportFormatter.h" />
+    <ClInclude Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\include\CppUTestExt\IEEE754ExceptionsPlugin.h" />
+    <ClInclude Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\include\CppUTestExt\MemoryReportAllocator.h" />
+    <ClInclude Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\include\CppUTestExt\MockExpectedCall.h" />
+    <ClInclude Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\include\CppUTestExt\MockCheckedExpectedCall.h" />
+    <ClInclude Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\include\CppUTestExt\MockExpectedCallsList.h" />
+    <ClInclude Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\include\CppUTestExt\MockSupportPlugin.h" />
+    <ClInclude Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\include\CppUTestExt\MemoryReportFormatter.h" />
+    <ClInclude Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\include\CppUTestExt\MockFailure.h" />
+    <ClInclude Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\include\CppUTestExt\MockSupport.h" />
+    <ClInclude Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\include\CppUTestExt\MockSupport_c.h" />
+    <ClInclude Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\include\CppUTestExt\GMock.h" />
+    <ClInclude Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\include\CppUTestExt\GTest.h" />
+    <ClInclude Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\include\CppUTestExt\GTestSupport.h" />
+    <ClInclude Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\include\CppUTestExt\MemoryReporterPlugin.h" />
+    <ClInclude Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\include\CppUTestExt\OrderedTest.h" />
+    <ClInclude Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\include\CppUTestExt\GTestConvertor.h" />
+    <ClInclude Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\include\CppUTestExt\MockActualCall.h" />
+    <ClInclude Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\include\CppUTestExt\MockCheckedActualCall.h" />
+    <ClInclude Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src\include\CppUTestExt\MockNamedValue.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\ZERO_CHECK.vcxproj">
+      <Project>{28A2DD13-4785-311D-9ACF-6CFCF9DEBDA0}</Project>
+      <Name>ZERO_CHECK</Name>
+      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
+      <CopyToOutputDirectory>Never</CopyToOutputDirectory>
+    </ProjectReference>
+    <ProjectReference Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-build\src\CppUTest\CppUTest.vcxproj">
+      <Project>{317DF8C3-B59E-3E7E-937B-CF1C49C64639}</Project>
+      <Name>CppUTest</Name>
+    </ProjectReference>
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <ImportGroup Label="ExtensionTargets">
+  </ImportGroup>
+</Project>

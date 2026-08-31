@@ -1,0 +1,150 @@
+^C:\USERS\MIKIILIS\DOCUMENTS\CODE\DELUGEFIRMWARE\TESTS\UNIT\BUILD_TESTS\_DEPS\CPPUTEST-SUBBUILD\CMAKEFILES\A0DA57379B02E4BC7E0ACF2CDDA7CD49\CPPUTEST-POPULATE-MKDIR.RULE
+setlocal
+C:\Users\Mikiilis\Documents\code\DelugeFirmware\toolchain\v22\win32-x86_64\cmake\bin\cmake.exe -Dcfgdir=/Debug -P C:/Users/Mikiilis/Documents/code/DelugeFirmware/tests/unit/build_tests/_deps/cpputest-subbuild/cpputest-populate-prefix/tmp/cpputest-populate-mkdirs.cmake
+if %errorlevel% neq 0 goto :cmEnd
+C:\Users\Mikiilis\Documents\code\DelugeFirmware\toolchain\v22\win32-x86_64\cmake\bin\cmake.exe -E touch C:/Users/Mikiilis/Documents/code/DelugeFirmware/tests/unit/build_tests/_deps/cpputest-subbuild/cpputest-populate-prefix/src/cpputest-populate-stamp/Debug/cpputest-populate-mkdir
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd
+^C:\USERS\MIKIILIS\DOCUMENTS\CODE\DELUGEFIRMWARE\TESTS\UNIT\BUILD_TESTS\_DEPS\CPPUTEST-SUBBUILD\CMAKEFILES\A0DA57379B02E4BC7E0ACF2CDDA7CD49\CPPUTEST-POPULATE-DOWNLOAD.RULE
+setlocal
+cd C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps
+if %errorlevel% neq 0 goto :cmEnd
+C:
+if %errorlevel% neq 0 goto :cmEnd
+C:\Users\Mikiilis\Documents\code\DelugeFirmware\toolchain\v22\win32-x86_64\cmake\bin\cmake.exe -P C:/Users/Mikiilis/Documents/code/DelugeFirmware/tests/unit/build_tests/_deps/cpputest-subbuild/cpputest-populate-prefix/tmp/cpputest-populate-gitclone.cmake
+if %errorlevel% neq 0 goto :cmEnd
+C:\Users\Mikiilis\Documents\code\DelugeFirmware\toolchain\v22\win32-x86_64\cmake\bin\cmake.exe -E touch C:/Users/Mikiilis/Documents/code/DelugeFirmware/tests/unit/build_tests/_deps/cpputest-subbuild/cpputest-populate-prefix/src/cpputest-populate-stamp/Debug/cpputest-populate-download
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd
+^C:\USERS\MIKIILIS\DOCUMENTS\CODE\DELUGEFIRMWARE\TESTS\UNIT\BUILD_TESTS\_DEPS\CPPUTEST-SUBBUILD\CMAKEFILES\A0DA57379B02E4BC7E0ACF2CDDA7CD49\CPPUTEST-POPULATE-UPDATE.RULE
+setlocal
+cd C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-src
+if %errorlevel% neq 0 goto :cmEnd
+C:
+if %errorlevel% neq 0 goto :cmEnd
+C:\Users\Mikiilis\Documents\code\DelugeFirmware\toolchain\v22\win32-x86_64\cmake\bin\cmake.exe -Dcan_fetch=YES -P C:/Users/Mikiilis/Documents/code/DelugeFirmware/tests/unit/build_tests/_deps/cpputest-subbuild/cpputest-populate-prefix/tmp/cpputest-populate-gitupdate.cmake
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd
+^C:\USERS\MIKIILIS\DOCUMENTS\CODE\DELUGEFIRMWARE\TESTS\UNIT\BUILD_TESTS\_DEPS\CPPUTEST-SUBBUILD\CMAKEFILES\A0DA57379B02E4BC7E0ACF2CDDA7CD49\CPPUTEST-POPULATE-PATCH.RULE
+setlocal
+C:\Users\Mikiilis\Documents\code\DelugeFirmware\toolchain\v22\win32-x86_64\cmake\bin\cmake.exe -E echo_append
+if %errorlevel% neq 0 goto :cmEnd
+C:\Users\Mikiilis\Documents\code\DelugeFirmware\toolchain\v22\win32-x86_64\cmake\bin\cmake.exe -E touch C:/Users/Mikiilis/Documents/code/DelugeFirmware/tests/unit/build_tests/_deps/cpputest-subbuild/cpputest-populate-prefix/src/cpputest-populate-stamp/Debug/cpputest-populate-patch
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd
+^C:\USERS\MIKIILIS\DOCUMENTS\CODE\DELUGEFIRMWARE\TESTS\UNIT\BUILD_TESTS\_DEPS\CPPUTEST-SUBBUILD\CMAKEFILES\A0DA57379B02E4BC7E0ACF2CDDA7CD49\CPPUTEST-POPULATE-CONFIGURE.RULE
+setlocal
+cd C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-build
+if %errorlevel% neq 0 goto :cmEnd
+C:
+if %errorlevel% neq 0 goto :cmEnd
+C:\Users\Mikiilis\Documents\code\DelugeFirmware\toolchain\v22\win32-x86_64\cmake\bin\cmake.exe -E echo_append
+if %errorlevel% neq 0 goto :cmEnd
+C:\Users\Mikiilis\Documents\code\DelugeFirmware\toolchain\v22\win32-x86_64\cmake\bin\cmake.exe -E touch C:/Users/Mikiilis/Documents/code/DelugeFirmware/tests/unit/build_tests/_deps/cpputest-subbuild/cpputest-populate-prefix/src/cpputest-populate-stamp/Debug/cpputest-populate-configure
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd
+^C:\USERS\MIKIILIS\DOCUMENTS\CODE\DELUGEFIRMWARE\TESTS\UNIT\BUILD_TESTS\_DEPS\CPPUTEST-SUBBUILD\CMAKEFILES\A0DA57379B02E4BC7E0ACF2CDDA7CD49\CPPUTEST-POPULATE-BUILD.RULE
+setlocal
+cd C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-build
+if %errorlevel% neq 0 goto :cmEnd
+C:
+if %errorlevel% neq 0 goto :cmEnd
+C:\Users\Mikiilis\Documents\code\DelugeFirmware\toolchain\v22\win32-x86_64\cmake\bin\cmake.exe -E echo_append
+if %errorlevel% neq 0 goto :cmEnd
+C:\Users\Mikiilis\Documents\code\DelugeFirmware\toolchain\v22\win32-x86_64\cmake\bin\cmake.exe -E touch C:/Users/Mikiilis/Documents/code/DelugeFirmware/tests/unit/build_tests/_deps/cpputest-subbuild/cpputest-populate-prefix/src/cpputest-populate-stamp/Debug/cpputest-populate-build
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd
+^C:\USERS\MIKIILIS\DOCUMENTS\CODE\DELUGEFIRMWARE\TESTS\UNIT\BUILD_TESTS\_DEPS\CPPUTEST-SUBBUILD\CMAKEFILES\A0DA57379B02E4BC7E0ACF2CDDA7CD49\CPPUTEST-POPULATE-INSTALL.RULE
+setlocal
+cd C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-build
+if %errorlevel% neq 0 goto :cmEnd
+C:
+if %errorlevel% neq 0 goto :cmEnd
+C:\Users\Mikiilis\Documents\code\DelugeFirmware\toolchain\v22\win32-x86_64\cmake\bin\cmake.exe -E echo_append
+if %errorlevel% neq 0 goto :cmEnd
+C:\Users\Mikiilis\Documents\code\DelugeFirmware\toolchain\v22\win32-x86_64\cmake\bin\cmake.exe -E touch C:/Users/Mikiilis/Documents/code/DelugeFirmware/tests/unit/build_tests/_deps/cpputest-subbuild/cpputest-populate-prefix/src/cpputest-populate-stamp/Debug/cpputest-populate-install
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd
+^C:\USERS\MIKIILIS\DOCUMENTS\CODE\DELUGEFIRMWARE\TESTS\UNIT\BUILD_TESTS\_DEPS\CPPUTEST-SUBBUILD\CMAKEFILES\A0DA57379B02E4BC7E0ACF2CDDA7CD49\CPPUTEST-POPULATE-TEST.RULE
+setlocal
+cd C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\build_tests\_deps\cpputest-build
+if %errorlevel% neq 0 goto :cmEnd
+C:
+if %errorlevel% neq 0 goto :cmEnd
+C:\Users\Mikiilis\Documents\code\DelugeFirmware\toolchain\v22\win32-x86_64\cmake\bin\cmake.exe -E echo_append
+if %errorlevel% neq 0 goto :cmEnd
+C:\Users\Mikiilis\Documents\code\DelugeFirmware\toolchain\v22\win32-x86_64\cmake\bin\cmake.exe -E touch C:/Users/Mikiilis/Documents/code/DelugeFirmware/tests/unit/build_tests/_deps/cpputest-subbuild/cpputest-populate-prefix/src/cpputest-populate-stamp/Debug/cpputest-populate-test
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd
+^C:\USERS\MIKIILIS\DOCUMENTS\CODE\DELUGEFIRMWARE\TESTS\UNIT\BUILD_TESTS\_DEPS\CPPUTEST-SUBBUILD\CMAKEFILES\B75CC54796FF142F34FBC526EFF486D5\CPPUTEST-POPULATE-COMPLETE.RULE
+setlocal
+C:\Users\Mikiilis\Documents\code\DelugeFirmware\toolchain\v22\win32-x86_64\cmake\bin\cmake.exe -E make_directory C:/Users/Mikiilis/Documents/code/DelugeFirmware/tests/unit/build_tests/_deps/cpputest-subbuild/CMakeFiles/Debug
+if %errorlevel% neq 0 goto :cmEnd
+C:\Users\Mikiilis\Documents\code\DelugeFirmware\toolchain\v22\win32-x86_64\cmake\bin\cmake.exe -E touch C:/Users/Mikiilis/Documents/code/DelugeFirmware/tests/unit/build_tests/_deps/cpputest-subbuild/CMakeFiles/Debug/cpputest-populate-complete
+if %errorlevel% neq 0 goto :cmEnd
+C:\Users\Mikiilis\Documents\code\DelugeFirmware\toolchain\v22\win32-x86_64\cmake\bin\cmake.exe -E touch C:/Users/Mikiilis/Documents/code/DelugeFirmware/tests/unit/build_tests/_deps/cpputest-subbuild/cpputest-populate-prefix/src/cpputest-populate-stamp/Debug/cpputest-populate-done
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd
+^C:\USERS\MIKIILIS\DOCUMENTS\CODE\DELUGEFIRMWARE\TESTS\UNIT\BUILD_TESTS\_DEPS\CPPUTEST-SUBBUILD\CMAKEFILES\75A6A7F36DEEFE52F0F9215C1B289DFC\CPPUTEST-POPULATE.RULE
+setlocal
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd
+^C:\USERS\MIKIILIS\DOCUMENTS\CODE\DELUGEFIRMWARE\TESTS\UNIT\BUILD_TESTS\_DEPS\CPPUTEST-SUBBUILD\CMAKELISTS.TXT
+setlocal
+C:\Users\Mikiilis\Documents\code\DelugeFirmware\toolchain\v22\win32-x86_64\cmake\bin\cmake.exe -SC:/Users/Mikiilis/Documents/code/DelugeFirmware/tests/unit/build_tests/_deps/cpputest-subbuild -BC:/Users/Mikiilis/Documents/code/DelugeFirmware/tests/unit/build_tests/_deps/cpputest-subbuild --check-stamp-file C:/Users/Mikiilis/Documents/code/DelugeFirmware/tests/unit/build_tests/_deps/cpputest-subbuild/CMakeFiles/generate.stamp
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd

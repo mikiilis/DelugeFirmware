@@ -49,7 +49,6 @@ bool LoopStationView::opened() {
 	borderHeldMask_.fill(0);
 	centreGestureActive_.fill(false);
 	centreGestureDispatched_.fill(false);
-	captureOriginalLengths_.fill(0);
 	restoreBoundPhrases();
 	refreshMonitoring();
 	focusRegained();
@@ -241,23 +240,28 @@ bool LoopStationView::beginCapture(SlotId slot, bool overdub, uint32_t tick) {
 	if (!currentSong->loopStationRevisionHistory[index].prepareAppend(*clip, overdub)) {
 		return false;
 	}
-	captureOriginalLengths_[index] = std::max<int32_t>(1, clip->loopLength);
 	char modelStackMemory[MODEL_STACK_MAX_SIZE];
 	auto* modelStack = setupModelStackWithTimelineCounter(modelStackMemory, currentSong, clip);
 	clip->activeIfNoSolo = true;
 	clip->output->setActiveClip(modelStack);
-	// Attach the output recorder only after the old phrase has a live voice at
-	// the correct physical phase. Otherwise its first buffers can contain input
-	// or zeros without the backing loop and later replace the phrase with them.
-	if (overdub && !clip->voiceSample && playbackHandler.isEitherClockActive()) {
+
+	if (overdub && !clip->isEmpty(false)) {
+		// Ensure the clip voice is playing so the output recorder captures the loop.
+		// Use lastSwungTickActioned (scheduler tick) as the base, since resumePlayback
+		// uses it to compute sequenceSyncStartedAtTick. Using musicalPositionQ16()
+		// would cause a phase mismatch.
+		uint32_t currentTick = playbackHandler.lastSwungTickActioned;
+		auto const& runtime = engine_->track(slot);
 		uint32_t length = std::max<int32_t>(1, clip->loopLength);
-		uint32_t logicalPhase = loopPhaseAt(tick, engine_->track(slot).playbackStartTick, length);
+		uint32_t logicalPhase = loopPhaseAt(currentTick, runtime.playbackStartTick, length);
+		// Translate logical phase to physical sample position using the recorded sample-zero offset.
 		clip->setPos(
 		    modelStack,
 		    static_cast<int32_t>(samplePhaseForLoopPhase(logicalPhase, clip->loopStationSampleZeroTicks, length)),
 		    true);
 		clip->resumePlayback(modelStack, true);
 	}
+
 	playbackHandler.recording = RecordingMode::NORMAL;
 	::Error error = clip->beginLinearRecording(modelStack, 0);
 	if (error != ::Error::NONE) {
@@ -265,8 +269,7 @@ bool LoopStationView::beginCapture(SlotId slot, bool overdub, uint32_t tick) {
 	}
 	if (overdub && clip->recorder) {
 		// Capture stored audio plus monitored input before track FX and without
-		// normalization. The recorder runs for one unchanged phrase; disabling
-		// Overdub only removes input, so the untouched remainder stays identical.
+		// normalization. The recorder captures the clip output (loop) + input.
 		clip->recorder->captureOutputPreFX = true;
 		clip->recorder->captureOutputInputActive = true;
 		clip->recorder->allowFileAlterationAfter = false;
@@ -282,21 +285,20 @@ CaptureFinish LoopStationView::finishCapture(SlotId slot, bool overdub, uint32_t
 		return {.accepted = false};
 	}
 	SampleRecorder* recorder = clip->recorder;
-	if (recorder->status == RecorderStatus::ABORTED || recorder->hadCardError || recorder->reachedMaxFileSize
-	    || !recorder->numSamplesCaptured || (overdub && recorder->captureOutputBackingMissing)) {
+	// Check for error conditions
+	bool hasError = recorder->status == RecorderStatus::ABORTED || recorder->hadCardError
+	                || recorder->reachedMaxFileSize || !recorder->numSamplesCaptured
+	                || (overdub && recorder->captureOutputBackingMissing);
+	if (hasError) {
+		// Abort to clear the recorder state so it doesn't keep triggering errors
+		clip->abortRecording();
 		return {.accepted = false};
 	}
 
 	auto* oldAudioFile = clip->sampleHolder.audioFile;
 	String trackName;
 	trackName.set(&clip->name);
-	uint32_t targetLength =
-	    overdub ? captureOriginalLengths_[static_cast<size_t>(slot)] : std::max<uint32_t>(1, length);
-	uint32_t replacementSampleZero = 0;
-	if (overdub && engine_) {
-		auto const& runtime = engine_->track(slot);
-		replacementSampleZero = loopPhaseAt(runtime.captureStartTick, runtime.playbackStartTick, targetLength);
-	}
+	uint32_t targetLength = overdub ? clip->loopLength : std::max<uint32_t>(1, length);
 	int32_t oldLength = clip->loopLength;
 	clip->loopLength = targetLength;
 	clip->originalLength = targetLength;
@@ -320,29 +322,24 @@ CaptureFinish LoopStationView::finishCapture(SlotId slot, bool overdub, uint32_t
 			trimSamples = static_cast<int32_t>(std::min<double>(samples, std::numeric_limits<int32_t>::max()));
 		}
 	}
-	if (overdub) {
-		// AudioClip::finishLinearRecording() deliberately clears a non-empty clip
-		// before assigning the recorder Sample. That is correct for legacy Audio
-		// Clip replacement recording, but fundamentally wrong for copy-on-write
-		// Loop Station revisions. Finalize the provisional Sample and atomically
-		// change only the holder, leaving the previous Sample retained by history.
-		recorder->pointerHeldElsewhere = false;
-		recorder->endSyncedRecording(0);
-		clip->sampleHolder.filePath.set(&recorder->sample->filePath);
-		clip->sampleHolder.setAudioFile(recorder->sample, clip->sampleControls.isCurrentlyReversed(), true,
-		                                CLUSTER_DONT_LOAD);
-		clip->originalLength = clip->loopLength;
-		clip->recorder = nullptr;
-		clip->renderData.xScroll = -1;
-	}
-	else {
-		clip->finishLinearRecording(modelStack, nullptr, trimSamples);
-	}
+	// Both initial recording and overdub use the normal finish path.
+	// Overdub recorders are configured to capture pre-FX output + input.
+	clip->finishLinearRecording(modelStack, nullptr, trimSamples);
 	clip->name.set(&trackName);
 
 	bool accepted = clip->sampleHolder.audioFile && (!overdub || clip->sampleHolder.audioFile != oldAudioFile);
 	if (accepted) {
-		clip->loopStationSampleZeroTicks = overdub ? replacementSampleZero : 0;
+		// For overdubs starting mid-phrase, the new cumulative WAV's physical sample 0
+		// corresponds to the overdub start position, not the original phrase start.
+		// Track this so playback translates logical phrase position to physical sample position.
+		if (overdub && engine_) {
+			auto const& runtime = engine_->track(slot);
+			clip->loopStationSampleZeroTicks =
+			    loopPhaseAt(runtime.overdubStartTick, runtime.playbackStartTick, targetLength);
+		}
+		else {
+			clip->loopStationSampleZeroTicks = 0;
+		}
 
 		// Apply Loop Station track transpose to the recorded clip
 		auto const& settings = currentSong->loopStation.tracks[static_cast<size_t>(slot)].settings;
@@ -377,10 +374,21 @@ CaptureFinish LoopStationView::finishCapture(SlotId slot, bool overdub, uint32_t
 		size_t index = static_cast<size_t>(slot);
 		currentSong->loopStationRevisionHistory[index].appendCurrent(*clip);
 		auto const& runtime = engine_->track(slot);
-		uint32_t currentTick = static_cast<uint32_t>(musicalPositionQ16() >> 16);
-		uint32_t logicalPhase = loopPhaseAt(currentTick, runtime.playbackStartTick, targetLength);
-		int32_t position =
-		    static_cast<int32_t>(samplePhaseForLoopPhase(logicalPhase, clip->loopStationSampleZeroTicks, targetLength));
+		// Use lastSwungTickActioned (scheduler tick) as the base, since resumePlayback
+		// uses it to compute sequenceSyncStartedAtTick.
+		uint32_t currentTick = playbackHandler.lastSwungTickActioned;
+		int32_t position;
+		if (overdub) {
+			// For overdub: continue from current phase in the existing loop
+			uint32_t logicalPhase = loopPhaseAt(currentTick, runtime.playbackStartTick, targetLength);
+			position = static_cast<int32_t>(
+			    samplePhaseForLoopPhase(logicalPhase, clip->loopStationSampleZeroTicks, targetLength));
+		}
+		else {
+			// For initial recording: start playback from the beginning (position 0)
+			// The engine sets playbackStartTick = captureStartTick, so logical phase 0 = loop start
+			position = 0;
+		}
 		clip->setPos(modelStack, position, true);
 		clip->resumePlayback(modelStack, true);
 	}
@@ -393,10 +401,6 @@ void LoopStationView::abortCapture(SlotId slot, bool overdub) {
 		return;
 	}
 	clip->abortRecording();
-	if (overdub && captureOriginalLengths_[static_cast<size_t>(slot)]) {
-		clip->loopLength = captureOriginalLengths_[static_cast<size_t>(slot)];
-		clip->originalLength = clip->loopLength;
-	}
 }
 
 void LoopStationView::phraseCleared(SlotId slot) {
@@ -449,10 +453,13 @@ void LoopStationView::stateChanged(SlotId slot, TrackState state) {
 		clip->activeIfNoSolo = true;
 		clip->output->setActiveClip(modelStack);
 		if (needsResume && playbackHandler.isEitherClockActive() && !clip->isEmpty(false)) {
-			uint32_t currentTick = static_cast<uint32_t>(musicalPositionQ16() >> 16);
+			// Use lastSwungTickActioned (scheduler tick) as the base, since resumePlayback
+			// uses it to compute sequenceSyncStartedAtTick.
+			uint32_t currentTick = playbackHandler.lastSwungTickActioned;
 			uint32_t playbackStart = engine_->track(slot).playbackStartTick;
 			uint32_t length = std::max<int32_t>(1, clip->loopLength);
 			uint32_t logicalPhase = loopPhaseAt(currentTick, playbackStart, length);
+			// Translate logical phase to physical sample position using the recorded sample-zero offset.
 			clip->setPos(
 			    modelStack,
 			    static_cast<int32_t>(samplePhaseForLoopPhase(logicalPhase, clip->loopStationSampleZeroTicks, length)),
@@ -471,10 +478,14 @@ void LoopStationView::stateChanged(SlotId slot, TrackState state) {
 		// the original phrase. Recover the voice at its current musical phase if
 		// it was unavailable when Overdub began.
 		if (needsPhraseResume && playbackHandler.isEitherClockActive()) {
-			uint32_t currentTick = static_cast<uint32_t>(musicalPositionQ16() >> 16);
+			// Use lastSwungTickActioned (scheduler tick) as the base, since resumePlayback
+			// uses it to compute sequenceSyncStartedAtTick. Using musicalPositionQ16()
+			// would cause a phase mismatch.
+			uint32_t currentTick = playbackHandler.lastSwungTickActioned;
 			uint32_t playbackStart = engine_->track(slot).playbackStartTick;
 			uint32_t length = std::max<int32_t>(1, clip->loopLength);
 			uint32_t logicalPhase = loopPhaseAt(currentTick, playbackStart, length);
+			// Translate logical phase to physical sample position using the recorded sample-zero offset.
 			clip->setPos(
 			    modelStack,
 			    static_cast<int32_t>(samplePhaseForLoopPhase(logicalPhase, clip->loopStationSampleZeroTicks, length)),
@@ -507,8 +518,8 @@ void LoopStationView::refreshMonitoring() {
 				auto const& settings = currentSong->loopStation.tracks[slotIndex].settings;
 				auto const& runtime = engine_->track(static_cast<SlotId>(slotIndex));
 				if (audioClip->recorder && audioClip->recorder->captureOutputPreFX) {
-					audioClip->recorder->captureOutputInputActive =
-					    shouldCapturePhysicalOverdubInput(settings, runtime);
+					// Recorder captures physical input during active overdub AND during background finish
+					audioClip->recorder->captureOutputInputActive = shouldRecordPhysicalOverdubInput(runtime);
 				}
 				break;
 			}
@@ -530,9 +541,8 @@ void LoopStationView::refreshMonitoring() {
 			}
 
 			auto const& settings = currentSong->loopStation.tracks[slotIndex].settings;
-			bool finishingOverdub = engine_ && engine_->track(static_cast<SlotId>(slotIndex)).finishingOverdub;
 			bool physical = isPhysicalSource(settings.source);
-			bool enabled = monitoringActive_ && settings.monitoring && physical && !finishingOverdub
+			bool enabled = monitoringActive_ && settings.monitoring && physical
 			               && currentSong->isOutputActiveInArrangement(output);
 			if (enabled) {
 				size_t sourceIndex = static_cast<size_t>(settings.source);

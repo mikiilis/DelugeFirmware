@@ -70,7 +70,6 @@ private:
 	std::array<bool, deluge::loop_station::kTrackCount> centreGestureActive_{};
 	std::array<bool, deluge::loop_station::kTrackCount> centreGestureDispatched_{};
 	std::array<uint32_t, deluge::loop_station::kTrackCount> centrePressSample_{};
-	std::array<uint32_t, deluge::loop_station::kTrackCount> captureOriginalLengths_{};
 	std::optional<deluge::loop_station::SlotId> selectedSlot_;
 	uint8_t monitoringCaptureMask_ = 0;
 	RecordingMode recordingModeBefore_{};

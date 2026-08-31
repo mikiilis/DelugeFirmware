@@ -152,20 +152,19 @@ struct TrackRuntime {
 	uint32_t captureStartTick = 0;
 	uint32_t phraseLength = 0;
 	uint32_t playbackStartTick = 0;
-	// Overdubs are bounded by the already-recorded phrase. This is a runtime
-	// deadline rather than a ScheduledEvent so the UI does not render the whole
-	// overdub as a pending (blinking) operation.
+	// For overdub: track the actual overdub region (may be partial phrase).
+	// Zero means not in overdub or overdub not yet started.
+	uint32_t overdubStartTick = 0;
 	uint32_t overdubEndTick = 0;
+	// Background completion: overdub recorder runs for full phrase,
+	// but UI returns to PLAY when user presses center.
+	bool finishingOverdub = false;
 	uint32_t committingLength = 0;
 	uint32_t currentRevision = 0;
 	bool redoAvailable = false;
 	bool undoAvailable = false;
 	uint32_t historySize = 0;
 	int32_t historyCursor = -1;
-	bool provisionalOverdub = false;
-	// The UI has returned to Play, but the recorder is completing the untouched
-	// remainder of a partial overdub pass before swapping the backing WAV.
-	bool finishingOverdub = false;
 	bool pendingClear = false;
 	bool committingOverdub = false;
 	Error error = Error::NONE;
@@ -174,9 +173,15 @@ struct TrackRuntime {
 
 // Audible monitoring is deliberately not part of this decision. A disabled
 // monitor return must never disable the signal being written into an overdub.
+// Returns true for audible monitoring during active overdub only.
 [[nodiscard]] constexpr bool shouldCapturePhysicalOverdubInput(TrackSettings const& settings,
                                                                TrackRuntime const& runtime) {
-	return isPhysicalSource(settings.source) && !runtime.finishingOverdub;
+	return isPhysicalSource(settings.source) && runtime.state == TrackState::OVERDUBBING && !runtime.finishingOverdub;
+}
+
+// Returns true if the overdub recorder should capture physical input (including during background finish).
+[[nodiscard]] constexpr bool shouldRecordPhysicalOverdubInput(TrackRuntime const& runtime) {
+	return runtime.state == TrackState::OVERDUBBING || runtime.finishingOverdub;
 }
 
 // The first take owns the logical phase-zero for the lifetime of the phrase.

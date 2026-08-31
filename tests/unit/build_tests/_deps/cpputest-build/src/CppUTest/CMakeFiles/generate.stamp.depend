@@ -1,0 +1,8 @@
+# CMake generation dependency list for this directory.
+C:/Users/Mikiilis/Documents/code/DelugeFirmware/tests/unit/build_tests/_deps/cpputest-src/src/CppUTest/CMakeLists.txt
+C:/Users/Mikiilis/Documents/code/DelugeFirmware/toolchain/v22/win32-x86_64/cmake/share/cmake-3.27/Modules/CheckCSourceCompiles.cmake
+C:/Users/Mikiilis/Documents/code/DelugeFirmware/toolchain/v22/win32-x86_64/cmake/share/cmake-3.27/Modules/CheckIncludeFile.cmake
+C:/Users/Mikiilis/Documents/code/DelugeFirmware/toolchain/v22/win32-x86_64/cmake/share/cmake-3.27/Modules/CheckLibraryExists.cmake
+C:/Users/Mikiilis/Documents/code/DelugeFirmware/toolchain/v22/win32-x86_64/cmake/share/cmake-3.27/Modules/FindPackageHandleStandardArgs.cmake
+C:/Users/Mikiilis/Documents/code/DelugeFirmware/toolchain/v22/win32-x86_64/cmake/share/cmake-3.27/Modules/FindPackageMessage.cmake
+C:/Users/Mikiilis/Documents/code/DelugeFirmware/toolchain/v22/win32-x86_64/cmake/share/cmake-3.27/Modules/FindThreads.cmake

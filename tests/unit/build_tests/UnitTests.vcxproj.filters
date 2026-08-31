@@ -1,0 +1,147 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="17.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <ClCompile Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\RunAllTests.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\scheduler_tests.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\lfo_tests.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\scale_tests.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\value_scaling_tests.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\clip_iterator_tests.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\function_tests.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\sync_tests.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\chord_tests.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\time_tests.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\clock_output_scheduler_tests.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\name_compare_tests.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\default_name_tests.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\rgb_tests.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\notes_state_tests.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\loop_station_tests.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\src\deluge\gui\menu_item\value_scaling.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\src\deluge\gui\ui\browser\default_name.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\src\deluge\gui\ui\keyboard\chords.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\src\deluge\loop_station\loop_station.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\src\deluge\model\scale\musical_key.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\src\deluge\model\scale\note_set.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\src\deluge\model\scale\preset_scales.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\src\deluge\model\scale\scale_change.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\src\deluge\model\scale\scale_mapper.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\src\deluge\model\scale\utils.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\src\deluge\model\song\clip_iterators.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\src\deluge\model\sync.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\src\deluge\modulation\lfo.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\src\deluge\playback\clock_output_scheduler.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\src\deluge\util\d_stringbuf.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\src\deluge\util\lookuptables\lookuptables.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\src\deluge\util\name_compare.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\src\deluge\util\waves.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\mocks\display_mock.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\mocks\mock_print.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\mocks\song_mock.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\mocks\timer_mocks.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\mocks\clip_mocks.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\mocks\display_mock.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\mocks\function_mocks.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\mocks\song_mock.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\mocks\timer_mocks.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <CustomBuild Include="C:\Users\Mikiilis\Documents\code\DelugeFirmware\tests\unit\CMakeLists.txt" />
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="Header Files">
+      <UniqueIdentifier>{1DD059A2-F6E5-3C6B-B9EA-00F85950FEA5}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files">
+      <UniqueIdentifier>{0DDDA4B0-C06E-3762-BB19-30B3101CE06A}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+</Project>
