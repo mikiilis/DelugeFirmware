@@ -524,14 +524,18 @@ renderEnvelope:
 			std::span<StereoSample> capture{captureMemory.data(), output.size()};
 			std::ranges::copy(output, capture.begin());
 			if (recorder->captureOutputInputActive && isPhysicalInput(inputChannel)) {
-				// The Audio Clip dry render has quarter-scale headroom here. Shift the
-				// input by three so the recorder's fixed x4 compensation restores both
-				// the stored loop and new input to unity.
+				// Match physical input to the Audio Clip's one-eighth dry render.
+				// Recorder compensation below restores their combined value to unity.
 				// The cumulative revision is always dry. Transpose belongs exclusively
 				// to the audible path below and must never reach a recorder.
-				addPhysicalInput(capture, inputChannel, amplitudeAtStart, amplitudeAtEnd, 3, true);
+				addPhysicalInput(capture, inputChannel, amplitudeAtStart, amplitudeAtEnd,
+				                 deluge::loop_station::kPhysicalInputPreMixGainShift, true);
 			}
-			recorder->feedAudio(capture, true, 2);
+			for (auto& sample : capture) {
+				sample.l = deluge::loop_station::restoreCaptureGain(sample.l);
+				sample.r = deluge::loop_station::restoreCaptureGain(sample.r);
+			}
+			recorder->feedAudio(capture);
 		}
 		// During overdub, the existing loop should remain audible.
 		// Don't zero the output - the clip has an existing loop that was just rendered.

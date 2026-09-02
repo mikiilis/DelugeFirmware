@@ -172,6 +172,9 @@ void Engine::resetRuntime() {
 	runtime_ = {};
 	exiting_ = false;
 	nextRevision_ = 1;
+	for (size_t i = 0; i < runtime_.size(); ++i) {
+		setPlaybackGain(static_cast<SlotId>(i), 1 << 24, true);
+	}
 }
 
 void Engine::restoreBoundPhrase(SlotId slot, uint32_t phraseLength, bool playing, bool hasPhrase, uint32_t historySize,
@@ -183,7 +186,7 @@ void Engine::restoreBoundPhrase(SlotId slot, uint32_t phraseLength, bool playing
 	runtime.historySize = historySize;
 	runtime.historyCursor = std::clamp<int32_t>(historyCursor, -1, static_cast<int32_t>(historySize) - 1);
 	runtime.state = hasPhrase ? (playing ? TrackState::PLAYING : TrackState::STOPPED) : TrackState::EMPTY;
-	runtime.playbackGain = playing ? (1 << 24) : 0;
+	setPlaybackGain(slot, playing ? (1 << 24) : 0, true);
 	refreshHistoryAvailability(slot);
 }
 
@@ -318,8 +321,10 @@ void Engine::centrePressed(SlotId slot, Transport const& transport, uint32_t ges
 		}
 		else {
 			uint32_t target = quantizedStart(QuantizeMode::MEASURE, transport.tick, transport.barLength);
-			if (target == transport.tick) transition(slot, TrackState::PLAYING);
-			else schedule(slot, PendingAction::RESUME, target, target);
+			if (target == transport.tick)
+				beginPlayback(slot, transport, false);
+			else
+				schedule(slot, PendingAction::RESUME, target, target);
 		}
 		break;
 	case TrackState::COMMITTING:
@@ -367,6 +372,11 @@ void Engine::beginCapture(SlotId slot, bool overdub, uint32_t tick, Transport co
 		fail(slot, Error::RESOURCE_LIMIT);
 		return;
 	}
+	// EMPTY may have been reached from a stopped phrase whose persistent
+	// AudioOutput gain is still zero. Prime every fresh take at unity.
+	if (!overdub) {
+		setPlaybackGain(slot, 1 << 24, true);
+	}
 	runtime.captureStartTick = tick;
 	runtime.event = {};
 	runtime.overdubStartTick = 0;
@@ -404,7 +414,7 @@ void Engine::finishCapture(SlotId slot, bool overdub, uint32_t tick, uint32_t re
 	bool crop = !overdub && requestedTick < tick;
 	auto finish = delegate_ ? delegate_->finishCapture(slot, overdub, length, crop) : CaptureFinish{};
 	if (!finish.accepted) {
-		fail(slot, Error::SD_CARD);
+		fail(slot, finish.error == Error::NONE ? Error::SD_CARD : finish.error);
 		return;
 	}
 	uint32_t committedLength = finish.committedLength ? finish.committedLength : length;
@@ -437,6 +447,9 @@ void Engine::completeCapture(SlotId slot, bool overdub, uint32_t length) {
 		runtime.playbackStartTick = model_.tracks[indexOf(slot)].settings.playback == PlaybackMode::ONE_SHOT
 		                                ? runtime.captureStartTick + length
 		                                : runtime.captureStartTick;
+		// Capture completion enters PLAYING / OVERDUBBING without passing through
+		// beginPlayback(), so reassert unity at this audible boundary too.
+		setPlaybackGain(slot, 1 << 24, true);
 	}
 	// A successful commit truncates any redo branch and appends exactly one new
 	// cumulative revision. Failed captures never reach this method.
@@ -506,8 +519,7 @@ void Engine::stop(SlotId slot, uint32_t tick, bool forceImmediate) {
 		transition(slot, TrackState::EMPTY);
 	}
 	else {
-		runtime.playbackGain = 0;
-		if (delegate_) delegate_->playbackGainChanged(slot, 0);
+		setPlaybackGain(slot, 0, true);
 		transition(slot, TrackState::STOPPED);
 	}
 }
@@ -515,28 +527,40 @@ void Engine::stop(SlotId slot, uint32_t tick, bool forceImmediate) {
 void Engine::beginPlayback(SlotId slot, Transport const& transport, bool fromStart) {
 	auto& runtime = track(slot);
 	auto const& settings = model_.tracks[indexOf(slot)].settings;
-	if (fromStart) runtime.playbackStartTick = transport.tick;
+	if (fromStart)
+		runtime.playbackStartTick = transport.tick;
 	if (settings.startMode == StartMode::FADE) {
-		runtime.playbackGain = 0;
+		setPlaybackGain(slot, 0, true);
 		runtime.fadeStartGain = 0;
 		runtime.fadeEndGain = 1 << 24;
 		runtime.fadeStartTick = transport.tick;
 		runtime.fadeEndTick = transport.tick + settings.fadeTimeBars * std::max<uint32_t>(1, transport.barLength);
 	}
 	else {
-		runtime.playbackGain = 1 << 24;
+		setPlaybackGain(slot, 1 << 24, true);
 		runtime.fadeStartTick = runtime.fadeEndTick = 0;
 	}
-	if (delegate_) delegate_->playbackGainChanged(slot, runtime.playbackGain);
 	transition(slot, TrackState::PLAYING);
+}
+
+void Engine::setPlaybackGain(SlotId slot, int32_t gain, bool forceNotify) {
+	auto& runtime = track(slot);
+	bool changed = gain != runtime.playbackGain;
+	runtime.playbackGain = gain;
+	if (delegate_ && (changed || forceNotify)) {
+		delegate_->playbackGainChanged(slot, gain);
+	}
 }
 
 void Engine::updateFade(SlotId slot, uint32_t tick) {
 	auto& runtime = track(slot);
-	if (runtime.fadeEndTick <= runtime.fadeStartTick) return;
+	if (runtime.fadeEndTick <= runtime.fadeStartTick)
+		return;
 	int32_t gain;
-	if (tick >= runtime.fadeEndTick) gain = runtime.fadeEndGain;
-	else if (tick <= runtime.fadeStartTick) gain = runtime.fadeStartGain;
+	if (tick >= runtime.fadeEndTick)
+		gain = runtime.fadeEndGain;
+	else if (tick <= runtime.fadeStartTick)
+		gain = runtime.fadeStartGain;
 	else {
 		int64_t elapsed = tick - runtime.fadeStartTick;
 		int64_t duration = runtime.fadeEndTick - runtime.fadeStartTick;
@@ -545,10 +569,10 @@ void Engine::updateFade(SlotId slot, uint32_t tick) {
 		                              / duration);
 	}
 	if (gain != runtime.playbackGain) {
-		runtime.playbackGain = gain;
-		if (delegate_) delegate_->playbackGainChanged(slot, gain);
+		setPlaybackGain(slot, gain);
 	}
-	if (tick >= runtime.fadeEndTick) runtime.fadeStartTick = runtime.fadeEndTick = 0;
+	if (tick >= runtime.fadeEndTick)
+		runtime.fadeStartTick = runtime.fadeEndTick = 0;
 }
 
 void Engine::processTick(Transport const& transport) {
@@ -674,6 +698,9 @@ void Engine::clearHeld(SlotId slot) {
 		return;
 	}
 	runtime = {};
+	// TrackRuntime defaults to unity, but AudioOutput persists independently
+	// and may still contain the zero sent when this phrase stopped.
+	setPlaybackGain(slot, 1 << 24, true);
 	if (delegate_) {
 		delegate_->phraseCleared(slot);
 	}
@@ -702,6 +729,9 @@ bool Engine::navigateHistory(SlotId slot, bool redo) {
 	runtime.historyCursor = targetCursor;
 	runtime.currentRevision = targetHasPhrase ? nextRevision_++ : 0;
 	refreshHistoryAvailability(slot);
+	// Navigation can leave STOPPED and enter either PLAYING or the undoable
+	// EMPTY state. Unity makes the selected revision and the next take audible.
+	setPlaybackGain(slot, 1 << 24, true);
 	transition(slot, targetHasPhrase ? TrackState::PLAYING : TrackState::EMPTY);
 	return true;
 }
@@ -775,6 +805,16 @@ Geometry::ProgressFill Geometry::progressFill(uint64_t positionQ16, uint32_t phr
 	uint64_t phraseQ16 = static_cast<uint64_t>(phraseLength) << 16;
 	uint64_t localQ16 = positionQ16 % phraseQ16;
 	uint64_t padPositionQ16 = localQ16 * kCellBorderPadCount / phraseLength;
+	return {.fullPads = static_cast<uint8_t>(std::min<uint64_t>(padPositionQ16 >> 16, kCellBorderPadCount)),
+	        .leadingBrightness = static_cast<uint16_t>(padPositionQ16 & 0xFFFF)};
+}
+
+Geometry::ProgressFill Geometry::linearProgressFill(uint32_t elapsed, uint32_t duration) {
+	if (duration == 0) {
+		return {};
+	}
+	uint64_t clampedElapsed = std::min(elapsed, duration);
+	uint64_t padPositionQ16 = clampedElapsed * kCellBorderPadCount * 65536ULL / duration;
 	return {.fullPads = static_cast<uint8_t>(std::min<uint64_t>(padPositionQ16 >> 16, kCellBorderPadCount)),
 	        .leadingBrightness = static_cast<uint16_t>(padPositionQ16 & 0xFFFF)};
 }

@@ -43,8 +43,8 @@
 #include "model/instrument/cv_instrument.h"
 #include "model/instrument/midi_instrument.h"
 #include "model/mod_controllable/mod_controllable_audio.h"
-#include "model/sample/sample_recorder.h"
 #include "model/sample/sample.h"
+#include "model/sample/sample_recorder.h"
 #include "model/scale/preset_scales.h"
 #include "model/scale/scale_change.h"
 #include "model/scale/utils.h"
@@ -60,10 +60,10 @@
 #include "processing/engines/cv_engine.h"
 #include "processing/sound/sound_instrument.h"
 #include "processing/stem_export/stem_export.h"
-#include "storage/flash_storage.h"
 #include "storage/audio/audio_file_manager.h"
-#include "util/exceptions.h"
+#include "storage/flash_storage.h"
 #include "storage/storage_manager.h"
+#include "util/exceptions.h"
 #include "util/lookuptables/lookuptables.h"
 #include "util/try.h"
 #include <cstring>
@@ -208,7 +208,7 @@ Error LoopStationRevision::loadSample(bool mayActuallyReadFile) {
 	}
 	Error error = Error::NONE;
 	AudioFile* loaded = audioFileManager.getAudioFileFromFilename(filePath, mayActuallyReadFile, &error, nullptr,
-	                                                             AudioFileType::SAMPLE);
+	                                                              AudioFileType::SAMPLE);
 	if (loaded) {
 		setSample(static_cast<Sample*>(loaded));
 	}
@@ -242,8 +242,7 @@ bool LoopStationRevisionHistory::seedFromClip(AudioClip& clip) {
 	}
 	try {
 		revisions.emplace_back();
-	}
-	catch (deluge::exception error) {
+	} catch (deluge::exception error) {
 		if (error == deluge::exception::BAD_ALLOC) {
 			return false;
 		}
@@ -263,8 +262,7 @@ bool LoopStationRevisionHistory::prepareAppend(AudioClip& clip, bool preserveCur
 	}
 	try {
 		revisions.reserve(required);
-	}
-	catch (deluge::exception error) {
+	} catch (deluge::exception error) {
 		if (error == deluge::exception::BAD_ALLOC) {
 			return false;
 		}
@@ -1642,7 +1640,8 @@ weAreInArrangementEditorOrInClipInstance:
 		writer.writeArrayStart("revisions");
 		for (auto const& revision : history.revisions) {
 			writer.writeOpeningTagBeginning("revision", true);
-			writer.writeAttribute("filePath", revision.sample ? revision.sample->filePath.get() : revision.filePath.get());
+			writer.writeAttribute("filePath",
+			                      revision.sample ? revision.sample->filePath.get() : revision.filePath.get());
 			writer.writeAttribute("startSamplePos", revision.startPos);
 			writer.writeAttribute("endSamplePos", revision.endPos);
 			writer.writeAttribute("loopLength", revision.loopLength);
@@ -2261,8 +2260,8 @@ unknownTag:
 								auto& history = loopStationRevisionHistory[slot - 1];
 								history.clear();
 								history.revisions = std::move(parsedRevisions);
-								history.cursor = std::clamp<int32_t>(historyCursor, -1,
-								                                             static_cast<int32_t>(history.revisions.size()) - 1);
+								history.cursor = std::clamp<int32_t>(
+								    historyCursor, -1, static_cast<int32_t>(history.revisions.size()) - 1);
 							}
 							reader.match('}');
 							reader.exitTag("track", true);

@@ -110,9 +110,12 @@ struct SongModel {
 	void sanitize();
 };
 
-[[nodiscard]] constexpr size_t indexOf(SlotId slot) { return static_cast<size_t>(slot); }
+[[nodiscard]] constexpr size_t indexOf(SlotId slot) {
+	return static_cast<size_t>(slot);
+}
 [[nodiscard]] constexpr int64_t floorMod(int64_t value, int64_t modulus) {
-	if (modulus <= 0) return 0;
+	if (modulus <= 0)
+		return 0;
 	auto result = value % modulus;
 	return result < 0 ? result + modulus : result;
 }
@@ -122,7 +125,8 @@ struct SongModel {
 [[nodiscard]] constexpr uint64_t tickPhaseToFrame(int64_t logicalPhase, Revision const& revision) {
 	auto length = revision.phraseLengthTicks;
 	auto frames = revision.endFrame >= revision.startFrame ? revision.endFrame - revision.startFrame : 0;
-	if (length <= 0 || frames == 0) return revision.startFrame;
+	if (length <= 0 || frames == 0)
+		return revision.startFrame;
 	auto rotated = floorMod(logicalPhase - revision.sampleZeroPhaseTicks, length);
 	auto tickLength = static_cast<uint64_t>(length);
 	auto phase = static_cast<uint64_t>(rotated);

@@ -37,6 +37,10 @@ using namespace deluge;
 using namespace deluge::loop_station;
 using deluge::gui::colours::black;
 
+namespace {
+constexpr uint32_t kDeleteHoldDurationSamples = 2 * kSampleRate;
+}
+
 PLACE_SDRAM_BSS LoopStationView loopStationView{};
 
 bool LoopStationView::opened() {
@@ -228,9 +232,11 @@ bool LoopStationView::preflight(SlotId slot, bool overdub) {
 		return false;
 	}
 	auto* output = static_cast<AudioOutput*>(clip->output);
-	bool sourceValid = output->inputChannel > AudioInputChannel::NONE
-	                   && (output->inputChannel != AudioInputChannel::SPECIFIC_OUTPUT || output->getOutputRecordingFrom());
-	if (!sourceValid) return false;
+	bool sourceValid =
+	    output->inputChannel > AudioInputChannel::NONE
+	    && (output->inputChannel != AudioInputChannel::SPECIFIC_OUTPUT || output->getOutputRecordingFrom());
+	if (!sourceValid)
+		return false;
 	auto source = currentSong->loopStation.tracks[static_cast<size_t>(slot)].settings.source;
 	uint8_t channels = source == SourceType::STEREO ? 2 : 1;
 	return recorderBudget_.reserve(slot, {.channels = channels});
@@ -271,6 +277,12 @@ bool LoopStationView::beginCapture(SlotId slot, bool overdub, uint32_t tick) {
 		    static_cast<int32_t>(samplePhaseForLoopPhase(logicalPhase, clip->loopStationSampleZeroTicks, length)),
 		    true);
 		clip->resumePlayback(modelStack, true);
+		// An output overdub without a backing voice would create an input-only
+		// replacement. Reject it before allocating or attaching the recorder.
+		if (!clip->voiceSample) {
+			recorderBudget_.release(slot);
+			return false;
+		}
 	}
 
 	playbackHandler.recording = RecordingMode::NORMAL;
@@ -279,13 +291,15 @@ bool LoopStationView::beginCapture(SlotId slot, bool overdub, uint32_t tick) {
 		recorderBudget_.release(slot);
 		return false;
 	}
+	// Every Loop Station WAV is a fixed-gain dry revision. Explicitly disable
+	// normalization and file alteration for first takes as well as overdubs.
+	clip->recorder->allowFileAlterationAfter = false;
+	clip->recorder->allowNormalization = false;
 	if (overdub && clip->recorder) {
 		// Capture stored audio plus monitored input before track FX and without
 		// normalization. The recorder captures the clip output (loop) + input.
 		clip->recorder->captureOutputPreFX = true;
 		clip->recorder->captureOutputInputActive = true;
-		clip->recorder->allowFileAlterationAfter = false;
-		clip->recorder->allowNormalization = false;
 	}
 	refreshMonitoring();
 	return true;
@@ -295,18 +309,28 @@ CaptureFinish LoopStationView::finishCapture(SlotId slot, bool overdub, uint32_t
 	recorderBudget_.release(slot);
 	AudioClip* clip = backingClip(slot);
 	if (!clip || !clip->recorder) {
-		return {.accepted = false};
+		return {.accepted = false,
+		        .error = overdub ? deluge::loop_station::Error::BACKING_UNAVAILABLE
+		                         : deluge::loop_station::Error::ALLOCATION};
 	}
 	SampleRecorder* recorder = clip->recorder;
-	// Check for error conditions
-	bool hasError = recorder->status == RecorderStatus::ABORTED || recorder->hadCardError
-	                || recorder->reachedMaxFileSize || !recorder->numSamplesCaptured
-	                || (overdub && recorder->captureOutputBackingMissing);
-	if (hasError) {
-		// Abort to clear the recorder state so it doesn't keep triggering errors
+	// Reject without publishing the provisional WAV, and preserve the exact
+	// failure reason instead of presenting every capture failure as an SD error.
+	auto reject = [clip](deluge::loop_station::Error error) {
 		clip->abortRecording();
-		return {.accepted = false};
+		return CaptureFinish{.accepted = false, .error = error};
+	};
+	if (recorder->hadCardError)
+		return reject(deluge::loop_station::Error::SD_CARD);
+	if (recorder->reachedMaxFileSize)
+		return reject(deluge::loop_station::Error::MAX_FILE_SIZE);
+	if (overdub && recorder->captureOutputBackingMissing) {
+		return reject(deluge::loop_station::Error::BACKING_UNAVAILABLE);
 	}
+	if (recorder->status == RecorderStatus::ABORTED)
+		return reject(deluge::loop_station::Error::ALLOCATION);
+	if (!recorder->numSamplesCaptured)
+		return reject(deluge::loop_station::Error::SOURCE_REMOVED);
 
 	auto* oldAudioFile = clip->sampleHolder.audioFile;
 	String trackName;
@@ -317,8 +341,7 @@ CaptureFinish LoopStationView::finishCapture(SlotId slot, bool overdub, uint32_t
 		// AudioClip::loopLength as the authority here: generic recording code or a
 		// corrupt runtime transition must not make an overdub change playback speed.
 		if (!engine_ || engine_->track(slot).phraseLength == 0) {
-			clip->abortRecording();
-			return {.accepted = false};
+			return reject(deluge::loop_station::Error::BACKING_UNAVAILABLE);
 		}
 		targetLength = engine_->track(slot).phraseLength;
 	}
@@ -463,6 +486,31 @@ bool LoopStationView::navigateHistory(SlotId slot, bool redo, bool& targetHasPhr
 
 void LoopStationView::stateChanged(SlotId slot, TrackState state) {
 	AudioClip* clip = backingClip(slot);
+	if (state == TrackState::ERROR) {
+		switch (engine_->track(slot).error) {
+		case deluge::loop_station::Error::BACKING_UNAVAILABLE:
+			display->displayPopup(l10n::get(l10n::String::STRING_FOR_LOOP_STATION_BACKING_UNAVAILABLE));
+			break;
+		case deluge::loop_station::Error::MAX_FILE_SIZE:
+			display->displayError(::Error::MAX_FILE_SIZE_REACHED);
+			break;
+		case deluge::loop_station::Error::SD_CARD:
+			display->displayError(::Error::SD_CARD);
+			break;
+		case deluge::loop_station::Error::RESOURCE_LIMIT:
+		case deluge::loop_station::Error::ALLOCATION:
+			display->displayError(::Error::INSUFFICIENT_RAM);
+			break;
+		case deluge::loop_station::Error::SOURCE_REMOVED:
+			display->displayPopup(l10n::get(l10n::String::STRING_FOR_LOOP_STATION_SOURCE_UNAVAILABLE));
+			break;
+		case deluge::loop_station::Error::NONE:
+			break;
+		}
+		refreshMonitoring();
+		updateUndoLed();
+		return;
+	}
 	if (!clip) {
 		return;
 	}
@@ -548,8 +596,7 @@ uint32_t LoopStationView::playbackPhase(SlotId slot, uint32_t tickPhase) {
 		relative = 0;
 	}
 	uint32_t samplePhase = static_cast<uint32_t>(static_cast<uint64_t>(relative) % duration);
-	uint32_t samplePhaseTicks =
-	    static_cast<uint32_t>(static_cast<uint64_t>(samplePhase) * clip->loopLength / duration);
+	uint32_t samplePhaseTicks = static_cast<uint32_t>(static_cast<uint64_t>(samplePhase) * clip->loopLength / duration);
 	return (samplePhaseTicks + clip->loopStationSampleZeroTicks) % clip->loopLength;
 }
 
@@ -716,7 +763,8 @@ ActionResult LoopStationView::padAction(int32_t x, int32_t y, int32_t velocity) 
 	bool dispatchedOnPress = centreGestureDispatched_[index];
 	centreGestureDispatched_[index] = false;
 	uint32_t heldSamples = AudioEngine::audioSampleTimer - centrePressSample_[index];
-	if (!dispatchedOnPress && heldSamples >= 2 * kSampleRate && engine_->track(slot).state == TrackState::STOPPED) {
+	if (!dispatchedOnPress && heldSamples >= kDeleteHoldDurationSamples
+	    && engine_->track(slot).state == TrackState::STOPPED) {
 		clearBackingClip(slot);
 		engine_->clearHeld(slot);
 	}
@@ -871,6 +919,12 @@ bool LoopStationView::renderMainPads(uint32_t whichRows, RGB image[][kDisplayWid
 		RGB centre = deluge::gui::colours::grey;
 		RGB border = dimGlobal;
 		bool progress = false;
+		bool deleting = runtime.state == TrackState::STOPPED && centreGestureActive_[i] && !centreGestureDispatched_[i]
+		                && !Buttons::isShiftButtonPressed();
+		auto deleteProgress = deleting
+		                          ? Geometry::linearProgressFill(AudioEngine::audioSampleTimer - centrePressSample_[i],
+		                                                         kDeleteHoldDurationSamples)
+		                          : Geometry::ProgressFill{};
 
 		if (runtime.event.pending()) {
 			centre = rapidBlink ? destinationColour(runtime.event.action) : black;
@@ -915,7 +969,13 @@ bool LoopStationView::renderMainPads(uint32_t whichRows, RGB image[][kDisplayWid
 			uint8_t x = origin.x + local.x;
 			uint8_t y = origin.y + local.y;
 			if (whichRows & (1u << y)) {
-				if (progress && p < progressFill.fullPads) {
+				if (deleting && p < deleteProgress.fullPads) {
+					image[y][x] = deluge::gui::colours::red;
+				}
+				else if (deleting && p == deleteProgress.fullPads && p < kCellBorderPadCount) {
+					image[y][x] = RGB::blend(deluge::gui::colours::red, border, deleteProgress.leadingBrightness);
+				}
+				else if (progress && p < progressFill.fullPads) {
 					image[y][x] = trackColour;
 				}
 				else if (progress && p == progressFill.fullPads && p < kCellBorderPadCount) {
@@ -924,7 +984,7 @@ bool LoopStationView::renderMainPads(uint32_t whichRows, RGB image[][kDisplayWid
 				else {
 					image[y][x] = border;
 				}
-				if (selectedSlot_ && *selectedSlot_ == slot && runtime.state != TrackState::RECORDING
+				if (!deleting && selectedSlot_ && *selectedSlot_ == slot && runtime.state != TrackState::RECORDING
 				    && runtime.state != TrackState::OVERDUBBING) {
 					// White lift keeps state and progress hues recognizable while
 					// making the complete selected border visibly brighter.
@@ -996,10 +1056,21 @@ void LoopStationView::processMusicalTick() {
 			continue;
 		}
 		AudioClip* clip = backingClip(slot);
-		if (!clip || !clip->recorder || clip->recorder->status == RecorderStatus::ABORTED
-		    || clip->recorder->hadCardError || clip->recorder->reachedMaxFileSize) {
-			engine_->notifyFailure(slot, deluge::loop_station::Error::SD_CARD);
+		deluge::loop_station::Error failure = deluge::loop_station::Error::NONE;
+		if (!clip || !clip->recorder)
+			failure = deluge::loop_station::Error::ALLOCATION;
+		else if (clip->recorder->hadCardError)
+			failure = deluge::loop_station::Error::SD_CARD;
+		else if (clip->recorder->reachedMaxFileSize)
+			failure = deluge::loop_station::Error::MAX_FILE_SIZE;
+		else if (clip->recorder->captureOutputBackingMissing) {
+			failure = deluge::loop_station::Error::BACKING_UNAVAILABLE;
 		}
+		else if (clip->recorder->status == RecorderStatus::ABORTED) {
+			failure = deluge::loop_station::Error::ALLOCATION;
+		}
+		if (failure != deluge::loop_station::Error::NONE)
+			engine_->notifyFailure(slot, failure);
 	}
 	updateRecordingMode();
 	if (monitoringCaptureMask_ != capturingMask()) {

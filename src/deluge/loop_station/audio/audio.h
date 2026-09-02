@@ -55,8 +55,10 @@ private:
 
 [[nodiscard]] constexpr int32_t saturatingAdd(int32_t backing, int32_t input) {
 	auto total = static_cast<int64_t>(backing) + input;
-	if (total > INT32_MAX) return INT32_MAX;
-	if (total < INT32_MIN) return INT32_MIN;
+	if (total > INT32_MAX)
+		return INT32_MAX;
+	if (total < INT32_MIN)
+		return INT32_MIN;
 	return static_cast<int32_t>(total);
 }
 
@@ -67,9 +69,8 @@ struct DryMixResult {
 
 // Interleaved buffers. Mono is duplicated only when the resulting revision is
 // stereo. A missing backing buffer rejects the whole provisional revision.
-DryMixResult mixDryCumulative(std::span<int32_t const> backing, uint8_t backingChannels,
-	                          std::span<int32_t const> input, uint8_t inputChannels,
-	                          std::span<int32_t> destination, bool backingRequired = true);
+DryMixResult mixDryCumulative(std::span<int32_t const> backing, uint8_t backingChannels, std::span<int32_t const> input,
+                              uint8_t inputChannels, std::span<int32_t> destination, bool backingRequired = true);
 
 [[nodiscard]] int32_t transposeRatioQ24(int8_t semitones, int8_t cents);
 [[nodiscard]] constexpr bool transposeBypasses(int8_t semitones, int8_t cents) {

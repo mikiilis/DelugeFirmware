@@ -19,8 +19,14 @@ struct Delegate final : EngineDelegate {
 	int aborts = 0;
 	int clears = 0;
 	bool preflight(SlotId, bool) override { return preflightResult; }
-	bool beginCapture(SlotId, bool, int64_t, int64_t) override { ++begins; return beginResult; }
-	CaptureResult endCapture(SlotId, bool, int64_t, bool) override { ++finishes; return finishResult; }
+	bool beginCapture(SlotId, bool, int64_t, int64_t) override {
+		++begins;
+		return beginResult;
+	}
+	CaptureResult endCapture(SlotId, bool, int64_t, bool) override {
+		++finishes;
+		return finishResult;
+	}
 	void abortProvisionalCapture(SlotId, bool) override { ++aborts; }
 	void publishStableState(SlotId, TrackState, int64_t) override {}
 	bool navigateRevision(SlotId, bool, bool) override { return true; }
@@ -29,9 +35,9 @@ struct Delegate final : EngineDelegate {
 TransportTime at(int64_t tick, int64_t bar = 96) {
 	return {.performedTick = tick, .barLength = bar, .eighthLength = bar / 8, .running = true};
 }
-}
+} // namespace
 
-TEST_GROUP(LoopStationModel) {};
+TEST_GROUP(LoopStationModel){};
 
 TEST(LoopStationModel, DefaultsAndSanitization) {
 	SongModel model;
@@ -66,11 +72,12 @@ TEST(LoopStationModel, PhaseMathSupportsNegativeAndRotatedOrigins) {
 	UNSIGNED_LONGS_EQUAL(510, tickPhaseToFrame(75, revision));
 }
 
-TEST_GROUP(LoopStationAudio) {};
+TEST_GROUP(LoopStationAudio){};
 
 TEST(LoopStationAudio, ReservesEightStereoRecorders) {
 	audio::RecorderBudget budget;
-	for (size_t i = 0; i < kSlotCount; ++i) CHECK(budget.reserve({static_cast<SlotId>(i), 2}));
+	for (size_t i = 0; i < kSlotCount; ++i)
+		CHECK(budget.reserve({static_cast<SlotId>(i), 2}));
 	LONGS_EQUAL(16, budget.used());
 	budget.release(SlotId::FOUR);
 	LONGS_EQUAL(14, budget.used());
@@ -110,20 +117,26 @@ TEST(LoopStationAudio, TransposeUsesQ24UnityAndGainRampUsesTicks) {
 	LONGS_EQUAL(kTransposeUnity / 2, ramp.gainAt(50));
 }
 
-TEST_GROUP(LoopStationEngine) {};
+TEST_GROUP(LoopStationEngine){};
 
-TEST_GROUP(LoopStationView) {};
+TEST_GROUP(LoopStationView){};
 
 TEST(LoopStationView, GeometryMapsGridAndCoalescesFourCentrePads) {
 	using namespace deluge::loop_station::core::view;
-	CHECK(Geometry::origin(SlotId::EIGHT) == (Pad{12, 4}));
-	CHECK(Geometry::slotAt(15, 7) == SlotId::EIGHT);
+	CHECK(Geometry::origin(SlotId::ONE) == (Pad{0, 4}));
+	CHECK(Geometry::origin(SlotId::EIGHT) == (Pad{12, 0}));
+	CHECK(Geometry::slotAt(0, 7) == SlotId::ONE);
+	CHECK(Geometry::slotAt(15, 7) == SlotId::FOUR);
+	CHECK(Geometry::slotAt(0, 0) == SlotId::FIVE);
+	CHECK(Geometry::slotAt(15, 0) == SlotId::EIGHT);
 	LONGS_EQUAL(6, Geometry::progressPad(50, 100));
 	CentreCoalescer coalescer;
-	CHECK(coalescer.update(1, 1, true).down);
-	CHECK_FALSE(coalescer.update(2, 1, true).down);
-	CHECK_FALSE(coalescer.update(1, 1, false).up);
-	CHECK(coalescer.update(2, 1, false).up);
+	auto firstDown = coalescer.update(1, 5, true);
+	CHECK(firstDown.down);
+	CHECK(firstDown.slot == SlotId::ONE);
+	CHECK_FALSE(coalescer.update(2, 5, true).down);
+	CHECK_FALSE(coalescer.update(1, 5, false).up);
+	CHECK(coalescer.update(2, 5, false).up);
 }
 
 TEST(LoopStationEngine, QuantizationBoundariesAreDeterministic) {

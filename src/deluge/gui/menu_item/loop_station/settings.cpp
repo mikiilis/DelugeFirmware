@@ -233,26 +233,11 @@ PLACE_SDRAM_BSS TrackTranspose transpose{l10n::String::STRING_FOR_LOOP_STATION_T
 PLACE_SDRAM_BSS Submenu globalSettingsMenu{l10n::String::STRING_FOR_LOOP_STATION,
                                            {&recordAction, &recordQuantize, &startFromStopped}};
 
-PLACE_SDRAM_BSS Submenu trackSettingsMenu{l10n::String::STRING_FOR_LOOP_STATION_TRACK,
-                                          {&source,
-	                                       &monitoring,
-                                           &duration,
-                                           &progressColour,
-                                           &playback,
-                                           &loopSync,
-                                           &startMode,
-                                           &stopMode,
-                                           &fadeTime,
-                                           &transpose,
-                                           &audioClipActionsMenu,
-                                           &audioClipMasterMenu,
-                                           &audioCompMenu,
-                                           &globalFiltersMenu,
-                                           &audioClipFXMenu,
-                                           &globalSidechainMenu,
-                                           &audioClipSampleMenu,
-                                           &audioClipAttackMenu,
-                                           &priorityMenu}};
+PLACE_SDRAM_BSS Submenu trackSettingsMenu{
+    l10n::String::STRING_FOR_LOOP_STATION_TRACK,
+    {&source, &monitoring, &duration, &progressColour, &playback, &loopSync, &startMode, &stopMode, &fadeTime,
+     &transpose, &audioClipActionsMenu, &audioClipMasterMenu, &audioCompMenu, &globalFiltersMenu, &audioClipFXMenu,
+     &globalSidechainMenu, &audioClipSampleMenu, &audioClipAttackMenu, &priorityMenu}};
 
 void selectTrack(SlotId slot) {
 	activeSlot = slot;

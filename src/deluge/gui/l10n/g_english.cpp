@@ -549,6 +549,8 @@ PLACE_SDRAM_DATA Language english{
         {STRING_FOR_LOOP_STATION_ENABLE_COMMUNITY_FEATURE, "Enable in Community Features"},
         {STRING_FOR_LOOP_STATION_UNAVAILABLE_IN_ARRANGEMENT, "Loop Station is unavailable during Arrangement playback"},
         {STRING_FOR_LOOP_STATION_COMMITTING, "Finishing loop recordings"},
+        {STRING_FOR_LOOP_STATION_BACKING_UNAVAILABLE, "Loop backing unavailable; previous take preserved"},
+        {STRING_FOR_LOOP_STATION_SOURCE_UNAVAILABLE, "Loop input source unavailable"},
         {STRING_FOR_LOOP_STATION_TRACK, "Loop Track"},
         {STRING_FOR_LOOP_STATION_RECORD_ACTION, "Record Action"},
         {STRING_FOR_LOOP_STATION_RECORD_QUANTIZE, "Record Quantize"},

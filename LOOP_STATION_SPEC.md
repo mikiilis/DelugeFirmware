@@ -191,6 +191,9 @@ PLAYING ⇄ OVERDUBBING = infinite cycle (press toggles, double-tap → STOPPED)
 **From STOPPED:**
 - Release (short press) → PLAYING (per **Start From Stopped** global setting: RESUME_QUANTIZED or FROM_START)
 - Hold 2s → EMPTY (clear all revisions, keep settings)
+- During the hold, the track border fills red clockwise from the physical top-left over exactly 2 seconds
+- At the threshold the complete red ring remains lit; releasing confirms deletion, while releasing earlier performs the normal short-press action
+- SHIFT-held centre gestures do not show the delete animation and continue to open Track Settings
 
 **From COMMITTING:**
 - Wait for async write → return to PLAYING or STOPPED (stateBeforeCommit)
@@ -234,6 +237,7 @@ PLAYING ⇄ OVERDUBBING = infinite cycle (press toggles, double-tap → STOPPED)
 
 ### First Recording (Initial Take)
 - Captures selected **physical input** (LEFT, RIGHT, STEREO, BALANCED) **dry** (no FX, no normalization)
+- Uses fixed unity capture gain; automatic normalization and post-record file alteration are disabled for every Loop Station WAV
 - Establishes phrase length and playback start tick
 - Sets logical phase zero = phrase start (sample 0 = loop start)
 
@@ -244,6 +248,9 @@ PLAYING ⇄ OVERDUBBING = infinite cycle (press toggles, double-tap → STOPPED)
 - **Track FX chain applied in real-time** to combined audio
 - With Loop Sync ON, playback phase is derived from: `(currentTick - playbackStartTick) % phraseLength`
 - With Loop Sync OFF, playback position advances in the sample domain and the current phase is saved when stopped
+- The engine playback gain and persistent AudioOutput playback gain are synchronized at every playback, history, clear, restore, and capture boundary
+- STOPPED is the only stable state that retains zero playback gain; EMPTY and a fresh RECORDING use unity as their latent baseline
+- Undo-to-empty, hold-to-clear, and undo-to-revision restore unity before the next take or selected revision becomes audible
 
 ### Overdub (Additive Layer)
 **Trigger:** Press during PLAYING
@@ -252,7 +259,10 @@ PLAYING ⇄ OVERDUBBING = infinite cycle (press toggles, double-tap → STOPPED)
 **Capture:**
 - Existing loop playback (from WAV, dry) at unity gain
 - Physical input (dry, pre-FX, pre-level, pre-pan) at unity gain
-- Merged with saturating addition (32-bit signed clamp)
+- The backing render and physical input enter the cumulative mixer at the same internal one-eighth scale
+- They are added first, then the combined signal receives one saturating ×8 compensation back to stored-WAV unity
+- Saturation is a signed 32-bit clamp after combined gain restoration; arithmetic must never wrap
+- No feedback attenuation is applied: a silence overdub preserves every previous layer at the same level across unlimited revisions, within 24-bit storage rounding
 **User Experience:**
 - Existing loop remains audible during overdub
 - Input adds on top in real time
@@ -358,8 +368,11 @@ Physical only: LEFT, RIGHT, STEREO, BALANCED
 
 ### Capture Errors (Affect Single Slot)
 - Resource allocation fail → ERROR, preserve and continue playing the previous phrase
-- SD card error / max file size → ERROR, preserve and continue playing the previous revision
-- Backing missing (voice lost during overdub) → ERROR, reject the take and keep the previous revision
+- A genuine recorder write/finalization error → SD CARD ERROR, preserve and continue playing the previous revision
+- Maximum file size → MAX FILE SIZE ERROR, preserve and continue playing the previous revision
+- Backing missing or incomplete (voice unavailable during overdub) → BACKING UNAVAILABLE, reject the take and keep the previous revision
+- Missing physical input → SOURCE UNAVAILABLE, reject the take and keep the previous revision
+- Non-SD capture failures must never be presented as SD card errors
 
 ### Async Commit Errors
 - COMMITTING state blocks new gestures on that track
@@ -507,13 +520,15 @@ Each **pad** = 4×4 LED square. Grid = **4 pads wide × 2 pads high** = 8 pads =
 ```
 PAD GRID (4×2 = 8 pads)
 ┌────┬────┬────┬────┐
-│ T1 │ T2 │ T3 │ T4 │  ← Pad Row 0 (LED rows 0-3)
+│ T1 │ T2 │ T3 │ T4 │  ← Physical top row (LED rows 4-7)
 │    │    │    │    │
 ├────┼────┼────┼────┤
-│ T5 │ T6 │ T7 │ T8 │  ← Pad Row 1 (LED rows 4-7)
+│ T5 │ T6 │ T7 │ T8 │  ← Physical bottom row (LED rows 0-3)
 │    │    │    │    │
 └────┴────┴────┴────┘
 ```
+
+Track numbering is row-major from the physical top-left: `1, 2, 3, 4` across the top, then `5, 6, 7, 8` across the bottom. The backing clips use the corresponding default names `LOOP 1` through `LOOP 8`.
 
 ### Track Anatomy (per pad = 4×4 LED square)
 
@@ -562,12 +577,12 @@ TRACK = one 4×4 pad = 4×4 LED square
 | RECORDING | Red solid | Red pulse |
 | OVERDUBBING | Orange solid | Orange pulse |
 | PLAYING | Green solid | Green clockwise progress |
-| STOPPED | Dim green | Dim green static |
+| STOPPED | Dim green | Dim green static; 2-second clockwise red fill while held for deletion |
 | COMMITTING | Orange blink | Orange blink |
 | ERROR | Red blink fast | Red blink fast |
 
 - **Button** = main state colour (inner 2×2)
-- **Border** = progress ring (clockwise from top-left), only animated in PLAYING
+- **Border** = progress ring clockwise from the physical top-left; animated for PLAYING progress and STOPPED delete confirmation
 
 ### Global Hardware LEDs
 
@@ -584,6 +599,8 @@ TRACK = one 4×4 pad = 4×4 LED square
 | Double press (< 350ms) | Secondary action (stop/abort) |
 | Hold 2s on STOPPED | Clear phrase (→ EMPTY) |
 
+The STOPPED hold displays a non-wrapping clockwise red border sweep. All 12 border LEDs are red at 2 seconds and remain red until the centre button is released to delete.
+
 ---
 
 ## Invariants (Must Always Hold)
@@ -599,6 +616,12 @@ TRACK = one 4×4 pad = 4×4 LED square
 9. All positions use scheduler tick (lastSwungTickActioned)
 10. Backing missing flag set if any overdub buffer missed backing render
 11. Redo branch truncated on new overdub after undo
+12. First takes and overdubs never enable normalization or post-record gain alteration
+13. Dry backing and dry physical input enter the cumulative mixer at the same one-eighth scale
+14. The combined cumulative mix is restored once with saturating ×8 gain; silence overdubs do not attenuate prior revisions
+15. Delete progress is a non-wrapping 2-second clockwise border fill and never appears for SHIFT-held settings gestures
+16. Engine and AudioOutput playback gain never diverge; clearing or undoing a stopped phrase restores a unity baseline before the next recording
+17. Physical pad numbering is fixed top-left to bottom-right: tracks 1–4 on the top row and tracks 5–8 on the bottom row
 
 ---
 
@@ -616,5 +639,10 @@ TRACK = one 4×4 pad = 4×4 LED square
   - RecorderBudget allocation, including eight simultaneous stereo captures
   - Tempo-change behavior with Loop Sync on and off
   - Combined pre-FX transpose routing and dry recorder taps
+  - Equal-gain backing/input capture, saturating overflow, and repeated silence overdubs with no cumulative level decay
+  - Distinct backing-unavailable, source-unavailable, maximum-file-size, allocation, and genuine SD failure reporting
+  - Clockwise delete-hold progress at start, midpoint, threshold, and beyond the threshold without wrapping
+  - Stop → undo-to-empty → record, stop → hold-clear → record, and stopped undo-to-revision all restore audible unity gain
+  - Physical pad-to-track mapping and default `LOOP 1`–`LOOP 8` naming from top-left to bottom-right
 
 - **Run**: `./dbt test`

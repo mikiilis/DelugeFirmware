@@ -14,6 +14,8 @@ struct Delegate final : EngineDelegate {
 	std::array<int, kTrackCount> finishes{};
 	std::array<int, kTrackCount> aborts{};
 	std::array<int, kTrackCount> clears{};
+	std::array<int, kTrackCount> gainChanges{};
+	std::array<int32_t, kTrackCount> lastGains{};
 	std::array<uint32_t, kTrackCount> beginTicks{};
 	std::array<uint32_t, kTrackCount> finishLengths{};
 	std::array<bool, kTrackCount> beginOverdubs{};
@@ -27,6 +29,7 @@ struct Delegate final : EngineDelegate {
 	bool rejectSwap = false;
 	bool asynchronous = false;
 	uint32_t committedLength = 0;
+	Error rejectError = Error::NONE;
 
 	bool preflight(SlotId slot, bool) override {
 		preflights[static_cast<size_t>(slot)]++;
@@ -45,10 +48,18 @@ struct Delegate final : EngineDelegate {
 		finishOverdubs[index] = overdub;
 		finishLengths[index] = length;
 		finishCrops[index] = crop;
-		return {.accepted = !rejectFinish, .asynchronous = asynchronous, .committedLength = committedLength};
+		return {.accepted = !rejectFinish,
+		        .asynchronous = asynchronous,
+		        .committedLength = committedLength,
+		        .error = rejectError};
 	}
 	void abortCapture(SlotId slot, bool) override { aborts[static_cast<size_t>(slot)]++; }
 	void phraseCleared(SlotId slot) override { clears[static_cast<size_t>(slot)]++; }
+	void playbackGainChanged(SlotId slot, int32_t gain) override {
+		auto index = static_cast<size_t>(slot);
+		gainChanges[index]++;
+		lastGains[index] = gain;
+	}
 	bool navigateHistory(SlotId slot, bool, bool& targetHasPhrase) override {
 		auto index = static_cast<size_t>(slot);
 		swaps[index]++;
@@ -194,11 +205,15 @@ TEST(OperationalLoopStationModel, TrackMenuParametersAreScopedAndClamped) {
 TEST_GROUP(LoopStationGeometry){};
 
 TEST(LoopStationGeometry, MapsEightFourByFourCells) {
-	CHECK((Geometry::origin(SlotId::ONE) == PadCoordinate{0, 0}));
-	CHECK((Geometry::origin(SlotId::FOUR) == PadCoordinate{12, 0}));
-	CHECK((Geometry::origin(SlotId::FIVE) == PadCoordinate{0, 4}));
-	CHECK((Geometry::origin(SlotId::EIGHT) == PadCoordinate{12, 4}));
-	CHECK(Geometry::slotAt(15, 7) == SlotId::EIGHT);
+	// Matrix Y increases upward: tracks 1-4 occupy the physical top row.
+	CHECK((Geometry::origin(SlotId::ONE) == PadCoordinate{0, 4}));
+	CHECK((Geometry::origin(SlotId::FOUR) == PadCoordinate{12, 4}));
+	CHECK((Geometry::origin(SlotId::FIVE) == PadCoordinate{0, 0}));
+	CHECK((Geometry::origin(SlotId::EIGHT) == PadCoordinate{12, 0}));
+	CHECK(Geometry::slotAt(0, 7) == SlotId::ONE);
+	CHECK(Geometry::slotAt(15, 7) == SlotId::FOUR);
+	CHECK(Geometry::slotAt(0, 0) == SlotId::FIVE);
+	CHECK(Geometry::slotAt(15, 0) == SlotId::EIGHT);
 	CHECK_TRUE(Geometry::isCentre(1, 1));
 	CHECK_TRUE(Geometry::isCentre(2, 2));
 	CHECK_FALSE(Geometry::isCentre(0, 1));
@@ -241,6 +256,25 @@ TEST(LoopStationGeometry, ProgressFadesEachClockwisePadInContinuously) {
 	auto wrapped = Geometry::progressFill(static_cast<uint64_t>(120) << 16, 120);
 	CHECK_EQUAL(0, wrapped.fullPads);
 	CHECK_EQUAL(0, wrapped.leadingBrightness);
+}
+
+TEST(LoopStationGeometry, DeleteHoldProgressFillsOnceAndDoesNotWrap) {
+	constexpr uint32_t duration = 88200;
+	auto start = Geometry::linearProgressFill(0, duration);
+	CHECK_EQUAL(0, start.fullPads);
+	CHECK_EQUAL(0, start.leadingBrightness);
+
+	auto halfway = Geometry::linearProgressFill(duration / 2, duration);
+	CHECK_EQUAL(6, halfway.fullPads);
+	CHECK_EQUAL(0, halfway.leadingBrightness);
+
+	auto complete = Geometry::linearProgressFill(duration, duration);
+	CHECK_EQUAL(kCellBorderPadCount, complete.fullPads);
+	CHECK_EQUAL(0, complete.leadingBrightness);
+
+	auto heldLonger = Geometry::linearProgressFill(duration * 2, duration);
+	CHECK_EQUAL(kCellBorderPadCount, heldLonger.fullPads);
+	CHECK_EQUAL(0, heldLonger.leadingBrightness);
 }
 
 TEST(LoopStationGeometry, BeatPulseIsContinuousAndPeaksOnTempoBoundary) {
@@ -778,6 +812,57 @@ TEST(LoopStationState, ClearNotifiesDelegateAndResetKeepsSongSettings) {
 	CHECK(engine.track(SlotId::ONE).state == TrackState::EMPTY);
 }
 
+TEST(LoopStationState, HoldClearRestoresOutputGainBeforeNextRecording) {
+	SongModel model;
+	model.global.quantize = QuantizeMode::OFF;
+	Delegate delegate;
+	Engine engine(model, &delegate);
+	engine.restoreBoundPhrase(SlotId::ONE, 96, false, true, 1, 0);
+	CHECK_EQUAL(0, delegate.lastGains[0]);
+
+	engine.clearHeld(SlotId::ONE);
+	CHECK(engine.track(SlotId::ONE).state == TrackState::EMPTY);
+	CHECK_EQUAL(1 << 24, engine.track(SlotId::ONE).playbackGain);
+	CHECK_EQUAL(1 << 24, delegate.lastGains[0]);
+
+	engine.centrePressed(SlotId::ONE, at(10), 1000);
+	engine.centrePressed(SlotId::ONE, at(58), 2000);
+	CHECK(engine.track(SlotId::ONE).state == TrackState::PLAYING);
+	CHECK_EQUAL(1 << 24, delegate.lastGains[0]);
+}
+
+TEST(LoopStationState, UndoToEmptyRestoresOutputGainBeforeNextRecording) {
+	SongModel model;
+	model.global.quantize = QuantizeMode::OFF;
+	Delegate delegate;
+	Engine engine(model, &delegate);
+	engine.restoreBoundPhrase(SlotId::ONE, 96, false, true, 1, 0);
+	CHECK_EQUAL(0, delegate.lastGains[0]);
+
+	CHECK_TRUE(engine.undo(SlotId::ONE));
+	CHECK(engine.track(SlotId::ONE).state == TrackState::EMPTY);
+	CHECK_EQUAL(1 << 24, engine.track(SlotId::ONE).playbackGain);
+	CHECK_EQUAL(1 << 24, delegate.lastGains[0]);
+
+	engine.centrePressed(SlotId::ONE, at(10), 1000);
+	engine.centrePressed(SlotId::ONE, at(58), 2000);
+	CHECK(engine.track(SlotId::ONE).state == TrackState::PLAYING);
+	CHECK_EQUAL(1 << 24, delegate.lastGains[0]);
+}
+
+TEST(LoopStationState, UndoFromStoppedMakesEarlierRevisionAudible) {
+	SongModel model;
+	Delegate delegate;
+	Engine engine(model, &delegate);
+	engine.restoreBoundPhrase(SlotId::ONE, 96, false, true, 2, 1);
+	CHECK_EQUAL(0, delegate.lastGains[0]);
+
+	CHECK_TRUE(engine.undo(SlotId::ONE));
+	CHECK(engine.track(SlotId::ONE).state == TrackState::PLAYING);
+	CHECK_EQUAL(1 << 24, engine.track(SlotId::ONE).playbackGain);
+	CHECK_EQUAL(1 << 24, delegate.lastGains[0]);
+}
+
 TEST(LoopStationState, MultipleAsynchronousCommitsBlockExitIndependently) {
 	SongModel model;
 	model.global.quantize = QuantizeMode::OFF;
@@ -812,6 +897,25 @@ TEST(LoopStationState, FailedCommitPreservesPreviousPhraseRevision) {
 	CHECK(engine.track(SlotId::ONE).stateBeforeCommit == TrackState::PLAYING);
 	CHECK_EQUAL(revision, engine.track(SlotId::ONE).currentRevision);
 	CHECK_EQUAL(96, engine.track(SlotId::ONE).phraseLength);
+}
+
+TEST(LoopStationState, RejectedBackingReportsSpecificErrorAndPreservesPhrase) {
+	SongModel model;
+	Delegate delegate;
+	delegate.rejectFinish = true;
+	delegate.rejectError = Error::BACKING_UNAVAILABLE;
+	Engine engine(model, &delegate);
+	engine.restoreBoundPhrase(SlotId::ONE, 96, true);
+	auto revision = engine.track(SlotId::ONE).currentRevision;
+	engine.centrePressed(SlotId::ONE, at(0), 0);
+	CHECK(engine.track(SlotId::ONE).state == TrackState::OVERDUBBING);
+	engine.processTick(at(96));
+	CHECK(engine.track(SlotId::ONE).state == TrackState::ERROR);
+	CHECK(engine.track(SlotId::ONE).error == Error::BACKING_UNAVAILABLE);
+	CHECK_EQUAL(revision, engine.track(SlotId::ONE).currentRevision);
+	CHECK_EQUAL(96, engine.track(SlotId::ONE).phraseLength);
+	engine.centrePressed(SlotId::ONE, at(97), 1000);
+	CHECK(engine.track(SlotId::ONE).state == TrackState::PLAYING);
 }
 
 TEST_GROUP(LoopStationFanOut){};
@@ -884,6 +988,15 @@ TEST(LoopStationLayers, AddIsAlwaysFullFeedbackAndSaturates) {
 	CHECK_EQUAL(INT32_MAX, saturatingAdd(INT32_MAX, 100));
 	CHECK_EQUAL(INT32_MIN, saturatingAdd(INT32_MIN, -100));
 	CHECK_EQUAL(100, saturatingAdd(100, 0));
+}
+
+TEST(LoopStationLayers, DryCaptureRestoresBackingAndInputAtEqualUnityGain) {
+	constexpr int32_t oneEighth = 0x02000000;
+	CHECK_EQUAL(0x10000000, restoreCaptureGain(oneEighth));
+	CHECK_EQUAL(0x20000000, restoreCaptureGain(saturatingAdd(oneEighth, oneEighth)));
+	CHECK_EQUAL(INT32_MAX, restoreCaptureGain(INT32_MAX / 4));
+	CHECK_EQUAL(INT32_MIN, restoreCaptureGain(INT32_MIN / 4));
+	CHECK_EQUAL(kCaptureGainShift, kPhysicalInputPreMixGainShift + 1);
 }
 
 TEST(LoopStationLayers, PhysicalOverdubCaptureDoesNotDependOnAudibleMonitoring) {

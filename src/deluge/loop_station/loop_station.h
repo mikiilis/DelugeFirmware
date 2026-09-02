@@ -41,7 +41,15 @@ enum class PendingAction : uint8_t {
 	RETRIGGER,
 	RESUME
 };
-enum class Error : uint8_t { NONE, RESOURCE_LIMIT, ALLOCATION, SD_CARD, MAX_FILE_SIZE, SOURCE_REMOVED };
+enum class Error : uint8_t {
+	NONE,
+	RESOURCE_LIMIT,
+	ALLOCATION,
+	SD_CARD,
+	MAX_FILE_SIZE,
+	SOURCE_REMOVED,
+	BACKING_UNAVAILABLE,
+};
 
 // Performance actions are dispatched by the first pad-down, not the eventual
 // release of the coalesced 2x2 gesture. STOPPED is the sole exception because
@@ -57,6 +65,18 @@ enum class Error : uint8_t { NONE, RESOURCE_LIMIT, ALLOCATION, SD_CARD, MAX_FILE
 
 [[nodiscard]] constexpr int32_t saturatingAdd(int32_t backing, int32_t input) {
 	return static_cast<int32_t>(std::clamp<int64_t>(static_cast<int64_t>(backing) + input,
+	                                                std::numeric_limits<int32_t>::min(),
+	                                                std::numeric_limits<int32_t>::max()));
+}
+
+// AudioClip dry playback and physical input are both mixed at one-eighth of
+// stored-WAV amplitude, leaving additive headroom. Restore the cumulative mix
+// once, after addition, so silence overdubs retain previous-layer level and
+// overflow saturates rather than wrapping.
+constexpr uint8_t kCaptureGainShift = 3;
+constexpr uint8_t kPhysicalInputPreMixGainShift = 2;
+[[nodiscard]] constexpr int32_t restoreCaptureGain(int32_t sample) {
+	return static_cast<int32_t>(std::clamp<int64_t>(static_cast<int64_t>(sample) * (1 << kCaptureGainShift),
 	                                                std::numeric_limits<int32_t>::min(),
 	                                                std::numeric_limits<int32_t>::max()));
 }
@@ -222,6 +242,9 @@ struct CaptureFinish {
 	// gesture position, preventing an inaccurate scheduler length from changing
 	// playback speed.
 	uint32_t committedLength = 0;
+	// A rejected capture reports its actual cause. NONE is retained as a
+	// compatibility fallback for delegates which only set accepted=false.
+	Error error = Error::NONE;
 };
 
 class EngineDelegate {
@@ -275,6 +298,7 @@ private:
 	void finishCapture(SlotId slot, bool overdub, uint32_t tick, uint32_t requestedTick);
 	void stop(SlotId slot, uint32_t tick, bool forceImmediate = false);
 	void beginPlayback(SlotId slot, Transport const& transport, bool fromStart);
+	void setPlaybackGain(SlotId slot, int32_t gain, bool forceNotify = false);
 	void updateFade(SlotId slot, uint32_t tick);
 	void completeCapture(SlotId slot, bool overdub, uint32_t length);
 	void setOverdubEnd(TrackRuntime& runtime, uint32_t tick);
@@ -309,15 +333,18 @@ public:
 
 	static constexpr PadCoordinate origin(SlotId slot) {
 		auto index = static_cast<uint8_t>(slot);
-		return PadCoordinate{static_cast<uint8_t>((index % 4) * 4), static_cast<uint8_t>((index / 4) * 4)};
+		return PadCoordinate{static_cast<uint8_t>((index % 4) * 4), static_cast<uint8_t>((1 - index / 4) * 4)};
 	}
 	static constexpr bool isCentre(uint8_t localX, uint8_t localY) {
 		return localX >= 1 && localX <= 2 && localY >= 1 && localY <= 2;
 	}
-	static constexpr SlotId slotAt(uint8_t x, uint8_t y) { return static_cast<SlotId>((y / 4) * 4 + (x / 4)); }
+	static constexpr SlotId slotAt(uint8_t x, uint8_t y) { return static_cast<SlotId>((1 - y / 4) * 4 + (x / 4)); }
 	static uint8_t progressPadCount(uint32_t position, uint32_t phraseLength);
 	// positionQ16 is a musical position in ticks with a 16-bit fractional part.
 	static ProgressFill progressFill(uint64_t positionQ16, uint32_t phraseLength);
+	// Non-wrapping progress for a finite hold gesture. At duration, all border
+	// pads are full and remain full for any additional hold time.
+	static ProgressFill linearProgressFill(uint32_t elapsed, uint32_t duration);
 	// Continuous triangle pulse with its brightest point on each beat boundary.
 	static uint16_t beatPulseBrightness(uint64_t positionQ16, uint32_t beatLength);
 };

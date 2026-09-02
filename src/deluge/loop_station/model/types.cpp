@@ -7,8 +7,8 @@ namespace deluge::loop_station::core {
 void GlobalSettings::sanitize() {
 	recordAction = sanitizeEnum<RecordActionMode, RecordActionMode::RECORD_OVERDUB_PLAY>(
 	    recordAction, RecordActionMode::RECORD_PLAY_OVERDUB);
-	recordQuantize = sanitizeEnum<RecordQuantizeMode, RecordQuantizeMode::MEASURE>(recordQuantize,
-	                                                                               RecordQuantizeMode::SMART);
+	recordQuantize =
+	    sanitizeEnum<RecordQuantizeMode, RecordQuantizeMode::MEASURE>(recordQuantize, RecordQuantizeMode::SMART);
 	startFromStopped = sanitizeEnum<StartFromStoppedMode, StartFromStoppedMode::FROM_START>(
 	    startFromStopped, StartFromStoppedMode::RESUME_QUANTIZED);
 }
@@ -26,34 +26,44 @@ void TrackSettings::sanitize(SlotId slot) {
 }
 
 void HistoryState::sanitize() {
-	if (size == 0) cursor = -1;
-	else cursor = std::clamp<int32_t>(cursor, -1, static_cast<int32_t>(size) - 1);
+	if (size == 0)
+		cursor = -1;
+	else
+		cursor = std::clamp<int32_t>(cursor, -1, static_cast<int32_t>(size) - 1);
 	pendingParent = std::numeric_limits<uint32_t>::max();
 }
 
 bool HistoryState::beginCommit() {
-	if (pendingParent != std::numeric_limits<uint32_t>::max()) return false;
+	if (pendingParent != std::numeric_limits<uint32_t>::max())
+		return false;
 	pendingParent = static_cast<uint32_t>(cursor + 1);
 	return true;
 }
 
 void HistoryState::acceptCommit() {
-	if (pendingParent == std::numeric_limits<uint32_t>::max()) return;
+	if (pendingParent == std::numeric_limits<uint32_t>::max())
+		return;
 	size = pendingParent + 1;
 	cursor = static_cast<int32_t>(pendingParent);
 	pendingParent = std::numeric_limits<uint32_t>::max();
 }
 
-void HistoryState::rejectCommit() { pendingParent = std::numeric_limits<uint32_t>::max(); }
+void HistoryState::rejectCommit() {
+	pendingParent = std::numeric_limits<uint32_t>::max();
+}
 
 bool HistoryState::navigate(bool redo) {
-	if (pendingParent != std::numeric_limits<uint32_t>::max()) return false;
-	if (redo ? !canRedo() : !canUndo()) return false;
+	if (pendingParent != std::numeric_limits<uint32_t>::max())
+		return false;
+	if (redo ? !canRedo() : !canUndo())
+		return false;
 	cursor += redo ? 1 : -1;
 	return true;
 }
 
-void HistoryState::clear() { *this = {}; }
+void HistoryState::clear() {
+	*this = {};
+}
 
 SongModel::SongModel() {
 	for (size_t i = 0; i < kSlotCount; ++i) {
@@ -71,7 +81,8 @@ void SongModel::sanitize() {
 		if (track.clipBinding > kSlotCount || (track.clipBinding != 0 && claimed[track.clipBinding])) {
 			track.clipBinding = 0;
 		}
-		if (track.clipBinding) claimed[track.clipBinding] = true;
+		if (track.clipBinding)
+			claimed[track.clipBinding] = true;
 	}
 }
 

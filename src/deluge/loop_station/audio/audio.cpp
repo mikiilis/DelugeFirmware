@@ -9,7 +9,8 @@ bool RecorderBudget::reserve(RecorderRequest request) {
 	auto index = indexOf(request.slot);
 	auto channels = std::clamp<uint8_t>(request.channels, 1, 2);
 	auto without = static_cast<uint8_t>(used_ - reservations_[index]);
-	if (without + channels > kChannelCapacity) return false;
+	if (without + channels > kChannelCapacity)
+		return false;
 	reservations_[index] = channels;
 	used_ = without + channels;
 	return true;
@@ -21,7 +22,9 @@ void RecorderBudget::release(SlotId slot) {
 	reservations_[index] = 0;
 }
 
-void PhysicalInputRouter::clear() { used_.fill(false); }
+void PhysicalInputRouter::clear() {
+	used_.fill(false);
+}
 
 void PhysicalInputRouter::subscribe(RouteRequest request) {
 	auto index = indexOf(request.slot);
@@ -30,18 +33,24 @@ void PhysicalInputRouter::subscribe(RouteRequest request) {
 }
 
 bool PhysicalInputRouter::shouldRenderSource(PhysicalSource source) const {
-	for (size_t i = 0; i < kSlotCount; ++i) if (used_[i] && routes_[i].source == source) return true;
+	for (size_t i = 0; i < kSlotCount; ++i)
+		if (used_[i] && routes_[i].source == source)
+			return true;
 	return false;
 }
 
 bool PhysicalInputRouter::monitorAudible(SlotId slot) const {
 	auto index = indexOf(slot);
-	if (!used_[index] || !routes_[index].monitoring) return false;
+	if (!used_[index] || !routes_[index].monitoring)
+		return false;
 	auto const& route = routes_[index];
-	if (route.capturing) return true;
-	if (!route.selected) return false;
+	if (route.capturing)
+		return true;
+	if (!route.selected)
+		return false;
 	for (size_t i = 0; i < kSlotCount; ++i) {
-		if (i != index && used_[i] && routes_[i].capturing && routes_[i].source == route.source) return false;
+		if (i != index && used_[i] && routes_[i].capturing && routes_[i].source == route.source)
+			return false;
 	}
 	return true;
 }
@@ -57,7 +66,8 @@ size_t PhysicalInputRouter::sourceReadCount() const {
 size_t PhysicalInputRouter::monitorReturnCount() const {
 	size_t count = 0;
 	for (size_t i = 0; i < kSlotCount; ++i) {
-		if (!monitorAudible(static_cast<SlotId>(i))) continue;
+		if (!monitorAudible(static_cast<SlotId>(i)))
+			continue;
 		bool duplicate = false;
 		for (size_t j = 0; j < i; ++j) {
 			if (monitorAudible(static_cast<SlotId>(j)) && routes_[j].source == routes_[i].source
@@ -66,15 +76,16 @@ size_t PhysicalInputRouter::monitorReturnCount() const {
 				break;
 			}
 		}
-		if (!duplicate) ++count;
+		if (!duplicate)
+			++count;
 	}
 	return count;
 }
 
-DryMixResult mixDryCumulative(std::span<int32_t const> backing, uint8_t backingChannels,
-	                          std::span<int32_t const> input, uint8_t inputChannels,
-	                          std::span<int32_t> destination, bool backingRequired) {
-	if (backingRequired && backing.empty()) return {.accepted = false};
+DryMixResult mixDryCumulative(std::span<int32_t const> backing, uint8_t backingChannels, std::span<int32_t const> input,
+                              uint8_t inputChannels, std::span<int32_t> destination, bool backingRequired) {
+	if (backingRequired && backing.empty())
+		return {.accepted = false};
 	backingChannels = std::clamp<uint8_t>(backingChannels, 1, 2);
 	inputChannels = std::clamp<uint8_t>(inputChannels, 1, 2);
 	auto outputChannels = std::max(backingChannels, inputChannels);
@@ -98,8 +109,10 @@ int32_t transposeRatioQ24(int8_t semitones, int8_t cents) {
 }
 
 int32_t GainRamp::gainAt(int64_t tick) const {
-	if (endTick <= startTick || tick >= endTick) return endGain;
-	if (tick <= startTick) return startGain;
+	if (endTick <= startTick || tick >= endTick)
+		return endGain;
+	if (tick <= startTick)
+		return startGain;
 	auto elapsed = tick - startTick;
 	auto duration = endTick - startTick;
 	auto delta = static_cast<int64_t>(endGain) - startGain;
