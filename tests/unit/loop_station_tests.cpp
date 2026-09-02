@@ -47,11 +47,14 @@ TEST(LoopStationModel, DefaultsAndSanitization) {
 	model.tracks[0].settings.semitones = 100;
 	model.tracks[0].settings.cents = -100;
 	model.tracks[0].settings.fadeBars = 0;
+	model.tracks[7].settings.progressColour = ProgressColour::PINK;
 	model.sanitize();
 	CHECK(model.global.recordQuantize == RecordQuantizeMode::SMART);
 	LONGS_EQUAL(24, model.tracks[0].settings.semitones);
 	LONGS_EQUAL(-50, model.tracks[0].settings.cents);
 	LONGS_EQUAL(1, model.tracks[0].settings.fadeBars);
+	CHECK(model.tracks[7].settings.progressColour == ProgressColour::PINK);
+	CHECK(model.tracks[6].settings.progressColour == ProgressColour::GOLD);
 }
 
 TEST(LoopStationModel, HistoryPreservesRedoUntilSuccessfulCommit) {

@@ -86,7 +86,7 @@ public:
 		case TrackParameter::SOURCE:
 			return {"Left", "Right", "Stereo", "Balanced"};
 		case TrackParameter::PROGRESS_COLOUR:
-			return {"Yellow", "Cyan", "Blue", "Purple", "Magenta", "White"};
+			return {"Gold", "Yellow", "Lime", "Turquoise", "Cyan", "Sky", "Blue", "Purple", "Magenta", "Pink", "White"};
 		case TrackParameter::PLAYBACK:
 			return {"Loop", "One Shot"};
 		case TrackParameter::START_MODE:

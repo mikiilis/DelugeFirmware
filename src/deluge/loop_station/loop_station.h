@@ -30,7 +30,24 @@ enum class StartMode : uint8_t { IMMEDIATE, FADE };
 enum class StopMode : uint8_t { LOOP_END, IMMEDIATE, FADE };
 enum class PlaybackMode : uint8_t { LOOP, ONE_SHOT };
 enum class SourceType : uint8_t { LEFT, RIGHT, STEREO, BALANCED, MIX_PRE_FX, MIX_POST_FX, SONG_TRACK };
-enum class PadColour : uint8_t { RED, ORANGE, YELLOW, GREEN, CYAN, BLUE, PURPLE, MAGENTA, WHITE };
+// Keep the original values stable for song-file compatibility. New progress
+// colours are appended so existing saved tracks retain their exact colour.
+enum class PadColour : uint8_t {
+	RED,
+	ORANGE,
+	YELLOW,
+	GREEN,
+	CYAN,
+	BLUE,
+	PURPLE,
+	MAGENTA,
+	WHITE,
+	GOLD,
+	LIME,
+	TURQUOISE,
+	SKY,
+	PINK,
+};
 enum class PendingAction : uint8_t {
 	NONE,
 	START_RECORDING,
@@ -109,13 +126,19 @@ struct GlobalSettings {
 	PadColour dimBorderColour = PadColour::BLUE;
 };
 
-constexpr std::array<PadColour, 6> kProgressColours{PadColour::YELLOW, PadColour::CYAN,    PadColour::BLUE,
-                                                    PadColour::PURPLE, PadColour::MAGENTA, PadColour::WHITE};
+constexpr std::array<PadColour, 11> kProgressColours{
+    PadColour::GOLD, PadColour::YELLOW, PadColour::LIME,    PadColour::TURQUOISE, PadColour::CYAN,  PadColour::SKY,
+    PadColour::BLUE, PadColour::PURPLE, PadColour::MAGENTA, PadColour::PINK,      PadColour::WHITE,
+};
+constexpr std::array<PadColour, kTrackCount> kDefaultProgressColours{
+    PadColour::YELLOW,  PadColour::CYAN,  PadColour::BLUE, PadColour::PURPLE,
+    PadColour::MAGENTA, PadColour::WHITE, PadColour::GOLD, PadColour::LIME,
+};
 [[nodiscard]] constexpr bool isReservedStateColour(PadColour colour) {
 	return colour == PadColour::RED || colour == PadColour::ORANGE || colour == PadColour::GREEN;
 }
 [[nodiscard]] constexpr PadColour defaultProgressColour(SlotId slot) {
-	return kProgressColours[static_cast<size_t>(slot) % kProgressColours.size()];
+	return kDefaultProgressColours[static_cast<size_t>(slot) % kDefaultProgressColours.size()];
 }
 
 struct TrackSettings {
@@ -280,6 +303,10 @@ public:
 	void clearHeld(SlotId slot);
 	bool undo(SlotId slot);
 	bool redo(SlotId slot);
+	void startAll(Transport const& transport);
+	void stopAll(Transport const& transport);
+	[[nodiscard]] bool canStartAll() const;
+	[[nodiscard]] bool canStopAll() const;
 	void processTick(Transport const& transport);
 	bool requestExit(Transport const& transport);
 	[[nodiscard]] bool exitReady() const;

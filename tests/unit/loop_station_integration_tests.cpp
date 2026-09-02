@@ -91,6 +91,8 @@ TEST(OperationalLoopStationModel, DefaultsAreSafeAndTrackColoursAreDeterministic
 		CHECK(track.settings.stopMode == StopMode::LOOP_END);
 		CHECK_EQUAL(1, track.settings.fadeTimeBars);
 	}
+	CHECK(model.tracks[6].settings.progressColour == PadColour::GOLD);
+	CHECK(model.tracks[7].settings.progressColour == PadColour::LIME);
 }
 
 TEST(OperationalLoopStationModel, SanitizesUnknownEnumsAndBoundedValues) {
@@ -121,6 +123,10 @@ TEST(OperationalLoopStationModel, SanitizesUnknownEnumsAndBoundedValues) {
 
 TEST(OperationalLoopStationModel, ProgressColoursExcludeReservedStateColours) {
 	SongModel model;
+	CHECK_EQUAL(11, kProgressColours.size());
+	for (auto colour : kProgressColours) {
+		CHECK_FALSE(isReservedStateColour(colour));
+	}
 	constexpr std::array reserved{PadColour::GREEN, PadColour::RED, PadColour::ORANGE};
 	for (size_t i = 0; i < reserved.size(); ++i) {
 		auto slot = static_cast<SlotId>(i);
@@ -132,6 +138,9 @@ TEST(OperationalLoopStationModel, ProgressColoursExcludeReservedStateColours) {
 	model.tracks[7].settings.progressColour = PadColour::GREEN;
 	model.sanitize();
 	CHECK(model.tracks[7].settings.progressColour == defaultProgressColour(SlotId::EIGHT));
+
+	writeTrackParameter(model, SlotId::ONE, TrackParameter::PROGRESS_COLOUR, static_cast<int32_t>(PadColour::PINK));
+	CHECK(model.tracks[0].settings.progressColour == PadColour::PINK);
 }
 
 TEST(OperationalLoopStationModel, GlobalMenuParametersRoundTripAndRejectInvalidEnums) {
@@ -810,6 +819,55 @@ TEST(LoopStationState, ClearNotifiesDelegateAndResetKeepsSongSettings) {
 	CHECK_EQUAL(1, delegate.clears[0]);
 	engine.resetRuntime();
 	CHECK(engine.track(SlotId::ONE).state == TrackState::EMPTY);
+}
+
+TEST(LoopStationState, StartAllUsesOneSharedQuantizedBoundary) {
+	SongModel model;
+	model.global.quantize = QuantizeMode::MEASURE;
+	model.tracks[1].settings.playback = PlaybackMode::ONE_SHOT;
+	Delegate delegate;
+	Engine engine(model, &delegate);
+	engine.restoreBoundPhrase(SlotId::ONE, 96, false);
+	engine.restoreBoundPhrase(SlotId::TWO, 96, false);
+	CHECK_TRUE(engine.canStartAll());
+
+	engine.startAll(at(20));
+	CHECK(engine.track(SlotId::ONE).event.action == PendingAction::RESUME);
+	CHECK(engine.track(SlotId::TWO).event.action == PendingAction::RETRIGGER);
+	CHECK_EQUAL(96, engine.track(SlotId::ONE).event.tick);
+	CHECK_EQUAL(96, engine.track(SlotId::TWO).event.tick);
+	CHECK_FALSE(engine.canStartAll());
+
+	engine.processTick(at(96));
+	CHECK(engine.track(SlotId::ONE).state == TrackState::PLAYING);
+	CHECK(engine.track(SlotId::TWO).state == TrackState::PLAYING);
+	CHECK_EQUAL(96, engine.track(SlotId::TWO).playbackStartTick);
+}
+
+TEST(LoopStationState, StopAllUsesOneBoundaryAndDoesNotInterruptCapture) {
+	SongModel model;
+	model.global.quantize = QuantizeMode::OFF;
+	Delegate delegate;
+	Engine engine(model, &delegate);
+	engine.restoreBoundPhrase(SlotId::ONE, 96, true);
+	engine.restoreBoundPhrase(SlotId::TWO, 96, true);
+	engine.centrePressed(SlotId::THREE, at(20), 0);
+	CHECK(engine.track(SlotId::THREE).state == TrackState::RECORDING);
+	CHECK_TRUE(engine.canStopAll());
+
+	model.global.quantize = QuantizeMode::MEASURE;
+	engine.stopAll(at(20));
+	CHECK(engine.track(SlotId::ONE).event.action == PendingAction::STOP);
+	CHECK(engine.track(SlotId::TWO).event.action == PendingAction::STOP);
+	CHECK_EQUAL(96, engine.track(SlotId::ONE).event.tick);
+	CHECK_EQUAL(96, engine.track(SlotId::TWO).event.tick);
+	CHECK(engine.track(SlotId::THREE).state == TrackState::RECORDING);
+	CHECK_FALSE(engine.canStopAll());
+
+	engine.processTick(at(96));
+	CHECK(engine.track(SlotId::ONE).state == TrackState::STOPPED);
+	CHECK(engine.track(SlotId::TWO).state == TrackState::STOPPED);
+	CHECK(engine.track(SlotId::THREE).state == TrackState::RECORDING);
 }
 
 TEST(LoopStationState, HoldClearRestoresOutputGainBeforeNextRecording) {

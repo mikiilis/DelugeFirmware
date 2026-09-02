@@ -37,8 +37,8 @@ void SongModel::sanitize() {
 		auto& settings = binding.settings;
 		settings.source =
 		    clampEnum<SourceType, SourceType::BALANCED>(static_cast<uint32_t>(settings.source), SourceType::LEFT);
-		settings.progressColour = clampEnum<PadColour, PadColour::WHITE>(static_cast<uint32_t>(settings.progressColour),
-		                                                                 defaultProgressColour(static_cast<SlotId>(i)));
+		settings.progressColour = clampEnum<PadColour, PadColour::PINK>(static_cast<uint32_t>(settings.progressColour),
+		                                                                defaultProgressColour(static_cast<SlotId>(i)));
 		if (isReservedStateColour(settings.progressColour)) {
 			settings.progressColour = defaultProgressColour(static_cast<SlotId>(i));
 		}
@@ -135,7 +135,7 @@ void writeTrackParameter(SongModel& model, SlotId slot, TrackParameter parameter
 		break;
 	case TrackParameter::PROGRESS_COLOUR:
 		settings.progressColour =
-		    clampEnum<PadColour, PadColour::WHITE>(static_cast<uint32_t>(value), defaultProgressColour(slot));
+		    clampEnum<PadColour, PadColour::PINK>(static_cast<uint32_t>(value), defaultProgressColour(slot));
 		if (isReservedStateColour(settings.progressColour)) {
 			settings.progressColour = defaultProgressColour(slot);
 		}
@@ -355,8 +355,7 @@ void Engine::execute(SlotId slot, PendingAction action, Transport const& transpo
 		stop(slot, transport.tick, true);
 		break;
 	case PendingAction::RETRIGGER:
-		track(slot).playbackStartTick = transport.tick;
-		transition(slot, TrackState::PLAYING);
+		beginPlayback(slot, transport, true);
 		break;
 	case PendingAction::RESUME:
 		beginPlayback(slot, transport, false);
@@ -364,6 +363,65 @@ void Engine::execute(SlotId slot, PendingAction action, Transport const& transpo
 	case PendingAction::NONE:
 		break;
 	}
+}
+
+void Engine::startAll(Transport const& transport) {
+	uint32_t target = quantizedStart(model_.global.quantize, transport.tick, transport.barLength);
+	for (size_t i = 0; i < runtime_.size(); ++i) {
+		auto slot = static_cast<SlotId>(i);
+		auto& runtime = runtime_[i];
+		if (runtime.state != TrackState::STOPPED || runtime.event.pending()) {
+			continue;
+		}
+
+		auto const& settings = model_.tracks[i].settings;
+		bool fromStart = settings.playback == PlaybackMode::ONE_SHOT
+		                 || model_.global.startFromStopped == StartFromStopped::FROM_START;
+		if (!fromStart && !settings.loopSync) {
+			runtime.playbackStartTick = target - runtime.savedStopPhase;
+		}
+		auto action = fromStart ? PendingAction::RETRIGGER : PendingAction::RESUME;
+		if (target == transport.tick) {
+			execute(slot, action, transport, target);
+		}
+		else {
+			schedule(slot, action, target, target);
+		}
+	}
+}
+
+void Engine::stopAll(Transport const& transport) {
+	uint32_t target = transport.tick;
+	if (model_.global.quantize == QuantizeMode::MEASURE) {
+		target = quantizedStart(QuantizeMode::MEASURE, transport.tick + 1, transport.barLength);
+	}
+	for (size_t i = 0; i < runtime_.size(); ++i) {
+		auto slot = static_cast<SlotId>(i);
+		auto& runtime = runtime_[i];
+		// A cumulative overdub must finish its complete backing pass. Group Stop
+		// affects stable playback only and never truncates an active capture.
+		if (runtime.state != TrackState::PLAYING || runtime.finishingOverdub || runtime.event.pending()) {
+			continue;
+		}
+		if (target == transport.tick) {
+			stop(slot, target, true);
+		}
+		else {
+			schedule(slot, PendingAction::STOP, target, target);
+		}
+	}
+}
+
+bool Engine::canStartAll() const {
+	return std::any_of(runtime_.begin(), runtime_.end(), [](TrackRuntime const& runtime) {
+		return runtime.state == TrackState::STOPPED && !runtime.event.pending();
+	});
+}
+
+bool Engine::canStopAll() const {
+	return std::any_of(runtime_.begin(), runtime_.end(), [](TrackRuntime const& runtime) {
+		return runtime.state == TrackState::PLAYING && !runtime.finishingOverdub && !runtime.event.pending();
+	});
 }
 
 void Engine::beginCapture(SlotId slot, bool overdub, uint32_t tick, Transport const&) {

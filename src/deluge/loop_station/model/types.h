@@ -26,7 +26,24 @@ enum class PhysicalSource : uint8_t { LEFT, RIGHT, STEREO, BALANCED };
 enum class PlaybackMode : uint8_t { LOOP, ONE_SHOT };
 enum class StartMode : uint8_t { IMMEDIATE, FADE };
 enum class StopMode : uint8_t { LOOP_END, IMMEDIATE, FADE };
-enum class ProgressColour : uint8_t { YELLOW, CYAN, BLUE, PURPLE, MAGENTA, WHITE };
+enum class ProgressColour : uint8_t {
+	YELLOW,
+	CYAN,
+	BLUE,
+	PURPLE,
+	MAGENTA,
+	WHITE,
+	GOLD,
+	LIME,
+	TURQUOISE,
+	SKY,
+	PINK,
+};
+
+constexpr std::array<ProgressColour, kSlotCount> kDefaultProgressColours{
+    ProgressColour::YELLOW,  ProgressColour::CYAN,  ProgressColour::BLUE, ProgressColour::PURPLE,
+    ProgressColour::MAGENTA, ProgressColour::WHITE, ProgressColour::GOLD, ProgressColour::LIME,
+};
 enum class PendingAction : uint8_t { NONE, START_CAPTURE, FINISH_CAPTURE, STOP, RESUME, FINISH_FADE };
 enum class Error : uint8_t {
 	NONE,

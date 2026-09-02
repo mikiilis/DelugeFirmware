@@ -418,7 +418,7 @@ Physical only: LEFT, RIGHT, STEREO, BALANCED
 | Fade Time (bars) | 1-65535 | 1 |
 | Transpose | -24..+24 semitones | 0 |
 | Transpose Cents | -50..+50 | 0 |
-| Progress Colour | 6 colours (excl R/G/O) | Per-track default |
+| Progress Colour | 11 colours: Gold, Yellow, Lime, Turquoise, Cyan, Sky, Blue, Purple, Magenta, Pink, White | Per-track default; exact Red, Orange, and Green remain reserved for track states |
 
 ---
 
@@ -590,6 +590,21 @@ TRACK = one 4×4 pad = 4×4 LED square
 |-----|-----------|
 | **REC** (red) | Any track capturing (RECORDING, OVERDUBBING, FINISHING) |
 | **BACK** (amber) | Undo/Redo available on selected track (not busy) |
+
+### Right Sidebar Group Controls
+
+The physical top row of the two-column right sidebar contains the Loop Station group controls:
+
+| Sidebar pad | Colour | Action |
+|-------------|--------|--------|
+| Left | Green | **START ALL** stopped phrases |
+| Right | Red | **STOP ALL** stable playing phrases |
+
+- Enabled controls are bright; unavailable controls remain dim.
+- With Record Quantize set to MEASURE, every affected track uses the same next measure boundary. Other quantize modes act immediately.
+- START ALL preserves each track's configured Start From Stopped, playback, phase-resume, and fade behaviour.
+- STOP ALL stops stable playback as a group and does not truncate RECORDING, OVERDUBBING, background overdub completion, or COMMITTING tracks.
+- EMPTY and ERROR tracks are ignored by both controls.
 
 ### Gesture Mapping (Button Press)
 

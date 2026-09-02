@@ -16,6 +16,7 @@
 #include "hid/buttons.h"
 #include "hid/display/display.h"
 #include "hid/led/indicator_leds.h"
+#include "hid/led/pad_leds.h"
 #include "model/clip/audio_clip.h"
 #include "model/model_stack.h"
 #include "model/sample/sample.h"
@@ -39,7 +40,10 @@ using deluge::gui::colours::black;
 
 namespace {
 constexpr uint32_t kDeleteHoldDurationSamples = 2 * kSampleRate;
-}
+constexpr uint8_t kGroupControlsRow = kDisplayHeight - 1;
+constexpr uint8_t kStartAllX = kDisplayWidth;
+constexpr uint8_t kStopAllX = kDisplayWidth + 1;
+} // namespace
 
 PLACE_SDRAM_BSS LoopStationView loopStationView{};
 
@@ -63,6 +67,10 @@ bool LoopStationView::opened() {
 
 void LoopStationView::focusRegained() {
 	clipMenuContext_ = false;
+	// Song View's playback cursor is a shared PadLED overlay rather than part of
+	// its base grid image. Remove its last stored position before rendering Loop
+	// Station, including when returning from a settings menu.
+	PadLEDs::clearTickSquares(false);
 	indicator_leds::setLedState(IndicatorLED::CROSS_SCREEN_EDIT, true);
 	updateModControllableTarget();
 	updateUndoLed();
@@ -485,6 +493,7 @@ bool LoopStationView::navigateHistory(SlotId slot, bool redo, bool& targetHasPhr
 }
 
 void LoopStationView::stateChanged(SlotId slot, TrackState state) {
+	uiNeedsRendering(this, 0, 1u << kGroupControlsRow);
 	AudioClip* clip = backingClip(slot);
 	if (state == TrackState::ERROR) {
 		switch (engine_->track(slot).error) {
@@ -687,7 +696,24 @@ void LoopStationView::dispatchCentreGesture(SlotId slot, uint32_t pressSample) {
 }
 
 ActionResult LoopStationView::padAction(int32_t x, int32_t y, int32_t velocity) {
-	if (x < 0 || x >= kDisplayWidth || y < 0 || y >= kDisplayHeight || !engine_) {
+	if (x < 0 || x >= kDisplayWidth + kSideBarWidth || y < 0 || y >= kDisplayHeight || !engine_) {
+		return ActionResult::DEALT_WITH;
+	}
+	if (x >= kDisplayWidth) {
+		if (velocity && y == kGroupControlsRow) {
+			if (x == kStartAllX && engine_->canStartAll()) {
+				if (!playbackHandler.isEitherClockActive()) {
+					playbackHandler.setupPlaybackUsingInternalClock(0, false, false, true);
+				}
+				engine_->startAll(transport());
+			}
+			else if (x == kStopAllX && engine_->canStopAll()) {
+				engine_->stopAll(transport());
+			}
+			refreshMonitoring();
+			playbackHandler.expectEvent();
+			uiNeedsRendering(this, 0xFFFFFFFF, 0xFFFFFFFF);
+		}
 		return ActionResult::DEALT_WITH;
 	}
 	auto slot = Geometry::slotAt(x, y);
@@ -873,6 +899,16 @@ RGB LoopStationView::palette(PadColour colour) const {
 		return magenta_full;
 	case PadColour::WHITE:
 		return white_full;
+	case PadColour::GOLD:
+		return yellow_orange;
+	case PadColour::LIME:
+		return lime;
+	case PadColour::TURQUOISE:
+		return turquoise;
+	case PadColour::SKY:
+		return darkblue;
+	case PadColour::PINK:
+		return pink_full;
 	}
 	return white_full;
 }
@@ -1020,6 +1056,12 @@ bool LoopStationView::renderSidebar(uint32_t whichRows, RGB image[][kDisplayWidt
 				if (occupancyMask)
 					occupancyMask[y][x] = 64;
 			}
+		}
+		if (whichRows & (1u << kGroupControlsRow)) {
+			image[kGroupControlsRow][kStartAllX] =
+			    engine_ && engine_->canStartAll() ? deluge::gui::colours::green : deluge::gui::colours::green.dim(3);
+			image[kGroupControlsRow][kStopAllX] =
+			    engine_ && engine_->canStopAll() ? deluge::gui::colours::red : deluge::gui::colours::red.dim(3);
 		}
 	}
 	return true;

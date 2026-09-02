@@ -18,8 +18,8 @@ void TrackSettings::sanitize(SlotId slot) {
 	playbackMode = sanitizeEnum<PlaybackMode, PlaybackMode::ONE_SHOT>(playbackMode, PlaybackMode::LOOP);
 	startMode = sanitizeEnum<StartMode, StartMode::FADE>(startMode, StartMode::IMMEDIATE);
 	stopMode = sanitizeEnum<StopMode, StopMode::FADE>(stopMode, StopMode::LOOP_END);
-	progressColour = sanitizeEnum<ProgressColour, ProgressColour::WHITE>(
-	    progressColour, static_cast<ProgressColour>(indexOf(slot) % 6));
+	progressColour = sanitizeEnum<ProgressColour, ProgressColour::PINK>(
+	    progressColour, kDefaultProgressColours[indexOf(slot) % kDefaultProgressColours.size()]);
 	fadeBars = std::max<uint16_t>(fadeBars, 1);
 	semitones = std::clamp<int8_t>(semitones, -24, 24);
 	cents = std::clamp<int8_t>(cents, -50, 50);
@@ -67,7 +67,7 @@ void HistoryState::clear() {
 
 SongModel::SongModel() {
 	for (size_t i = 0; i < kSlotCount; ++i) {
-		tracks[i].settings.progressColour = static_cast<ProgressColour>(i % 6);
+		tracks[i].settings.progressColour = kDefaultProgressColours[i % kDefaultProgressColours.size()];
 	}
 }
 
