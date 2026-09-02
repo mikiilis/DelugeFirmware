@@ -63,6 +63,10 @@ enum class Error : uint8_t {
 	RESOURCE_LIMIT,
 	ALLOCATION,
 	SD_CARD,
+	SD_CARD_FULL,
+	SD_CARD_NOT_PRESENT,
+	SD_CARD_NO_FILESYSTEM,
+	WRITE_PROTECTED,
 	MAX_FILE_SIZE,
 	SOURCE_REMOVED,
 	BACKING_UNAVAILABLE,
@@ -78,6 +82,13 @@ enum class Error : uint8_t {
 [[nodiscard]] constexpr bool isPhysicalSource(SourceType source) {
 	return source == SourceType::LEFT || source == SourceType::RIGHT || source == SourceType::STEREO
 	       || source == SourceType::BALANCED;
+}
+
+// AudioClip records every overdub and every internal source in stereo. Charge
+// the shared recorder pool for the format actually produced, rather than only
+// the configured physical input width.
+[[nodiscard]] constexpr uint8_t recorderChannelCount(SourceType source, bool overdub) {
+	return overdub || !isPhysicalSource(source) || source == SourceType::STEREO ? 2 : 1;
 }
 
 [[nodiscard]] constexpr int32_t saturatingAdd(int32_t backing, int32_t input) {
@@ -312,7 +323,7 @@ public:
 	[[nodiscard]] bool exitReady() const;
 	[[nodiscard]] bool anyCapturing() const;
 	[[nodiscard]] uint32_t ticksUntilNextEvent(uint32_t currentTick) const;
-	void notifyCommitComplete(SlotId slot, bool success, Error error = Error::NONE);
+	void notifyCommitComplete(SlotId slot, bool success, Error error = Error::NONE, uint32_t completionTick = 0);
 	void notifyFailure(SlotId slot, Error error);
 
 	static uint32_t quantizedStart(QuantizeMode mode, uint32_t tick, uint32_t barLength);
@@ -327,7 +338,7 @@ private:
 	void beginPlayback(SlotId slot, Transport const& transport, bool fromStart);
 	void setPlaybackGain(SlotId slot, int32_t gain, bool forceNotify = false);
 	void updateFade(SlotId slot, uint32_t tick);
-	void completeCapture(SlotId slot, bool overdub, uint32_t length);
+	void completeCapture(SlotId slot, bool overdub, uint32_t length, uint32_t completionTick = 0);
 	void setOverdubEnd(TrackRuntime& runtime, uint32_t tick);
 	void transition(SlotId slot, TrackState state);
 	void fail(SlotId slot, Error error);

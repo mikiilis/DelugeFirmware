@@ -202,6 +202,18 @@ void LoopStationRevision::capture(AudioClip const& clip) {
 	sampleZeroTicks = clip.loopStationSampleZeroTicks;
 }
 
+void LoopStationRevision::apply(AudioClip& clip) const {
+	clip.unassignVoiceSample(true);
+	clip.sampleHolder.setAudioFile(sample);
+	clip.sampleHolder.filePath.set(sample ? &sample->filePath : &filePath);
+	clip.sampleHolder.startPos = startPos;
+	clip.sampleHolder.endPos = endPos;
+	clip.loopLength = loopLength;
+	clip.originalLength = originalLength;
+	clip.loopStationSampleZeroTicks = sampleZeroTicks;
+	clip.renderData.xScroll = -1;
+}
+
 Error LoopStationRevision::loadSample(bool mayActuallyReadFile) {
 	if (sample || filePath.isEmpty()) {
 		return Error::NONE;
@@ -232,6 +244,8 @@ LoopStationRevision const* LoopStationRevisionHistory::current() const {
 }
 
 void LoopStationRevisionHistory::clear() {
+	provisional = {};
+	provisionalPending = false;
 	revisions.clear();
 	cursor = -1;
 }
@@ -254,6 +268,9 @@ bool LoopStationRevisionHistory::seedFromClip(AudioClip& clip) {
 }
 
 bool LoopStationRevisionHistory::prepareAppend(AudioClip& clip, bool preserveCurrent) {
+	if (provisionalPending) {
+		return false;
+	}
 	// If this is the first overdub of a legacy/current clip, reserve both its
 	// seed revision and the provisional revision which will follow it.
 	size_t required = static_cast<size_t>(std::max<int32_t>(1, cursor + 2));
@@ -279,6 +296,64 @@ void LoopStationRevisionHistory::appendCurrent(AudioClip& clip) {
 	revisions.emplace_back();
 	revisions.back().capture(clip);
 	cursor = static_cast<int32_t>(revisions.size()) - 1;
+}
+
+bool LoopStationRevisionHistory::stageCurrent(AudioClip& clip) {
+	if (provisionalPending || !clip.sampleHolder.audioFile) {
+		return false;
+	}
+	provisional.capture(clip);
+	provisionalPending = provisional.sample != nullptr;
+	return provisionalPending;
+}
+
+bool LoopStationRevisionHistory::publishStaged(AudioClip& clip) {
+	if (!provisionalPending || !provisional.sample) {
+		return false;
+	}
+	// The recorder creates the final path asynchronously, after stageCurrent().
+	// Refresh it only once finalization has succeeded.
+	provisional.filePath.set(&provisional.sample->filePath);
+	provisional.apply(clip);
+	auto firstRedo = revisions.begin() + std::min<size_t>(revisions.size(), static_cast<size_t>(cursor + 1));
+	revisions.erase(firstRedo, revisions.end());
+	revisions.emplace_back(std::move(provisional));
+	provisional = {};
+	provisionalPending = false;
+	cursor = static_cast<int32_t>(revisions.size()) - 1;
+	return true;
+}
+
+void LoopStationRevisionHistory::discardStaged() {
+	provisional = {};
+	provisionalPending = false;
+}
+
+Error LoopStationRevisionHistory::restoreCurrent(AudioClip& clip) {
+	LoopStationRevision* revision = hasCurrent() ? &revisions[cursor] : nullptr;
+	if (revision) {
+		Error error = revision->loadSample(true);
+		if (error != Error::NONE || !revision->sample) {
+			return error == Error::NONE ? Error::FILE_NOT_FOUND : error;
+		}
+		revision->apply(clip);
+	}
+	else {
+		clip.unassignVoiceSample(true);
+		clip.sampleHolder.setAudioFile(nullptr);
+		clip.sampleHolder.filePath.clear();
+		clip.sampleHolder.startPos = 0;
+		clip.sampleHolder.endPos = 0;
+		clip.loopStationSampleZeroTicks = 0;
+		clip.renderData.xScroll = -1;
+	}
+	return Error::NONE;
+}
+
+Error LoopStationRevisionHistory::rejectStaged(AudioClip& clip) {
+	Error error = restoreCurrent(clip);
+	discardStaged();
+	return error;
 }
 
 Error LoopStationRevisionHistory::loadSamples(AudioClip* currentClip, bool mayActuallyReadFiles) {
@@ -311,17 +386,12 @@ Error LoopStationRevisionHistory::navigate(AudioClip& clip, bool redo) {
 		}
 	}
 
-	clip.unassignVoiceSample(true);
-	clip.sampleHolder.setAudioFile(revision ? revision->sample : nullptr);
 	if (revision) {
-		clip.sampleHolder.filePath.set(revision->sample ? &revision->sample->filePath : &revision->filePath);
-		clip.sampleHolder.startPos = revision->startPos;
-		clip.sampleHolder.endPos = revision->endPos;
-		clip.loopLength = revision->loopLength;
-		clip.originalLength = revision->originalLength;
-		clip.loopStationSampleZeroTicks = revision->sampleZeroTicks;
+		revision->apply(clip);
 	}
 	else {
+		clip.unassignVoiceSample(true);
+		clip.sampleHolder.setAudioFile(nullptr);
 		clip.sampleHolder.filePath.clear();
 		clip.sampleHolder.startPos = 0;
 		clip.sampleHolder.endPos = 0;

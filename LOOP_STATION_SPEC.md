@@ -109,8 +109,12 @@ These guarantees apply to all 8 tracks simultaneously.
 ### Recorder Capacity
 - Loop Station capture capacity is **16 channel units**: mono capture costs 1 unit and stereo capture costs 2 units
 - Supported hardware and SD media must accept eight simultaneous stereo Loop Station captures
-- Capacity is reserved before a slot enters a capture state; an exceptional allocation or SD failure affects only that slot
-- Non-Loop-Station recorder users must participate in the same budget so the guarantee is enforced rather than overcommitted
+- Capacity is enforced by the shared Audio Engine recorder pool before a slot enters a capture state
+- Recorders remain charged while capturing and while their WAV is still being written, finalized, or closed; only a recorder handed back for deletion releases its units
+- Cost follows the actual WAV format: every overdub and internal source is stereo, even when its configured input is mono
+- Non-Loop-Station recorder users participate in the same budget, so rapid gestures cannot overcommit the writer pool
+- When capacity is occupied by finalization, a new capture is rejected as a resource limit and must never be reported as an SD-card failure
+- Recorder insertion is FIFO: new captures join behind existing writers and cannot repeatedly starve older recorders
 
 ---
 
@@ -176,7 +180,7 @@ PLAYING ⇄ OVERDUBBING = infinite cycle (press toggles, double-tap → STOPPED)
 **From RECORDING:**
 - Press → PLAYING (quantized stop, phrase length locked)
 - Auto-stop (fixed duration) → PLAYING
-- Auto-stop (RECORD_OVERDUB_PLAY mode) → OVERDUBBING at phrase boundary
+- Auto-stop (RECORD_OVERDUB_PLAY mode) → COMMITTING, then OVERDUBBING from the commit-completion position
 
 **From PLAYING:**
 - Press → OVERDUBBING (immediate, no quantization)
@@ -215,7 +219,7 @@ PLAYING ⇄ OVERDUBBING = infinite cycle (press toggles, double-tap → STOPPED)
 | Mode | Behavior |
 |------|----------|
 | RECORD_PLAY_OVERDUB (default) | Record → Play → Overdub → Play → Overdub... |
-| RECORD_OVERDUB_PLAY | Record → Overdub (auto at phrase boundary) → Play → Overdub... |
+| RECORD_OVERDUB_PLAY | Record → durable commit → Overdub (auto from commit-completion position) → Play → Overdub... |
 
 ---
 
@@ -369,6 +373,7 @@ Physical only: LEFT, RIGHT, STEREO, BALANCED
 ### Capture Errors (Affect Single Slot)
 - Resource allocation fail → ERROR, preserve and continue playing the previous phrase
 - A genuine recorder write/finalization error → SD CARD ERROR, preserve and continue playing the previous revision
+- Full card, missing card, missing filesystem, and write-protected card retain their specific error instead of collapsing to generic SD CARD ERROR
 - Maximum file size → MAX FILE SIZE ERROR, preserve and continue playing the previous revision
 - Backing missing or incomplete (voice unavailable during overdub) → BACKING UNAVAILABLE, reject the take and keep the previous revision
 - Missing physical input → SOURCE UNAVAILABLE, reject the take and keep the previous revision
@@ -376,6 +381,9 @@ Physical only: LEFT, RIGHT, STEREO, BALANCED
 
 ### Async Commit Errors
 - COMMITTING state blocks new gestures on that track
+- The recorder and its channel units remain owned by the slot until its WAV has been finalized and closed
+- A provisional revision is not appended to undo/redo history until finalization succeeds
+- During overdub commit, the previous durable revision remains audible; the provisional cumulative WAV is swapped in only after success
 - On fail: preserve the prior revision, latch ERROR, and remember `stateBeforeError`
 - On success: complete state transition
 
@@ -398,9 +406,9 @@ Physical only: LEFT, RIGHT, STEREO, BALANCED
 | Switch song with active loops | Loops stop, revisions preserved |
 | Undo to empty, then new recording | Redo branch discarded, new revision appended |
 | Load song with loops | Revisions loaded, cursor restored, clips bound |
-| Overdub immediately after record (RECORD_OVERDUB_PLAY) | Auto-starts at next phrase boundary |
+| Overdub immediately after record (RECORD_OVERDUB_PLAY) | Auto-starts after the first WAV commits, from that current musical position, and records one complete phrase |
 | One-shot retrigger during play | Resets to phrase start, plays once |
-| Multiple tracks recording simultaneously | Each independent, shared sources render once |
+| Multiple tracks recording simultaneously | Each independent, shared sources render once, shared writer capacity includes all active and finalizing recorders |
 
 ---
 
@@ -637,6 +645,8 @@ The STOPPED hold displays a non-wrapping clockwise red border sweep. All 12 bord
 15. Delete progress is a non-wrapping 2-second clockwise border fill and never appears for SHIFT-held settings gestures
 16. Engine and AudioOutput playback gain never diverge; clearing or undoing a stopped phrase restores a unity baseline before the next recording
 17. Physical pad numbering is fixed top-left to bottom-right: tracks 1–4 on the top row and tracks 5–8 on the bottom row
+18. Recorder capacity is shared globally and remains charged through asynchronous WAV finalization; each capture is charged for the channel count it actually records
+19. A provisional take enters revision history only after its WAV is finalized and closed; failure restores the previous durable revision without truncating redo
 
 ---
 
@@ -651,11 +661,12 @@ The STOPPED hold displays a non-wrapping clockwise red border sweep. All 12 bord
   - Start/stop mode and fade transitions
   - Latched error acknowledgement
   - FanOutRouter source mixing
-  - RecorderBudget allocation, including eight simultaneous stereo captures
+  - Recorder admission, including actual mono/stereo costs, eight simultaneous stereo captures, and blocking rapid reuse while a prior commit is pending
   - Tempo-change behavior with Loop Sync on and off
   - Combined pre-FX transpose routing and dry recorder taps
   - Equal-gain backing/input capture, saturating overflow, and repeated silence overdubs with no cumulative level decay
-  - Distinct backing-unavailable, source-unavailable, maximum-file-size, allocation, and genuine SD failure reporting
+  - Distinct backing-unavailable, source-unavailable, maximum-file-size, allocation, SD-full, missing-card, missing-filesystem, write-protected, and generic SD failure reporting
+  - Asynchronous commit success/failure, transactional revision publication, and dependent overdub start after finalization
   - Clockwise delete-hold progress at start, midpoint, threshold, and beyond the threshold without wrapping
   - Stop → undo-to-empty → record, stop → hold-clear → record, and stopped undo-to-revision all restore audible unity gain
   - Physical pad-to-track mapping and default `LOOP 1`–`LOOP 8` naming from top-left to bottom-right

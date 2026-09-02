@@ -43,13 +43,36 @@ constexpr uint32_t kDeleteHoldDurationSamples = 2 * kSampleRate;
 constexpr uint8_t kGroupControlsRow = kDisplayHeight - 1;
 constexpr uint8_t kStartAllX = kDisplayWidth;
 constexpr uint8_t kStopAllX = kDisplayWidth + 1;
+
+deluge::loop_station::Error recorderError(::Error error) {
+	switch (error) {
+	case ::Error::INSUFFICIENT_RAM:
+	case ::Error::INSUFFICIENT_RAM_FOR_FOLDER_CONTENTS_SIZE:
+	case ::Error::OUT_OF_BUFFER_SPACE:
+		return deluge::loop_station::Error::ALLOCATION;
+	case ::Error::MAX_FILE_SIZE_REACHED:
+		return deluge::loop_station::Error::MAX_FILE_SIZE;
+	case ::Error::SD_CARD_FULL:
+		return deluge::loop_station::Error::SD_CARD_FULL;
+	case ::Error::SD_CARD_NOT_PRESENT:
+		return deluge::loop_station::Error::SD_CARD_NOT_PRESENT;
+	case ::Error::SD_CARD_NO_FILESYSTEM:
+		return deluge::loop_station::Error::SD_CARD_NO_FILESYSTEM;
+	case ::Error::WRITE_PROTECTED:
+		return deluge::loop_station::Error::WRITE_PROTECTED;
+	case ::Error::NONE:
+	case ::Error::SD_CARD:
+	default:
+		return deluge::loop_station::Error::SD_CARD;
+	}
+}
 } // namespace
 
 PLACE_SDRAM_BSS LoopStationView loopStationView{};
 
 bool LoopStationView::opened() {
 	recordingModeBefore_ = playbackHandler.recording;
-	recorderBudget_ = {};
+	pendingCommitRecorders_.fill(nullptr);
 	engine_.emplace(currentSong->loopStation, static_cast<EngineDelegate*>(this));
 	exitRequested_ = false;
 	monitoringActive_ = true;
@@ -236,7 +259,8 @@ AudioClip* LoopStationView::ensureBackingClip(SlotId slot) {
 
 bool LoopStationView::preflight(SlotId slot, bool overdub) {
 	AudioClip* clip = ensureBackingClip(slot);
-	if (!clip || clip->recorder || overdub == clip->isEmpty(false)) {
+	if (!clip || clip->recorder || pendingCommitRecorders_[static_cast<size_t>(slot)]
+	    || overdub == clip->isEmpty(false)) {
 		return false;
 	}
 	auto* output = static_cast<AudioOutput*>(clip->output);
@@ -246,14 +270,12 @@ bool LoopStationView::preflight(SlotId slot, bool overdub) {
 	if (!sourceValid)
 		return false;
 	auto source = currentSong->loopStation.tracks[static_cast<size_t>(slot)].settings.source;
-	uint8_t channels = source == SourceType::STEREO ? 2 : 1;
-	return recorderBudget_.reserve(slot, {.channels = channels});
+	return AudioEngine::hasRecorderChannelCapacity(recorderChannelCount(source, overdub));
 }
 
 bool LoopStationView::beginCapture(SlotId slot, bool overdub, uint32_t tick) {
 	AudioClip* clip = backingClip(slot);
 	if (!clip || clip->recorder) {
-		recorderBudget_.release(slot);
 		return false;
 	}
 
@@ -262,7 +284,6 @@ bool LoopStationView::beginCapture(SlotId slot, bool overdub, uint32_t tick) {
 	// revision before an overdub. Allocation or SD failure can therefore never
 	// strand the clip after its old Sample has been released.
 	if (!currentSong->loopStationRevisionHistory[index].prepareAppend(*clip, overdub)) {
-		recorderBudget_.release(slot);
 		return false;
 	}
 	char modelStackMemory[MODEL_STACK_MAX_SIZE];
@@ -288,7 +309,6 @@ bool LoopStationView::beginCapture(SlotId slot, bool overdub, uint32_t tick) {
 		// An output overdub without a backing voice would create an input-only
 		// replacement. Reject it before allocating or attaching the recorder.
 		if (!clip->voiceSample) {
-			recorderBudget_.release(slot);
 			return false;
 		}
 	}
@@ -296,13 +316,17 @@ bool LoopStationView::beginCapture(SlotId slot, bool overdub, uint32_t tick) {
 	playbackHandler.recording = RecordingMode::NORMAL;
 	::Error error = clip->beginLinearRecording(modelStack, 0);
 	if (error != ::Error::NONE) {
-		recorderBudget_.release(slot);
 		return false;
 	}
 	// Every Loop Station WAV is a fixed-gain dry revision. Explicitly disable
 	// normalization and file alteration for first takes as well as overdubs.
 	clip->recorder->allowFileAlterationAfter = false;
 	clip->recorder->allowNormalization = false;
+	// Keep ownership until the WAV has actually been closed. This makes the
+	// engine's COMMITTING state real and keeps the recorder in shared admission
+	// accounting during SD finalization.
+	clip->recorder->autoDeleteWhenDone = false;
+	clip->recorder->suppressErrorPopup = true;
 	if (overdub && clip->recorder) {
 		// Capture stored audio plus monitored input before track FX and without
 		// normalization. The recorder captures the clip output (loop) + input.
@@ -314,7 +338,6 @@ bool LoopStationView::beginCapture(SlotId slot, bool overdub, uint32_t tick) {
 }
 
 CaptureFinish LoopStationView::finishCapture(SlotId slot, bool overdub, uint32_t length, bool crop) {
-	recorderBudget_.release(slot);
 	AudioClip* clip = backingClip(slot);
 	if (!clip || !clip->recorder) {
 		return {.accepted = false,
@@ -328,10 +351,12 @@ CaptureFinish LoopStationView::finishCapture(SlotId slot, bool overdub, uint32_t
 		clip->abortRecording();
 		return CaptureFinish{.accepted = false, .error = error};
 	};
-	if (recorder->hadCardError)
-		return reject(deluge::loop_station::Error::SD_CARD);
 	if (recorder->reachedMaxFileSize)
 		return reject(deluge::loop_station::Error::MAX_FILE_SIZE);
+	if (recorder->terminalError != ::Error::NONE)
+		return reject(recorderError(recorder->terminalError));
+	if (recorder->hadCardError)
+		return reject(deluge::loop_station::Error::SD_CARD);
 	if (overdub && recorder->captureOutputBackingMissing) {
 		return reject(deluge::loop_station::Error::BACKING_UNAVAILABLE);
 	}
@@ -429,7 +454,35 @@ CaptureFinish LoopStationView::finishCapture(SlotId slot, bool overdub, uint32_t
 			}
 		}
 		size_t index = static_cast<size_t>(slot);
-		currentSong->loopStationRevisionHistory[index].appendCurrent(*clip);
+		auto& history = currentSong->loopStationRevisionHistory[index];
+		if (!history.stageCurrent(*clip)) {
+			history.restoreCurrent(*clip);
+			recorder->pointerHeldElsewhere = false;
+			recorder->abort();
+			return {.accepted = false, .error = deluge::loop_station::Error::ALLOCATION};
+		}
+		// AudioClip releases this flag when it detaches. Retake ownership so an
+		// allocation failure during the final lag-compensation samples cannot let
+		// the global recorder routine delete our pointer before we observe it.
+		recorder->pointerHeldElsewhere = true;
+		pendingCommitRecorders_[index] = recorder;
+		if (overdub) {
+			int32_t provisionalLength = clip->loopLength;
+			::Error restoreError = history.restoreCurrent(*clip);
+			if (restoreError != ::Error::NONE) {
+				history.rejectStaged(*clip);
+				pendingCommitRecorders_[index] = nullptr;
+				recorder->pointerHeldElsewhere = false;
+				recorder->abort();
+				return {.accepted = false, .error = recorderError(restoreError)};
+			}
+			if (provisionalLength != clip->loopLength) {
+				clip->lengthChanged(modelStack, provisionalLength, nullptr);
+			}
+			// Continue playing the last durable cumulative revision until the new
+			// WAV is fully finalized.
+			resumeCommittedClip(slot);
+		}
 		auto const& runtime = engine_->track(slot);
 		// Use lastSwungTickActioned (scheduler tick) as the base, since resumePlayback
 		// uses it to compute sequenceSyncStartedAtTick.
@@ -449,11 +502,19 @@ CaptureFinish LoopStationView::finishCapture(SlotId slot, bool overdub, uint32_t
 		clip->setPos(modelStack, position, true);
 		clip->resumePlayback(modelStack, true);
 	}
-	return {.accepted = accepted, .committedLength = accepted ? targetLength : 0};
+	if (!accepted) {
+		recorder->pointerHeldElsewhere = false;
+		recorder->abort();
+	}
+	return {.accepted = accepted,
+	        .asynchronous = accepted,
+	        .committedLength = accepted ? targetLength : 0,
+	        .error = accepted ? deluge::loop_station::Error::NONE
+	                          : (recorder->terminalError == ::Error::NONE ? deluge::loop_station::Error::ALLOCATION
+	                                                                      : recorderError(recorder->terminalError))};
 }
 
 void LoopStationView::abortCapture(SlotId slot, bool overdub) {
-	recorderBudget_.release(slot);
 	AudioClip* clip = backingClip(slot);
 	if (!clip) {
 		return;
@@ -492,6 +553,102 @@ bool LoopStationView::navigateHistory(SlotId slot, bool redo, bool& targetHasPhr
 	return true;
 }
 
+void LoopStationView::resumeCommittedClip(SlotId slot) {
+	AudioClip* clip = backingClip(slot);
+	if (!clip || clip->isEmpty(false)) {
+		if (clip) {
+			clip->activeIfNoSolo = false;
+			clip->expectNoFurtherTicks(currentSong, true);
+		}
+		return;
+	}
+	char modelStackMemory[MODEL_STACK_MAX_SIZE];
+	auto* modelStack = setupModelStackWithTimelineCounter(modelStackMemory, currentSong, clip);
+	clip->activeIfNoSolo = true;
+	clip->output->setActiveClip(modelStack);
+	uint32_t length = std::max<int32_t>(1, clip->loopLength);
+	uint32_t currentTick = playbackHandler.lastSwungTickActioned;
+	uint32_t logicalPhase = loopPhaseAt(currentTick, engine_->track(slot).playbackStartTick, length);
+	clip->setPos(modelStack,
+	             static_cast<int32_t>(samplePhaseForLoopPhase(logicalPhase, clip->loopStationSampleZeroTicks, length)),
+	             true);
+	clip->resumePlayback(modelStack, true);
+}
+
+void LoopStationView::processPendingCommits() {
+	if (!engine_) {
+		return;
+	}
+	for (size_t i = 0; i < pendingCommitRecorders_.size(); ++i) {
+		SampleRecorder* recorder = pendingCommitRecorders_[i];
+		if (!recorder
+		    || (recorder->status != RecorderStatus::COMPLETE && recorder->status != RecorderStatus::ABORTED)) {
+			continue;
+		}
+
+		auto slot = static_cast<SlotId>(i);
+		AudioClip* clip = backingClip(slot);
+		auto& history = currentSong->loopStationRevisionHistory[i];
+		bool success = recorder->status == RecorderStatus::COMPLETE && recorder->terminalError == ::Error::NONE
+		               && !recorder->hadCardError && !recorder->reachedMaxFileSize && clip;
+		deluge::loop_station::Error failure = deluge::loop_station::Error::NONE;
+		if (!success) {
+			if (recorder->reachedMaxFileSize) {
+				failure = deluge::loop_station::Error::MAX_FILE_SIZE;
+			}
+			else if (recorder->terminalError != ::Error::NONE) {
+				failure = recorderError(recorder->terminalError);
+			}
+			else if (recorder->hadCardError) {
+				failure = deluge::loop_station::Error::SD_CARD;
+			}
+			else {
+				failure = deluge::loop_station::Error::ALLOCATION;
+			}
+		}
+
+		int32_t oldLength = clip ? clip->loopLength : 0;
+		if (success && !history.publishStaged(*clip)) {
+			success = false;
+			failure = deluge::loop_station::Error::ALLOCATION;
+		}
+		if (!success && clip) {
+			::Error restoreError = history.rejectStaged(*clip);
+			if (restoreError != ::Error::NONE) {
+				failure = recorderError(restoreError);
+			}
+		}
+		else if (!success) {
+			// A deleted/missing backing clip must not leave the provisional Sample
+			// retained forever after its recorder has been released.
+			history.discardStaged();
+		}
+
+		pendingCommitRecorders_[i] = nullptr;
+		recorder->pointerHeldElsewhere = false;
+		if (success) {
+			// The global recorder routine may now safely free the recorder. Its
+			// finalized Sample remains owned by the clip and revision history.
+			recorder->status = RecorderStatus::AWAITING_DELETION;
+		}
+		else {
+			// Re-enter the recorder's normal abort cleanup so a partial TEMP WAV and
+			// provisional Sample are removed outside the SD routine.
+			recorder->abort();
+		}
+
+		if (clip && oldLength != clip->loopLength) {
+			char modelStackMemory[MODEL_STACK_MAX_SIZE];
+			auto* modelStack = setupModelStackWithTimelineCounter(modelStackMemory, currentSong, clip);
+			clip->lengthChanged(modelStack, oldLength, nullptr);
+		}
+		if (!success) {
+			resumeCommittedClip(slot);
+		}
+		engine_->notifyCommitComplete(slot, success, failure, transport().tick);
+	}
+}
+
 void LoopStationView::stateChanged(SlotId slot, TrackState state) {
 	uiNeedsRendering(this, 0, 1u << kGroupControlsRow);
 	AudioClip* clip = backingClip(slot);
@@ -505,6 +662,18 @@ void LoopStationView::stateChanged(SlotId slot, TrackState state) {
 			break;
 		case deluge::loop_station::Error::SD_CARD:
 			display->displayError(::Error::SD_CARD);
+			break;
+		case deluge::loop_station::Error::SD_CARD_FULL:
+			display->displayError(::Error::SD_CARD_FULL);
+			break;
+		case deluge::loop_station::Error::SD_CARD_NOT_PRESENT:
+			display->displayError(::Error::SD_CARD_NOT_PRESENT);
+			break;
+		case deluge::loop_station::Error::SD_CARD_NO_FILESYSTEM:
+			display->displayError(::Error::SD_CARD_NO_FILESYSTEM);
+			break;
+		case deluge::loop_station::Error::WRITE_PROTECTED:
+			display->displayError(::Error::WRITE_PROTECTED);
 			break;
 		case deluge::loop_station::Error::RESOURCE_LIMIT:
 		case deluge::loop_station::Error::ALLOCATION:
@@ -1090,6 +1259,7 @@ void LoopStationView::processMusicalTick() {
 		return;
 	auto now = transport();
 	engine_->processTick(now);
+	processPendingCommits();
 	for (size_t i = 0; i < kTrackCount; ++i) {
 		auto slot = static_cast<SlotId>(i);
 		auto const& runtime = engine_->track(slot);
@@ -1101,15 +1271,18 @@ void LoopStationView::processMusicalTick() {
 		deluge::loop_station::Error failure = deluge::loop_station::Error::NONE;
 		if (!clip || !clip->recorder)
 			failure = deluge::loop_station::Error::ALLOCATION;
-		else if (clip->recorder->hadCardError)
-			failure = deluge::loop_station::Error::SD_CARD;
 		else if (clip->recorder->reachedMaxFileSize)
 			failure = deluge::loop_station::Error::MAX_FILE_SIZE;
+		else if (clip->recorder->terminalError != ::Error::NONE)
+			failure = recorderError(clip->recorder->terminalError);
+		else if (clip->recorder->hadCardError)
+			failure = deluge::loop_station::Error::SD_CARD;
 		else if (clip->recorder->captureOutputBackingMissing) {
 			failure = deluge::loop_station::Error::BACKING_UNAVAILABLE;
 		}
 		else if (clip->recorder->status == RecorderStatus::ABORTED) {
-			failure = deluge::loop_station::Error::ALLOCATION;
+			failure = clip->recorder->terminalError == ::Error::NONE ? deluge::loop_station::Error::ALLOCATION
+			                                                         : recorderError(clip->recorder->terminalError);
 		}
 		if (failure != deluge::loop_station::Error::NONE)
 			engine_->notifyFailure(slot, failure);

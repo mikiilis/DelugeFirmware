@@ -491,7 +491,7 @@ void Engine::finishCapture(SlotId slot, bool overdub, uint32_t tick, uint32_t re
 	}
 }
 
-void Engine::completeCapture(SlotId slot, bool overdub, uint32_t length) {
+void Engine::completeCapture(SlotId slot, bool overdub, uint32_t length, uint32_t completionTick) {
 	auto& runtime = track(slot);
 	if (overdub) {
 		runtime.currentRevision = nextRevision_++;
@@ -519,7 +519,10 @@ void Engine::completeCapture(SlotId slot, bool overdub, uint32_t length) {
 	    && model_.tracks[indexOf(slot)].settings.playback == PlaybackMode::LOOP) {
 		// REC→DUB starts one overdub pass at the fresh phrase boundary.
 		destination = TrackState::OVERDUBBING;
-		runtime.captureStartTick += length;
+		// An asynchronous initial take may finish after its original boundary.
+		// Start the dependent overdub at the completion position so it always gets
+		// a full phrase instead of trying to catch up a partially elapsed pass.
+		runtime.captureStartTick = completionTick ? completionTick : runtime.captureStartTick + length;
 		if (delegate_
 		    && (!delegate_->preflight(slot, true) || !delegate_->beginCapture(slot, true, runtime.captureStartTick))) {
 			destination = TrackState::PLAYING;
@@ -800,7 +803,7 @@ void Engine::refreshHistoryAvailability(SlotId slot) {
 	runtime.redoAvailable = runtime.historyCursor + 1 < static_cast<int32_t>(runtime.historySize);
 }
 
-void Engine::notifyCommitComplete(SlotId slot, bool success, Error error) {
+void Engine::notifyCommitComplete(SlotId slot, bool success, Error error, uint32_t completionTick) {
 	auto& runtime = track(slot);
 	if (runtime.state != TrackState::COMMITTING) {
 		return;
@@ -811,7 +814,7 @@ void Engine::notifyCommitComplete(SlotId slot, bool success, Error error) {
 	}
 	bool overdub = runtime.committingOverdub;
 	uint32_t length = runtime.committingLength;
-	completeCapture(slot, overdub, length);
+	completeCapture(slot, overdub, length, completionTick);
 	if (runtime.stateBeforeCommit == TrackState::STOPPED) {
 		transition(slot, TrackState::STOPPED);
 	}

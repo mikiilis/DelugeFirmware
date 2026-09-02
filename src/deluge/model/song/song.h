@@ -125,11 +125,16 @@ struct LoopStationRevision {
 
 	void setSample(Sample* newSample);
 	void capture(AudioClip const& clip);
+	void apply(AudioClip& clip) const;
 	Error loadSample(bool mayActuallyReadFile);
 };
 
 struct LoopStationRevisionHistory {
 	deluge::vector<LoopStationRevision> revisions{};
+	// A finished capture is staged here until SampleRecorder confirms that its
+	// WAV has been written, finalized, and closed successfully.
+	LoopStationRevision provisional{};
+	bool provisionalPending = false;
 	// -1 is the undoable empty state before the initial take.
 	int32_t cursor = -1;
 
@@ -147,6 +152,11 @@ struct LoopStationRevisionHistory {
 	// recorder starts. This keeps allocation failure on the safe side of commit.
 	bool prepareAppend(AudioClip& clip, bool preserveCurrent);
 	void appendCurrent(AudioClip& clip);
+	bool stageCurrent(AudioClip& clip);
+	bool publishStaged(AudioClip& clip);
+	void discardStaged();
+	Error rejectStaged(AudioClip& clip);
+	Error restoreCurrent(AudioClip& clip);
 	Error loadSamples(AudioClip* currentClip, bool mayActuallyReadFiles);
 	Error navigate(AudioClip& clip, bool redo);
 };

@@ -126,7 +126,14 @@ public:
 	bool autoDeleteWhenDone = false;
 	bool keepingReasonsForFirstClusters;
 	uint8_t recordingNumChannels;
+	// Preserve the first terminal failure so asynchronous owners can report the
+	// real cause after the recorder has detached from its AudioClip. hadCardError
+	// remains for compatibility with existing recorder callers.
+	Error terminalError = Error::NONE;
 	bool hadCardError = false;
+	// Loop Station owns presentation of errors for its asynchronous commits.
+	// Other recorder users retain the existing global error popup behaviour.
+	bool suppressErrorPopup = false;
 	bool reachedMaxFileSize = false;
 	bool recordingExtraMargins = false;
 	bool pointerHeldElsewhere = false;

@@ -479,6 +479,7 @@ aborted:
 			// Recording could finish or abort during this!
 			auto created = StorageManager::createFile(filePathCreated.get(), mayOverwrite);
 			if (!created) {
+				error = created.error();
 				filePathCreated.clear();
 				goto gotError;
 			}
@@ -508,6 +509,9 @@ aborted:
 
 			if (error != Error::NONE) {
 gotError:
+				if (terminalError == Error::NONE) {
+					terminalError = error;
+				}
 				hadCardError = true;
 			}
 
@@ -525,8 +529,10 @@ gotError:
 		if (!hadCardError) {
 			error = finalizeRecordedFile();
 			if (error != Error::NONE) {
+				if (terminalError == Error::NONE) {
+					terminalError = error;
+				}
 				hadCardError = true;
-				error = Error::SD_CARD;
 			}
 		}
 
@@ -734,6 +740,9 @@ Error SampleRecorder::finalizeRecordedFile() {
 			    sample->audioDataStartPosBytes
 			    + sample->audioDataLengthBytes; // These were written to in totalSampleLengthNowKnown().
 			Error error = truncateFileDownToSize(correctLength);
+			if (error != Error::NONE) {
+				return error;
+			}
 		}
 
 		auto closed = this->file->close();
@@ -768,9 +777,7 @@ Error SampleRecorder::finalizeRecordedFile() {
 				updateDataLengthInFirstCluster(cluster);
 
 				// Write just that one first sector back to the card
-				disk_write(0, (BYTE*)cluster->data, firstSampleCluster->sdAddress, 1);
-
-				// If that failed, well, that's a shame, but we don't need to do anything
+				DRESULT headerWriteResult = disk_write(0, (BYTE*)cluster->data, firstSampleCluster->sdAddress, 1);
 
 				// Some bug-hunting
 				if (!cluster->numReasonsHeldBySampleRecorder) {
@@ -779,6 +786,9 @@ Error SampleRecorder::finalizeRecordedFile() {
 				cluster->numReasonsHeldBySampleRecorder--;
 
 				audioFileManager.removeReasonFromCluster(*cluster, "E026");
+				if (headerWriteResult != RES_OK) {
+					return Error::SD_CARD;
+				}
 			}
 		}
 	}
@@ -954,6 +964,9 @@ doFinishCapturing:
 				}
 				else if (error != Error::NONE) { // RAM error
 					D_PRINTLN("couldn't allocate RAM");
+					if (terminalError == Error::NONE) {
+						terminalError = error;
+					}
 					abort();
 					return;
 				}

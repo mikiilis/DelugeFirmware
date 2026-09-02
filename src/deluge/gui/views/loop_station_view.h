@@ -14,6 +14,7 @@
 #include <optional>
 
 class AudioClip;
+class SampleRecorder;
 enum class RecordingMode;
 
 class LoopStationView final : public RootUI, public ClipMinder, private deluge::loop_station::EngineDelegate {
@@ -53,6 +54,8 @@ private:
 	AudioClip* backingClip(deluge::loop_station::SlotId slot) const;
 	AudioClip* ensureBackingClip(deluge::loop_station::SlotId slot);
 	void clearBackingClip(deluge::loop_station::SlotId slot);
+	void processPendingCommits();
+	void resumeCommittedClip(deluge::loop_station::SlotId slot);
 	RGB palette(deluge::loop_station::PadColour colour) const;
 	RGB destinationColour(deluge::loop_station::PendingAction action) const;
 	bool preflight(deluge::loop_station::SlotId slot, bool overdub) override;
@@ -67,7 +70,9 @@ private:
 	uint32_t playbackPhase(deluge::loop_station::SlotId slot, uint32_t tickPhase) override;
 
 	std::optional<deluge::loop_station::Engine> engine_;
-	deluge::loop_station::RecorderBudget recorderBudget_{};
+	// A retained recorder cannot be deleted by AudioEngine until this view has
+	// accepted or rejected its asynchronously finalized revision.
+	std::array<SampleRecorder*, deluge::loop_station::kTrackCount> pendingCommitRecorders_{};
 	std::array<uint8_t, deluge::loop_station::kTrackCount> centreHeldMask_{};
 	std::array<uint16_t, deluge::loop_station::kTrackCount> borderHeldMask_{};
 	std::array<bool, deluge::loop_station::kTrackCount> centreGestureActive_{};

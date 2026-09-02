@@ -640,6 +640,44 @@ TEST(LoopStationState, ExitWaitsForAsynchronousCommit) {
 	CHECK_EQUAL(48, engine.track(SlotId::ONE).phraseLength);
 }
 
+TEST(LoopStationState, PendingCommitBlocksRapidReuseButNotAnotherSlot) {
+	SongModel model;
+	model.global.quantize = QuantizeMode::OFF;
+	model.global.recordAction = RecordAction::RECORD_PLAY_OVERDUB;
+	Delegate delegate;
+	delegate.asynchronous = true;
+	Engine engine(model, &delegate);
+	engine.centrePressed(SlotId::ONE, at(0), 0);
+	engine.centrePressed(SlotId::ONE, at(48), 1000);
+	CHECK(engine.track(SlotId::ONE).state == TrackState::COMMITTING);
+
+	engine.centrePressed(SlotId::ONE, at(49), 2000);
+	CHECK_EQUAL(1, delegate.begins[0]);
+	CHECK(engine.track(SlotId::ONE).state == TrackState::COMMITTING);
+
+	engine.centrePressed(SlotId::TWO, at(49), 3000);
+	CHECK_EQUAL(1, delegate.begins[1]);
+	CHECK(engine.track(SlotId::TWO).state == TrackState::RECORDING);
+}
+
+TEST(LoopStationState, DependentOverdubStartsAfterAsyncCommitCompletes) {
+	SongModel model;
+	model.global.quantize = QuantizeMode::OFF;
+	model.global.recordAction = RecordAction::RECORD_OVERDUB_PLAY;
+	Delegate delegate;
+	delegate.asynchronous = true;
+	Engine engine(model, &delegate);
+	engine.centrePressed(SlotId::ONE, at(0), 0);
+	engine.centrePressed(SlotId::ONE, at(48), 1000);
+	CHECK(engine.track(SlotId::ONE).state == TrackState::COMMITTING);
+
+	engine.notifyCommitComplete(SlotId::ONE, true, Error::NONE, 60);
+	CHECK(engine.track(SlotId::ONE).state == TrackState::OVERDUBBING);
+	CHECK_EQUAL(2, delegate.begins[0]);
+	CHECK_EQUAL(60, delegate.beginTicks[0]);
+	CHECK_EQUAL(108, engine.track(SlotId::ONE).overdubEndTick);
+}
+
 TEST(LoopStationState, ExitFromFirstTakeDoesNotEnterConfiguredOverdub) {
 	SongModel model;
 	model.global.quantize = QuantizeMode::OFF;
@@ -957,6 +995,19 @@ TEST(LoopStationState, FailedCommitPreservesPreviousPhraseRevision) {
 	CHECK_EQUAL(96, engine.track(SlotId::ONE).phraseLength);
 }
 
+TEST(LoopStationState, AsyncCommitPreservesSpecificStorageFailure) {
+	SongModel model;
+	model.global.quantize = QuantizeMode::OFF;
+	Delegate delegate;
+	delegate.asynchronous = true;
+	Engine engine(model, &delegate);
+	engine.centrePressed(SlotId::ONE, at(0), 0);
+	engine.centrePressed(SlotId::ONE, at(48), 1000);
+	engine.notifyCommitComplete(SlotId::ONE, false, Error::SD_CARD_FULL);
+	CHECK(engine.track(SlotId::ONE).state == TrackState::ERROR);
+	CHECK(engine.track(SlotId::ONE).error == Error::SD_CARD_FULL);
+}
+
 TEST(LoopStationState, RejectedBackingReportsSpecificErrorAndPreservesPhrase) {
 	SongModel model;
 	Delegate delegate;
@@ -1012,6 +1063,15 @@ TEST(LoopStationFanOut, BudgetGuaranteesEightStereoRecorders) {
 	CHECK_TRUE(budget.reserve(SlotId::ONE, {.channels = 2}));
 	budget.release(SlotId::ONE);
 	CHECK_TRUE(budget.reserve(SlotId::ONE, {}));
+}
+
+TEST(LoopStationFanOut, RecorderCostMatchesActualAudioClipFormat) {
+	CHECK_EQUAL(1, recorderChannelCount(SourceType::LEFT, false));
+	CHECK_EQUAL(1, recorderChannelCount(SourceType::BALANCED, false));
+	CHECK_EQUAL(2, recorderChannelCount(SourceType::STEREO, false));
+	CHECK_EQUAL(2, recorderChannelCount(SourceType::MIX_PRE_FX, false));
+	CHECK_EQUAL(2, recorderChannelCount(SourceType::SONG_TRACK, false));
+	CHECK_EQUAL(2, recorderChannelCount(SourceType::LEFT, true));
 }
 
 TEST(LoopStationFanOut, ReplacingSubscriptionAndClearingResetRouterState) {

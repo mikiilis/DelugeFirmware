@@ -1089,8 +1089,7 @@ void routine() {
 				SampleRecorder* recorder = audioRecorder.recorder;
 				if (recorder != nullptr) {
 					// Each call writes at most one cluster, and we don't render (so can't produce new ones) until
-					// the drain finishes. The slack covers calls that return without reaching this recorder at all:
-					// doRecorderCardRoutines() abandons its traversal whenever a recorder was recently created.
+					// the drain finishes. The slack covers setup/finalization passes which do not write a cluster.
 					int32_t callsRemaining =
 					    recorder->currentRecordClusterIndex - recorder->firstUnwrittenClusterIndex + 8;
 
@@ -1476,8 +1475,6 @@ LiveInputBuffer* getOrCreateLiveInputBuffer(OscType inputType, bool mayCreate) {
 	return liveInputBuffers[idx];
 }
 
-bool createdNewRecorder;
-
 void doRecorderCardRoutines() {
 
 	SampleRecorder** prevPointer = &firstRecorder;
@@ -1491,14 +1488,8 @@ void doRecorderCardRoutines() {
 		}
 
 		Error error = recorder->cardRoutine();
-		if (error != Error::NONE) {
+		if (error != Error::NONE && !recorder->suppressErrorPopup) {
 			display->displayError(error);
-		}
-
-		// If, while in the card routine, a new Recorder was added, then our linked list traversal state thing will
-		// be out of wack, so let's just get out and come back later
-		if (createdNewRecorder) {
-			break;
 		}
 
 		// If complete, discard it
@@ -1559,10 +1550,24 @@ void slowRoutine() {
 		}
 	}
 
-	createdNewRecorder = false;
-
 	// Go through all SampleRecorders, getting them to write etc
 	doRecorderCardRoutines();
+}
+
+uint16_t getRecorderChannelUsage() {
+	uint16_t used = 0;
+	for (SampleRecorder* recorder = firstRecorder; recorder; recorder = recorder->next) {
+		// A recorder handed back for deletion has no remaining capture or SD work.
+		if (recorder->status != RecorderStatus::AWAITING_DELETION) {
+			used += std::clamp<uint16_t>(recorder->recordingNumChannels, 1, 2);
+		}
+	}
+	return used;
+}
+
+bool hasRecorderChannelCapacity(uint8_t numChannels) {
+	auto requested = std::clamp<uint16_t>(numChannels, 1, 2);
+	return getRecorderChannelUsage() + requested <= kRecorderChannelCapacity;
 }
 
 // will need to take in the config argument
@@ -1570,6 +1575,9 @@ SampleRecorder* getNewRecorder(int32_t numChannels, AudioRecordingFolder folderI
                                bool keepFirstReasons, bool writeLoopPoints, int32_t buttonPressLatency,
                                bool shouldNormalize, Output* outputRecordingFrom, RecorderConfig config) {
 	Error error;
+	if (!hasRecorderChannelCapacity(static_cast<uint8_t>(numChannels))) {
+		return nullptr;
+	}
 
 	void* recorderMemory = GeneralMemoryAllocator::get().allocMaxSpeed(sizeof(SampleRecorder));
 	if (!recorderMemory) {
@@ -1598,10 +1606,15 @@ errorAfterAllocation:
 		}
 	}
 
-	newRecorder->next = firstRecorder;
-	firstRecorder = newRecorder;
-
-	createdNewRecorder = true;
+	// Append new recorders so existing writers retain their place ahead of
+	// rapidly-created captures. Tail insertion also keeps traversal valid if a
+	// recorder is created while an SD operation yields to UI/audio work.
+	newRecorder->next = nullptr;
+	SampleRecorder** insertionPoint = &firstRecorder;
+	while (*insertionPoint) {
+		insertionPoint = &(*insertionPoint)->next;
+	}
+	*insertionPoint = newRecorder;
 
 	if (mode >= AUDIO_INPUT_CHANNEL_FIRST_INTERNAL_OPTION) {
 		renderInStereo = true; // Quickly set it to true. It'll keep getting reset to true now every time

@@ -164,6 +164,13 @@ LiveInputBuffer* getOrCreateLiveInputBuffer(OscType inputType, bool mayCreate);
 void slowRoutine();
 void doRecorderCardRoutines();
 
+// Shared admission limit for every recorder user. Recorders remain charged
+// while they are capturing or finalizing, which prevents rapid Loop Station
+// gestures from stacking unbounded SD writers behind the active captures.
+constexpr uint16_t kRecorderChannelCapacity = 16;
+uint16_t getRecorderChannelUsage();
+bool hasRecorderChannelCapacity(uint8_t numChannels);
+
 int32_t getNumSamplesLeftToOutputFromPreviousRender();
 
 void registerSideChainHit(int32_t strength);
