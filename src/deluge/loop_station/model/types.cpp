@@ -86,4 +86,16 @@ void SongModel::sanitize() {
 	}
 }
 
+bool copyTrackConfiguration(SongModel& model, SlotId source, SlotId destination) {
+	auto sourceIndex = indexOf(source);
+	auto destinationIndex = indexOf(destination);
+	if (sourceIndex >= model.tracks.size() || destinationIndex >= model.tracks.size()
+	    || sourceIndex == destinationIndex) {
+		return false;
+	}
+	model.tracks[destinationIndex].settings = model.tracks[sourceIndex].settings;
+	model.tracks[destinationIndex].settings.sanitize(destination);
+	return true;
+}
+
 } // namespace deluge::loop_station::core

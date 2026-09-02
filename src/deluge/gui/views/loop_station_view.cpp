@@ -782,6 +782,24 @@ void LoopStationView::applyTrackSource(SlotId slot) {
 	ensureBackingClip(slot);
 }
 
+bool LoopStationView::copyTrackConfiguration(SlotId source, SlotId destination) {
+	if (!engine_) {
+		return false;
+	}
+	auto const& runtime = engine_->track(destination);
+	if (runtime.state == TrackState::RECORDING || runtime.state == TrackState::OVERDUBBING
+	    || runtime.state == TrackState::COMMITTING || runtime.finishingOverdub) {
+		return false;
+	}
+	if (!deluge::loop_station::copyTrackConfiguration(currentSong->loopStation, source, destination)) {
+		return false;
+	}
+	applyTrackSource(destination);
+	refreshMonitoring();
+	uiNeedsRendering(this, 0xFFFFFFFF, 0);
+	return true;
+}
+
 void LoopStationView::refreshMonitoring() {
 	std::array<AudioOutput*, kTrackCount> outputs{};
 	for (size_t slotIndex = 0; slotIndex < kTrackCount; ++slotIndex) {

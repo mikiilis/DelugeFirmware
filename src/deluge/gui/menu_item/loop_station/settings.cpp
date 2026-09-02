@@ -19,6 +19,7 @@
 #include "model/song/song.h"
 
 #include <algorithm>
+#include <array>
 #include <limits>
 
 namespace deluge::gui::menu_item::loop_station {
@@ -207,6 +208,39 @@ public:
 	[[nodiscard]] int32_t getNumDecimalPlaces() const override { return 2; }
 	const char* getUnit() { return "st"; }
 };
+
+class CopyToTrack final : public Selection {
+public:
+	using Selection::Selection;
+
+	void readCurrentValue() override { setValue(0); }
+	void writeCurrentValue() override {
+		// Rotating chooses a destination. Copying happens only on confirmation.
+	}
+	deluge::vector<std::string_view> getOptions(OptType) override {
+		static constexpr std::array<std::string_view, kTrackCount> names{"Track 1", "Track 2", "Track 3", "Track 4",
+		                                                                 "Track 5", "Track 6", "Track 7", "Track 8"};
+		deluge::vector<std::string_view> options;
+		options.reserve(kTrackCount - 1);
+		for (size_t i = 0; i < names.size(); ++i) {
+			if (i != static_cast<size_t>(activeSlot)) {
+				options.push_back(names[i]);
+			}
+		}
+		return options;
+	}
+	MenuItem* selectButtonPress() override {
+		auto sourceIndex = static_cast<size_t>(activeSlot);
+		auto destinationIndex = static_cast<size_t>(std::clamp<int32_t>(getValue(), 0, kTrackCount - 2));
+		if (destinationIndex >= sourceIndex) {
+			++destinationIndex;
+		}
+		bool copied = loopStationView.copyTrackConfiguration(activeSlot, static_cast<SlotId>(destinationIndex));
+		display->displayPopup(l10n::get(copied ? l10n::String::STRING_FOR_LOOP_STATION_CONFIGURATION_COPIED
+		                                       : l10n::String::STRING_FOR_LOOP_STATION_TARGET_BUSY));
+		return nullptr;
+	}
+};
 } // namespace
 
 PLACE_SDRAM_BSS GlobalSelection recordAction{l10n::String::STRING_FOR_LOOP_STATION_RECORD_ACTION,
@@ -229,15 +263,32 @@ PLACE_SDRAM_BSS TrackSelection startMode{l10n::String::STRING_FOR_LOOP_STATION_S
 PLACE_SDRAM_BSS TrackSelection stopMode{l10n::String::STRING_FOR_LOOP_STATION_STOP_MODE, TrackParameter::STOP_MODE};
 PLACE_SDRAM_BSS FadeTime fadeTime{l10n::String::STRING_FOR_LOOP_STATION_FADE_TIME};
 PLACE_SDRAM_BSS TrackTranspose transpose{l10n::String::STRING_FOR_LOOP_STATION_TRANSPOSE};
+PLACE_SDRAM_BSS CopyToTrack copyToTrack{l10n::String::STRING_FOR_LOOP_STATION_COPY_TO_TRACK};
 
 PLACE_SDRAM_BSS Submenu globalSettingsMenu{l10n::String::STRING_FOR_LOOP_STATION,
                                            {&recordAction, &recordQuantize, &startFromStopped}};
 
-PLACE_SDRAM_BSS Submenu trackSettingsMenu{
-    l10n::String::STRING_FOR_LOOP_STATION_TRACK,
-    {&source, &monitoring, &duration, &progressColour, &playback, &loopSync, &startMode, &stopMode, &fadeTime,
-     &transpose, &audioClipActionsMenu, &audioClipMasterMenu, &audioCompMenu, &globalFiltersMenu, &audioClipFXMenu,
-     &globalSidechainMenu, &audioClipSampleMenu, &audioClipAttackMenu, &priorityMenu}};
+PLACE_SDRAM_BSS Submenu trackSettingsMenu{l10n::String::STRING_FOR_LOOP_STATION_TRACK,
+                                          {&source,
+                                           &monitoring,
+                                           &duration,
+                                           &progressColour,
+                                           &playback,
+                                           &loopSync,
+                                           &startMode,
+                                           &stopMode,
+                                           &fadeTime,
+                                           &transpose,
+                                           &copyToTrack,
+                                           &audioClipActionsMenu,
+                                           &audioClipMasterMenu,
+                                           &audioCompMenu,
+                                           &globalFiltersMenu,
+                                           &audioClipFXMenu,
+                                           &globalSidechainMenu,
+                                           &audioClipSampleMenu,
+                                           &audioClipAttackMenu,
+                                           &priorityMenu}};
 
 void selectTrack(SlotId slot) {
 	activeSlot = slot;

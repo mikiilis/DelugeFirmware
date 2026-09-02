@@ -57,6 +57,40 @@ TEST(LoopStationModel, DefaultsAndSanitization) {
 	CHECK(model.tracks[6].settings.progressColour == ProgressColour::GOLD);
 }
 
+TEST(LoopStationModel, CopiesOnlyTrackSettings) {
+	SongModel model;
+	model.tracks[0].settings.source = PhysicalSource::BALANCED;
+	model.tracks[0].settings.monitoring = false;
+	model.tracks[0].settings.durationBars = 12;
+	model.tracks[0].settings.playbackMode = PlaybackMode::ONE_SHOT;
+	model.tracks[0].settings.loopSync = false;
+	model.tracks[0].settings.startMode = StartMode::FADE;
+	model.tracks[0].settings.stopMode = StopMode::FADE;
+	model.tracks[0].settings.fadeBars = 3;
+	model.tracks[0].settings.semitones = 5;
+	model.tracks[0].settings.cents = -12;
+	model.tracks[0].settings.progressColour = ProgressColour::PINK;
+	model.tracks[3].clipBinding = 4;
+	model.tracks[3].history = {.cursor = 1, .size = 3};
+
+	CHECK_TRUE(copyTrackConfiguration(model, SlotId::ONE, SlotId::FOUR));
+	auto const& destination = model.tracks[3];
+	CHECK(destination.settings.source == PhysicalSource::BALANCED);
+	CHECK_FALSE(destination.settings.monitoring);
+	LONGS_EQUAL(12, destination.settings.durationBars);
+	CHECK(destination.settings.playbackMode == PlaybackMode::ONE_SHOT);
+	CHECK_FALSE(destination.settings.loopSync);
+	CHECK(destination.settings.startMode == StartMode::FADE);
+	CHECK(destination.settings.stopMode == StopMode::FADE);
+	LONGS_EQUAL(3, destination.settings.fadeBars);
+	LONGS_EQUAL(5, destination.settings.semitones);
+	LONGS_EQUAL(-12, destination.settings.cents);
+	CHECK(destination.settings.progressColour == ProgressColour::PINK);
+	LONGS_EQUAL(4, destination.clipBinding);
+	LONGS_EQUAL(1, destination.history.cursor);
+	LONGS_EQUAL(3, destination.history.size);
+}
+
 TEST(LoopStationModel, HistoryPreservesRedoUntilSuccessfulCommit) {
 	HistoryState history{.cursor = 0, .size = 3};
 	CHECK(history.beginCommit());

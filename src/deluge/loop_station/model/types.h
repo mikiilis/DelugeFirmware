@@ -131,6 +131,9 @@ struct SongModel {
 	void sanitize();
 };
 
+// Copy settings without replacing destination history or its stable clip binding.
+bool copyTrackConfiguration(SongModel& model, SlotId source, SlotId destination);
+
 [[nodiscard]] constexpr size_t indexOf(SlotId slot) {
 	return static_cast<size_t>(slot);
 }

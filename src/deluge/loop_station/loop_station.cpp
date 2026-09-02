@@ -15,6 +15,25 @@ constexpr size_t indexOf(SlotId slot) {
 	return static_cast<size_t>(slot);
 }
 
+void sanitizeTrackSettings(TrackSettings& settings, SlotId slot) {
+	settings.source =
+	    clampEnum<SourceType, SourceType::BALANCED>(static_cast<uint32_t>(settings.source), SourceType::LEFT);
+	settings.progressColour = clampEnum<PadColour, PadColour::PINK>(static_cast<uint32_t>(settings.progressColour),
+	                                                                defaultProgressColour(slot));
+	if (isReservedStateColour(settings.progressColour)) {
+		settings.progressColour = defaultProgressColour(slot);
+	}
+	settings.playback =
+	    clampEnum<PlaybackMode, PlaybackMode::ONE_SHOT>(static_cast<uint32_t>(settings.playback), PlaybackMode::LOOP);
+	settings.startMode =
+	    clampEnum<StartMode, StartMode::FADE>(static_cast<uint32_t>(settings.startMode), StartMode::IMMEDIATE);
+	settings.stopMode =
+	    clampEnum<StopMode, StopMode::FADE>(static_cast<uint32_t>(settings.stopMode), StopMode::LOOP_END);
+	settings.fadeTimeBars = std::max<uint16_t>(settings.fadeTimeBars, 1);
+	settings.transpose = std::clamp<int16_t>(settings.transpose, -24, 24);
+	settings.transposeCents = std::clamp<int8_t>(settings.transposeCents, -50, 50);
+}
+
 } // namespace
 
 SongModel::SongModel() {
@@ -33,25 +52,20 @@ void SongModel::sanitize() {
 	global.dimBorderColour =
 	    clampEnum<PadColour, PadColour::WHITE>(static_cast<uint32_t>(global.dimBorderColour), PadColour::BLUE);
 	for (size_t i = 0; i < tracks.size(); ++i) {
-		auto& binding = tracks[i];
-		auto& settings = binding.settings;
-		settings.source =
-		    clampEnum<SourceType, SourceType::BALANCED>(static_cast<uint32_t>(settings.source), SourceType::LEFT);
-		settings.progressColour = clampEnum<PadColour, PadColour::PINK>(static_cast<uint32_t>(settings.progressColour),
-		                                                                defaultProgressColour(static_cast<SlotId>(i)));
-		if (isReservedStateColour(settings.progressColour)) {
-			settings.progressColour = defaultProgressColour(static_cast<SlotId>(i));
-		}
-		settings.playback = clampEnum<PlaybackMode, PlaybackMode::ONE_SHOT>(static_cast<uint32_t>(settings.playback),
-		                                                                    PlaybackMode::LOOP);
-		settings.startMode =
-		    clampEnum<StartMode, StartMode::FADE>(static_cast<uint32_t>(settings.startMode), StartMode::IMMEDIATE);
-		settings.stopMode =
-		    clampEnum<StopMode, StopMode::FADE>(static_cast<uint32_t>(settings.stopMode), StopMode::LOOP_END);
-		settings.fadeTimeBars = std::max<uint16_t>(settings.fadeTimeBars, 1);
-		settings.transpose = std::clamp<int16_t>(settings.transpose, -24, 24);
-		settings.transposeCents = std::clamp<int8_t>(settings.transposeCents, -50, 50);
+		sanitizeTrackSettings(tracks[i].settings, static_cast<SlotId>(i));
 	}
+}
+
+bool copyTrackConfiguration(SongModel& model, SlotId source, SlotId destination) {
+	auto sourceIndex = indexOf(source);
+	auto destinationIndex = indexOf(destination);
+	if (sourceIndex >= model.tracks.size() || destinationIndex >= model.tracks.size()
+	    || sourceIndex == destinationIndex) {
+		return false;
+	}
+	model.tracks[destinationIndex].settings = model.tracks[sourceIndex].settings;
+	sanitizeTrackSettings(model.tracks[destinationIndex].settings, destination);
+	return true;
 }
 
 int32_t readGlobalParameter(SongModel const& model, GlobalParameter parameter) {

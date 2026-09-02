@@ -121,6 +121,41 @@ TEST(OperationalLoopStationModel, SanitizesUnknownEnumsAndBoundedValues) {
 	CHECK_EQUAL(1, settings.fadeTimeBars);
 }
 
+TEST(OperationalLoopStationModel, CopiesConfigurationWithoutReplacingDestinationBinding) {
+	SongModel model;
+	auto& source = model.tracks[1].settings;
+	source.source = SourceType::STEREO;
+	source.sourceTrackId = 17;
+	source.monitoring = false;
+	source.durationBars = 8;
+	source.progressColour = PadColour::PINK;
+	source.playback = PlaybackMode::ONE_SHOT;
+	source.loopSync = false;
+	source.startMode = StartMode::FADE;
+	source.stopMode = StopMode::FADE;
+	source.fadeTimeBars = 4;
+	source.transpose = -7;
+	source.transposeCents = 23;
+	model.tracks[5].clipSlotId = 99;
+
+	CHECK_TRUE(copyTrackConfiguration(model, SlotId::TWO, SlotId::SIX));
+	auto const& destination = model.tracks[5].settings;
+	CHECK(destination.source == source.source);
+	CHECK_EQUAL(source.sourceTrackId, destination.sourceTrackId);
+	CHECK_EQUAL(source.monitoring, destination.monitoring);
+	CHECK_EQUAL(source.durationBars, destination.durationBars);
+	CHECK(destination.progressColour == source.progressColour);
+	CHECK(destination.playback == source.playback);
+	CHECK_EQUAL(source.loopSync, destination.loopSync);
+	CHECK(destination.startMode == source.startMode);
+	CHECK(destination.stopMode == source.stopMode);
+	CHECK_EQUAL(source.fadeTimeBars, destination.fadeTimeBars);
+	CHECK_EQUAL(source.transpose, destination.transpose);
+	CHECK_EQUAL(source.transposeCents, destination.transposeCents);
+	CHECK_EQUAL(99, model.tracks[5].clipSlotId);
+	CHECK_FALSE(copyTrackConfiguration(model, SlotId::TWO, SlotId::TWO));
+}
+
 TEST(OperationalLoopStationModel, ProgressColoursExcludeReservedStateColours) {
 	SongModel model;
 	CHECK_EQUAL(11, kProgressColours.size());

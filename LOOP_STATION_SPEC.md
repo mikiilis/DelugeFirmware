@@ -24,7 +24,7 @@ Eight-track live looper inspired by Boss RC-505. Each track operates independent
 - Engine delegate: bridges UI events to engine commands, manages recorder lifecycle
 
 **Settings/Menu Layer**
-- Per-track configuration: source, monitoring, duration, playback mode, sync, fades, transpose
+- Per-track configuration: source, monitoring, duration, progress colour, playback mode, sync, fades, transpose, and copy-to-track
 - Global feature gate: runtime enable/disable setting
 
 **Model/Persistence Layer**
@@ -567,7 +567,7 @@ TRACK = one 4×4 pad = 4×4 LED square
 | Mode | Trigger | Content |
 |------|---------|---------|
 | Global Menu | SELECT press | Record Action Mode, Record Quantize, Start From Stopped |
-| Track Menu | SHIFT + Track button | Source, Monitoring, FX, Duration, Playback, Loop Sync, Start/Stop Mode, Fade Time, Transpose, Progress Colour |
+| Track Menu | SHIFT + Track button | Source, Monitoring, FX, Duration, Playback, Loop Sync, Start/Stop Mode, Fade Time, Transpose, Progress Colour, Copy To Track |
 
 **Navigation**: SELECT rotate = scroll, SELECT press = enter/toggle, BACK = exit
 
@@ -576,6 +576,16 @@ TRACK = one 4×4 pad = 4×4 LED square
 **SHIFT + press** any LED in track's button (inner 2×2):
 - Opens that track's settings directly on OLED
 - Navigate with SELECT knob, BACK to exit
+
+### Copy Track Configuration
+
+- In a track's settings, choose **Copy To Track**, select one of the other seven tracks, then press SELECT to confirm
+- The open track is the source and the chosen track is the destination
+- Copies source, source-track reference, monitoring, duration, progress colour, playback mode, loop sync, start mode, stop mode, fade time, and transpose
+- The destination's existing backing-clip identity, recorded audio, name, revision/undo history, playback state, Audio Output / FX chain, and global settings remain unchanged
+- An unbound destination may receive its normal empty `LOOP n` backing clip so the copied routing can be applied; this does not create or copy audio or revisions
+- The copied input routing, Loop Sync setting, colour, and monitoring behavior apply immediately
+- A destination that is RECORDING, OVERDUBBING, finishing an overdub, or COMMITTING is busy; the copy is rejected without changing any setting
 
 ### Colour Legend (Button + Border)
 
@@ -647,6 +657,7 @@ The STOPPED hold displays a non-wrapping clockwise red border sweep. All 12 bord
 17. Physical pad numbering is fixed top-left to bottom-right: tracks 1–4 on the top row and tracks 5–8 on the bottom row
 18. Recorder capacity is shared globally and remains charged through asynchronous WAV finalization; each capture is charged for the channel count it actually records
 19. A provisional take enters revision history only after its WAV is finalized and closed; failure restores the previous durable revision without truncating redo
+20. Copy To Track replaces only the destination `TrackSettings`; it never copies or clears audio, clip identity, revision history, runtime state, FX, or global settings
 
 ---
 
@@ -670,5 +681,6 @@ The STOPPED hold displays a non-wrapping clockwise red border sweep. All 12 bord
   - Clockwise delete-hold progress at start, midpoint, threshold, and beyond the threshold without wrapping
   - Stop → undo-to-empty → record, stop → hold-clear → record, and stopped undo-to-revision all restore audible unity gain
   - Physical pad-to-track mapping and default `LOOP 1`–`LOOP 8` naming from top-left to bottom-right
+  - Track configuration copy, including every copied setting and preservation of destination clip binding and revision history
 
 - **Run**: `./dbt test`

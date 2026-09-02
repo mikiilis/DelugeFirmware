@@ -181,6 +181,10 @@ struct SongModel {
 	void sanitize();
 };
 
+// Copy only performance configuration. The destination's clip binding, audio,
+// revision history, and runtime state are deliberately owned elsewhere.
+bool copyTrackConfiguration(SongModel& model, SlotId source, SlotId destination);
+
 [[nodiscard]] int32_t readGlobalParameter(SongModel const& model, GlobalParameter parameter);
 void writeGlobalParameter(SongModel& model, GlobalParameter parameter, int32_t value);
 [[nodiscard]] int32_t readTrackParameter(SongModel const& model, SlotId slot, TrackParameter parameter);

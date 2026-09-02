@@ -32,6 +32,7 @@ public:
 	void playbackEnded() override;
 	void processMusicalTick();
 	void applyTrackSource(deluge::loop_station::SlotId slot);
+	bool copyTrackConfiguration(deluge::loop_station::SlotId source, deluge::loop_station::SlotId destination);
 	void refreshMonitoring();
 	UIType getUIType() override { return UIType::LOOP_STATION; }
 	UIModControllableContext getUIModControllableContext() override {
