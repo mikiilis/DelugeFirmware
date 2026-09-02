@@ -21,6 +21,7 @@
 #include "gui/views/arranger_view.h"
 #include "gui/views/automation_view.h"
 #include "gui/views/instrument_clip_view.h"
+#include "gui/views/loop_station_view.h"
 #include "gui/views/performance_view.h"
 #include "gui/views/session_view.h"
 #include "gui/views/view.h"
@@ -2423,6 +2424,9 @@ void Session::doTickForward(int32_t posIncrement) {
 		// and we've stopped playback
 		// return as there is nothing else to process
 		return;
+	}
+	if (getRootUI() == &loopStationView) {
+		loopStationView.processMusicalTick();
 	}
 
 	if (launchEventAtSwungTickCount) {

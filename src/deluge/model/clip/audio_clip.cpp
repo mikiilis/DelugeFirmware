@@ -344,6 +344,14 @@ void AudioClip::processCurrentPos(ModelStackWithTimelineCounter* modelStack, uin
 			                           || (((AudioOutput*)output)->envelope.state >= EnvelopeStage::RELEASE
 			                               && !doingLateStart); // Come to think of it, would doingLateStart ever (or
 			                                                    // normally) be true if we're at play pos 0?
+			if (voiceSample && loopStationSlotId != 0 && !loopStationTempoSync) {
+				// The low-level sample player owns free-running loop boundaries. Do
+				// not retrigger it when the clip's tick counter happens to wrap.
+				if (shouldResetEnvelope) {
+					((AudioOutput*)output)->resetEnvelope();
+				}
+				return;
+			}
 
 			// If already had a VoiceSample, everything's probably all fine...
 			if (voiceSample) {
@@ -549,11 +557,11 @@ int64_t AudioClip::getNumSamplesTilLoop(ModelStackWithTimelineCounter* modelStac
 	return loopTime - AudioEngine::audioSampleTimer;
 }
 
-void AudioClip::render(ModelStackWithTimelineCounter* modelStack, std::span<q31_t> outputBuffer, int32_t amplitude,
+bool AudioClip::render(ModelStackWithTimelineCounter* modelStack, std::span<q31_t> outputBuffer, int32_t amplitude,
                        int32_t amplitudeIncrement, int32_t pitchAdjust) {
 
 	if (!voiceSample) {
-		return;
+		return false;
 	}
 
 	Sample* sample = ((Sample*)sampleHolder.audioFile);
@@ -568,7 +576,7 @@ void AudioClip::render(ModelStackWithTimelineCounter* modelStack, std::span<q31_
 			if (result == LateStartAttemptStatus::FAILURE) {
 				unassignVoiceSample(false);
 			}
-			return;
+			return false;
 		}
 
 		doingLateStart = false;
@@ -592,8 +600,19 @@ void AudioClip::render(ModelStackWithTimelineCounter* modelStack, std::span<q31_
 	uint64_t requiredSpeedAdjustment =
 	    (uint64_t)(((double)((uint64_t)sampleLengthInSamples << 24)) / (double)clipLengthInSamples);
 
+	// Loop Station's unsynced mode deliberately ignores the clip's musical tick
+	// duration. The sample therefore keeps its recorded speed after a tempo
+	// change. If transpose is active, compensate only that pitch ratio so pitch
+	// can change without making the loop run faster or slower.
+	if (loopStationSlotId != 0 && !loopStationTempoSync) {
+		if (sampleHolder.transpose || sampleHolder.cents) {
+			uint32_t nativePhaseIncrement =
+			    static_cast<uint32_t>((static_cast<uint64_t>(kMaxSampleValue) * sample->sampleRate) / kSampleRate);
+			timeStretchRatio = (static_cast<uint64_t>(nativePhaseIncrement) << 24) / phaseIncrement;
+		}
+	}
 	// If we're squishing time...
-	if (sampleControls.pitchAndSpeedAreIndependent) {
+	else if (sampleControls.pitchAndSpeedAreIndependent) {
 		timeStretchRatio = requiredSpeedAdjustment;
 
 		// And if pitch was manually adjusted too (or file's sample rate wasn't 44100kHz, that's fine - counteract that
@@ -774,7 +793,9 @@ justDontTimeStretch:
 	if (!stillActive) {
 doUnassign:
 		unassignVoiceSample(false);
+		return false;
 	}
+	return true;
 }
 
 // Returns the "looping" parameter that gets passed into a lot of functions.
@@ -786,6 +807,12 @@ LoopType AudioClip::getLoopingType(ModelStackWithTimelineCounter const* modelSta
 	bool shouldLoop = (sampleControls.isCurrentlyReversed()
 	                   || sampleHolder.endPos <= ((Sample*)sampleHolder.audioFile)->lengthInSamples)
 	                  && currentPlaybackMode->willClipContinuePlayingAtEnd(modelStack);
+	if (shouldLoop && loopStationSlotId != 0 && !loopStationTempoSync) {
+		// With Loop Sync disabled the voice owns the loop boundary. This avoids
+		// tick-driven restarts cutting the sample short or leaving silence after
+		// the song tempo changes.
+		return LoopType::LOW_LEVEL;
+	}
 
 	return shouldLoop ? LoopType::TIMESTRETCHER_LEVEL_IF_ACTIVE : LoopType::NONE;
 
@@ -851,7 +878,16 @@ void AudioClip::posReachedEnd(ModelStackWithTimelineCounter* modelStack) {
 
 	if (!isEmpty()) {}
 
-	Clip::posReachedEnd(modelStack);
+	// Loop Station overdubs use the Audio Clip recorder as a fixed-length,
+	// cumulative pre-FX bounce. The generic linear-recording behavior extends a
+	// clip by originalLength whenever playback reaches its end; doing that here
+	// doubles the musical length while the backing sample remains unchanged, so
+	// the sample is immediately time-stretched to half speed. Leave the phrase
+	// length untouched and let Clip::processCurrentPos wrap it normally instead.
+	bool loopStationOverdub = loopStationSlotId != 0 && recorder && recorder->captureOutputPreFX;
+	if (!loopStationOverdub) {
+		Clip::posReachedEnd(modelStack);
+	}
 
 	// If recording from session to arranger...
 	if (playbackHandler.recording == RecordingMode::ARRANGEMENT && isArrangementOnlyClip()) {
@@ -1078,6 +1114,12 @@ void AudioClip::writeDataToFile(Serializer& writer, Song* song) {
 	}
 
 	writer.writeAttribute("overdubsShouldCloneAudioTrack", overdubsShouldCloneOutput);
+	if (loopStationSlotId != 0) {
+		writer.writeAttribute("loopStationSlot", loopStationSlotId);
+		if (loopStationSampleZeroTicks != 0) {
+			writer.writeAttribute("loopStationSampleZeroTicks", loopStationSampleZeroTicks);
+		}
+	}
 
 	if (onAutomationClipView) {
 		writer.writeAttribute("onAutomationInstrumentClipView", 1);
@@ -1137,6 +1179,15 @@ someError:
 
 		else if (!strcmp(tagName, "overdubsShouldCloneAudioTrack")) {
 			overdubsShouldCloneOutput = reader.readTagOrAttributeValueInt();
+		}
+
+		else if (!strcmp(tagName, "loopStationSlot")) {
+			uint32_t raw = reader.readTagOrAttributeValueInt();
+			loopStationSlotId = raw >= 1 && raw <= deluge::loop_station::kTrackCount ? raw : 0;
+		}
+
+		else if (!strcmp(tagName, "loopStationSampleZeroTicks")) {
+			loopStationSampleZeroTicks = reader.readTagOrAttributeValueInt();
 		}
 
 		else if (!strcmp(tagName, "startSamplePos")) {

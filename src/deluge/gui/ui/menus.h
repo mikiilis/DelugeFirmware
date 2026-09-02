@@ -34,6 +34,12 @@ namespace deluge::gui::menu_item {
 class HorizontalMenu;
 class HorizontalMenuGroup;
 class HorizontalMenuContainer;
+namespace audio_clip {
+class Attack;
+} // namespace audio_clip
+namespace voice {
+class Priority;
+} // namespace voice
 } // namespace deluge::gui::menu_item
 
 extern gui::menu_item::patched_param::IntegerNonFM noiseMenu;
@@ -62,6 +68,14 @@ extern gui::menu_item::Submenu soundEditorRootMenuMIDIOrCV;
 extern gui::menu_item::Submenu soundEditorRootMenuMidiDrum;
 extern gui::menu_item::Submenu soundEditorRootMenuGateDrum;
 extern gui::menu_item::Submenu soundEditorRootMenuAudioClip;
+extern gui::menu_item::Submenu audioClipFXMenu;
+extern gui::menu_item::Submenu audioClipActionsMenu;
+extern gui::menu_item::HorizontalMenu audioClipMasterMenu;
+extern gui::menu_item::HorizontalMenu audioCompMenu;
+extern gui::menu_item::Submenu globalFiltersMenu;
+extern gui::menu_item::HorizontalMenu globalSidechainMenu;
+extern gui::menu_item::audio_clip::Attack audioClipAttackMenu;
+extern gui::menu_item::voice::Priority priorityMenu;
 extern gui::menu_item::Submenu soundEditorRootMenuPerformanceView;
 extern gui::menu_item::Submenu soundEditorRootMenuSongView;
 extern gui::menu_item::Submenu soundEditorRootMenuKitGlobalFX;
