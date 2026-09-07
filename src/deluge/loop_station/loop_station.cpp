@@ -11,6 +11,12 @@ namespace deluge::loop_station {
 namespace {
 constexpr uint32_t kDoubleTapMs = 350;
 
+struct CaptureFinishGuard {
+	bool& active;
+	explicit CaptureFinishGuard(bool& flag) : active(flag) { active = true; }
+	~CaptureFinishGuard() { active = false; }
+};
+
 constexpr size_t indexOf(SlotId slot) {
 	return static_cast<size_t>(slot);
 }
@@ -246,6 +252,9 @@ bool Engine::isDoubleTap(TrackRuntime& runtime, uint32_t gestureTimeMs) {
 
 void Engine::centrePressed(SlotId slot, Transport const& transport, uint32_t gestureTimeMs) {
 	auto& runtime = track(slot);
+	if (runtime.finishingCapture) {
+		return;
+	}
 	if (runtime.state == TrackState::ERROR) {
 		runtime.error = Error::NONE;
 		transition(slot, runtime.stateBeforeCommit);
@@ -465,6 +474,10 @@ void Engine::beginCapture(SlotId slot, bool overdub, uint32_t tick, Transport co
 
 void Engine::finishCapture(SlotId slot, bool overdub, uint32_t tick, uint32_t requestedTick) {
 	auto& runtime = track(slot);
+	if (runtime.finishingCapture || runtime.state == TrackState::COMMITTING) {
+		return;
+	}
+	CaptureFinishGuard guard(runtime.finishingCapture);
 	runtime.overdubEndTick = 0;
 	uint32_t endTick = requestedTick;
 	if (endTick <= runtime.captureStartTick) {
@@ -559,6 +572,9 @@ void Engine::setOverdubEnd(TrackRuntime& runtime, uint32_t tick) {
 
 void Engine::stop(SlotId slot, uint32_t tick, bool forceImmediate) {
 	auto& runtime = track(slot);
+	if (runtime.finishingCapture) {
+		return;
+	}
 	auto const& settings = model_.tracks[indexOf(slot)].settings;
 	if (!forceImmediate && runtime.state == TrackState::PLAYING && runtime.phraseLength != 0) {
 		if (settings.stopMode == StopMode::LOOP_END) {
@@ -654,6 +670,9 @@ void Engine::processTick(Transport const& transport) {
 	for (size_t i = 0; i < runtime_.size(); ++i) {
 		auto slot = static_cast<SlotId>(i);
 		auto& runtime = runtime_[i];
+		if (runtime.finishingCapture || runtime.state == TrackState::COMMITTING) {
+			continue;
+		}
 		if (runtime.event.action == PendingAction::STOP && runtime.event.tick == 0) {
 			auto bars = std::max<uint32_t>(1, model_.tracks[i].settings.fadeTimeBars);
 			runtime.fadeEndTick = runtime.event.requestedTick + bars * std::max<uint32_t>(1, transport.barLength);
@@ -701,6 +720,9 @@ bool Engine::requestExit(Transport const& transport) {
 	for (size_t i = 0; i < runtime_.size(); ++i) {
 		auto slot = static_cast<SlotId>(i);
 		auto& runtime = runtime_[i];
+		if (runtime.finishingCapture || runtime.state == TrackState::COMMITTING) {
+			continue;
+		}
 		if (runtime.state == TrackState::RECORDING || runtime.state == TrackState::OVERDUBBING
 		    || runtime.finishingOverdub) {
 			uint32_t target = transport.tick;

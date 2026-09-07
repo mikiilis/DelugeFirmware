@@ -70,14 +70,31 @@ public:
 		outputRecordingFrom = nullptr;
 	};
 	void abort();
+	// A provisional clip/history must roll back before abort cleanup may destroy its Sample.
+	void retainForCommit();
+	void releaseCommit(bool success);
+	[[nodiscard]] bool isCommitPending() const { return commitPending_; }
+	enum class LifecycleEvent : uint8_t {
+		CREATED,
+		RETAINED,
+		FINISHED,
+		ABORTED,
+		RELEASED,
+		CLEANED,
+		DESTROYED,
+		TRIM_CHECK,
+		TRIM_REJECTED,
+		TRIM_COMPLETE
+	};
+	void traceLifecycle(LifecycleEvent event, Cluster const* cluster = nullptr, uint32_t targetFileSize = 0) const;
 
-	SampleRecorder* next;
+	SampleRecorder* next = nullptr;
 
-	gsl::owner<Sample*> sample;
+	gsl::owner<Sample*> sample = nullptr;
 
 	int32_t numSamplesToRunBeforeBeginningCapturing;
-	uint32_t numSamplesBeenRunning;
-	uint32_t numSamplesCaptured;
+	uint32_t numSamplesBeenRunning = 0;
+	uint32_t numSamplesCaptured = 0;
 
 	uint32_t numSamplesExtraToCaptureAtEndSyncingWise;
 
@@ -102,8 +119,11 @@ public:
 	String filePathCreated;
 
 	RecorderStatus status = RecorderStatus::CAPTURING_DATA;
-	AudioInputChannel mode;
-	Output* outputRecordingFrom; // for when recording from a specific output
+	AudioInputChannel mode = AudioInputChannel::NONE;
+#if ALPHA_OR_BETA_VERSION
+	uint8_t diagnosticLoopStationSlot = 0xFF; // Zero-based; 0xFF means another recorder client.
+#endif
+	Output* outputRecordingFrom = nullptr; // for when recording from a specific output
 
 	// Need to keep track of this, so we know whether to remove it. Well I guess we could just look and see if it's
 	// there... but this is nice.
@@ -124,8 +144,8 @@ public:
 	// destructively replace the backing WAV.
 	bool captureOutputBackingMissing = false;
 	bool autoDeleteWhenDone = false;
-	bool keepingReasonsForFirstClusters;
-	uint8_t recordingNumChannels;
+	bool keepingReasonsForFirstClusters = false;
+	uint8_t recordingNumChannels = 0;
 	// Preserve the first terminal failure so asynchronous owners can report the
 	// real cause after the recorder has detached from its AudioClip. hadCardError
 	// remains for compatibility with existing recorder callers.
@@ -164,6 +184,16 @@ public:
 	std::optional<FatFS::File> file;
 
 private:
+#ifdef IN_UNIT_TESTS
+	friend struct SampleRecorderLifecycleTestAccess;
+#endif
+	bool commitPending_ = false;
+	// Written startup clusters retain their original writer reason for immediate playback.
+	// Track the actual ownership, independently of array length (which trimming can change).
+	uint8_t retainedStartupClusters_ = 0;
+	void releaseRetainedStartupClusters(uint32_t firstIndex = 0);
+	Error initializeRecordingSample();
+	Error cleanupAbortedRecording();
 	void setExtraBytesOnPreviousCluster(Cluster* currentCluster, int32_t currentClusterIndex);
 	Error writeCluster(int32_t clusterIndex, size_t numBytes);
 	Error alterFile(MonitoringAction action, int32_t lshiftAmount, uint32_t idealFileSizeBeforeAction,

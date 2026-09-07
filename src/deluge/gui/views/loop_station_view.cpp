@@ -46,6 +46,8 @@ constexpr uint8_t kStopAllX = kDisplayWidth + 1;
 
 deluge::loop_station::Error recorderError(::Error error) {
 	switch (error) {
+	case ::Error::BUG:
+		return deluge::loop_station::Error::INTERNAL;
 	case ::Error::INSUFFICIENT_RAM:
 	case ::Error::INSUFFICIENT_RAM_FOR_FOLDER_CONTENTS_SIZE:
 	case ::Error::OUT_OF_BUFFER_SPACE:
@@ -321,6 +323,9 @@ bool LoopStationView::beginCapture(SlotId slot, bool overdub, uint32_t tick) {
 	// Every Loop Station WAV is a fixed-gain dry revision. Explicitly disable
 	// normalization and file alteration for first takes as well as overdubs.
 	clip->recorder->allowFileAlterationAfter = false;
+#if ALPHA_OR_BETA_VERSION
+	clip->recorder->diagnosticLoopStationSlot = static_cast<uint8_t>(index);
+#endif
 	clip->recorder->allowNormalization = false;
 	// Keep ownership until the WAV has actually been closed. This makes the
 	// engine's COMMITTING state real and keeps the recorder in shared admission
@@ -406,6 +411,14 @@ CaptureFinish LoopStationView::finishCapture(SlotId slot, bool overdub, uint32_t
 	}
 	// Both initial recording and overdub use the normal finish path.
 	// Overdub recorders are configured to capture pre-FX output + input.
+	// Reject a cropped endpoint before signed/unsigned arithmetic can wrap it into a huge WAV.
+	if (static_cast<int64_t>(recorder->numSamplesCaptured) + recorder->numSamplesExtraToCaptureAtEndSyncingWise
+	        - trimSamples
+	    <= 0) {
+		return reject(deluge::loop_station::Error::SOURCE_REMOVED);
+	}
+	// Ownership must be continuous through AudioClip detachment and any allocation/SD yields below.
+	recorder->retainForCommit();
 	clip->finishLinearRecording(modelStack, nullptr, trimSamples);
 	clip->name.set(&trackName);
 
@@ -456,15 +469,10 @@ CaptureFinish LoopStationView::finishCapture(SlotId slot, bool overdub, uint32_t
 		size_t index = static_cast<size_t>(slot);
 		auto& history = currentSong->loopStationRevisionHistory[index];
 		if (!history.stageCurrent(*clip)) {
-			history.restoreCurrent(*clip);
-			recorder->pointerHeldElsewhere = false;
-			recorder->abort();
+			history.rejectStaged(*clip);
+			recorder->releaseCommit(false);
 			return {.accepted = false, .error = deluge::loop_station::Error::ALLOCATION};
 		}
-		// AudioClip releases this flag when it detaches. Retake ownership so an
-		// allocation failure during the final lag-compensation samples cannot let
-		// the global recorder routine delete our pointer before we observe it.
-		recorder->pointerHeldElsewhere = true;
 		pendingCommitRecorders_[index] = recorder;
 		if (overdub) {
 			int32_t provisionalLength = clip->loopLength;
@@ -472,8 +480,7 @@ CaptureFinish LoopStationView::finishCapture(SlotId slot, bool overdub, uint32_t
 			if (restoreError != ::Error::NONE) {
 				history.rejectStaged(*clip);
 				pendingCommitRecorders_[index] = nullptr;
-				recorder->pointerHeldElsewhere = false;
-				recorder->abort();
+				recorder->releaseCommit(false);
 				return {.accepted = false, .error = recorderError(restoreError)};
 			}
 			if (provisionalLength != clip->loopLength) {
@@ -503,8 +510,7 @@ CaptureFinish LoopStationView::finishCapture(SlotId slot, bool overdub, uint32_t
 		clip->resumePlayback(modelStack, true);
 	}
 	if (!accepted) {
-		recorder->pointerHeldElsewhere = false;
-		recorder->abort();
+		recorder->releaseCommit(false);
 	}
 	return {.accepted = accepted,
 	        .asynchronous = accepted,
@@ -580,11 +586,18 @@ void LoopStationView::processPendingCommits() {
 		return;
 	}
 	for (size_t i = 0; i < pendingCommitRecorders_.size(); ++i) {
+		// finishCapture may yield after staging but before the engine enters COMMITTING.
+		if (engine_->track(static_cast<SlotId>(i)).finishingCapture) {
+			continue;
+		}
 		SampleRecorder* recorder = pendingCommitRecorders_[i];
 		if (!recorder
 		    || (recorder->status != RecorderStatus::COMPLETE && recorder->status != RecorderStatus::ABORTED)) {
 			continue;
 		}
+		// Claim this completion before publication/rollback can yield and re-enter this routine.
+		// The recorder itself remains retained until every provisional Sample reference is resolved.
+		pendingCommitRecorders_[i] = nullptr;
 
 		auto slot = static_cast<SlotId>(i);
 		AudioClip* clip = backingClip(slot);
@@ -614,7 +627,7 @@ void LoopStationView::processPendingCommits() {
 		}
 		if (!success && clip) {
 			::Error restoreError = history.rejectStaged(*clip);
-			if (restoreError != ::Error::NONE) {
+			if (restoreError != ::Error::NONE && failure == deluge::loop_station::Error::NONE) {
 				failure = recorderError(restoreError);
 			}
 		}
@@ -624,18 +637,8 @@ void LoopStationView::processPendingCommits() {
 			history.discardStaged();
 		}
 
-		pendingCommitRecorders_[i] = nullptr;
-		recorder->pointerHeldElsewhere = false;
-		if (success) {
-			// The global recorder routine may now safely free the recorder. Its
-			// finalized Sample remains owned by the clip and revision history.
-			recorder->status = RecorderStatus::AWAITING_DELETION;
-		}
-		else {
-			// Re-enter the recorder's normal abort cleanup so a partial TEMP WAV and
-			// provisional Sample are removed outside the SD routine.
-			recorder->abort();
-		}
+		// Rollback/publication above has released or made durable every provisional reference.
+		recorder->releaseCommit(success);
 
 		if (clip && oldLength != clip->loopLength) {
 			char modelStackMemory[MODEL_STACK_MAX_SIZE];
@@ -654,6 +657,9 @@ void LoopStationView::stateChanged(SlotId slot, TrackState state) {
 	AudioClip* clip = backingClip(slot);
 	if (state == TrackState::ERROR) {
 		switch (engine_->track(slot).error) {
+		case deluge::loop_station::Error::INTERNAL:
+			display->displayError(::Error::BUG);
+			break;
 		case deluge::loop_station::Error::BACKING_UNAVAILABLE:
 			display->displayPopup(l10n::get(l10n::String::STRING_FOR_LOOP_STATION_BACKING_UNAVAILABLE));
 			break;
@@ -1281,8 +1287,9 @@ void LoopStationView::processMusicalTick() {
 	for (size_t i = 0; i < kTrackCount; ++i) {
 		auto slot = static_cast<SlotId>(i);
 		auto const& runtime = engine_->track(slot);
-		if (runtime.state != TrackState::RECORDING && runtime.state != TrackState::OVERDUBBING
-		    && !runtime.finishingOverdub) {
+		if (runtime.finishingCapture || runtime.state == TrackState::COMMITTING
+		    || (runtime.state != TrackState::RECORDING && runtime.state != TrackState::OVERDUBBING
+		        && !runtime.finishingOverdub)) {
 			continue;
 		}
 		AudioClip* clip = backingClip(slot);

@@ -70,6 +70,7 @@ enum class Error : uint8_t {
 	MAX_FILE_SIZE,
 	SOURCE_REMOVED,
 	BACKING_UNAVAILABLE,
+	INTERNAL,
 };
 
 // Performance actions are dispatched by the first pad-down, not the eventual
@@ -234,6 +235,8 @@ struct TrackRuntime {
 	int32_t historyCursor = -1;
 	bool pendingClear = false;
 	bool committingOverdub = false;
+	// The recorder delegate can yield to SD/audio work before the commit is staged.
+	bool finishingCapture = false;
 	Error error = Error::NONE;
 	uint32_t lastTapTimeMs = std::numeric_limits<uint32_t>::max();
 };

@@ -1615,6 +1615,7 @@ errorAfterAllocation:
 		insertionPoint = &(*insertionPoint)->next;
 	}
 	*insertionPoint = newRecorder;
+	newRecorder->traceLifecycle(SampleRecorder::LifecycleEvent::CREATED);
 
 	if (mode >= AUDIO_INPUT_CHANNEL_FIRST_INTERNAL_OPTION) {
 		renderInStereo = true; // Quickly set it to true. It'll keep getting reset to true now every time

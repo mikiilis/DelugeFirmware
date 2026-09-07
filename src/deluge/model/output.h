@@ -213,14 +213,7 @@ public:
 		return true;
 	}
 	// returns whether a recorder was removed
-	bool removeRecorder() {
-		if (recorder) {
-			recorder->removeFromOutput();
-			recorder = nullptr;
-			return true;
-		}
-		return false;
-	}
+	bool removeRecorder(SampleRecorder* expected = nullptr);
 	Output* getOutputRecordingThis() { return outputRecordingThisOutput; }
 	// only for audio outputs, will be used for instruments when I implement routing notes between clips
 	virtual void clearRecordingFrom() {}

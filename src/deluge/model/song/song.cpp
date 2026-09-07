@@ -352,6 +352,17 @@ Error LoopStationRevisionHistory::restoreCurrent(AudioClip& clip) {
 
 Error LoopStationRevisionHistory::rejectStaged(AudioClip& clip) {
 	Error error = restoreCurrent(clip);
+	if (error != Error::NONE) {
+		// Even an unavailable durable WAV must not leave playback holding the rejected Sample.
+		// Keep the durable history entry so a later retry can reload it.
+		clip.unassignVoiceSample(true);
+		clip.sampleHolder.setAudioFile(nullptr);
+		clip.sampleHolder.filePath.clear();
+		clip.sampleHolder.startPos = 0;
+		clip.sampleHolder.endPos = 0;
+		clip.loopStationSampleZeroTicks = 0;
+		clip.renderData.xScroll = -1;
+	}
 	discardStaged();
 	return error;
 }

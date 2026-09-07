@@ -24,27 +24,6 @@
 #include "storage/cluster/cluster.h"
 #include <cstddef>
 
-SampleCluster::~SampleCluster() {
-	if (cluster) {
-
-#if ALPHA_OR_BETA_VERSION
-		int32_t numReasonsToBeLoaded = cluster->numReasonsToBeLoaded;
-		if (cluster == audioFileManager.clusterBeingLoaded) {
-			numReasonsToBeLoaded--;
-		}
-
-		if (numReasonsToBeLoaded) {
-			D_PRINTLN("uh oh, some reasons left...  %d", numReasonsToBeLoaded);
-
-			// Bay_Mud got this, and thinks a FlashAir card might have been a catalyst. It still "shouldn't" be able to
-			// happen though.
-			FREEZE_WITH_ERROR("E036");
-		}
-#endif
-		cluster->destroy();
-	}
-}
-
 void SampleCluster::ensureNoReason(Sample* sample) {
 	if (cluster) {
 		if (cluster->numReasonsToBeLoaded) {

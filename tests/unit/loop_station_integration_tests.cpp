@@ -1,5 +1,6 @@
 #include "CppUTest/TestHarness.h"
 #include "loop_station/loop_station.h"
+#include <functional>
 
 using namespace deluge::loop_station;
 
@@ -30,6 +31,7 @@ struct Delegate final : EngineDelegate {
 	bool asynchronous = false;
 	uint32_t committedLength = 0;
 	Error rejectError = Error::NONE;
+	std::function<void()> duringFinish;
 
 	bool preflight(SlotId slot, bool) override {
 		preflights[static_cast<size_t>(slot)]++;
@@ -48,6 +50,9 @@ struct Delegate final : EngineDelegate {
 		finishOverdubs[index] = overdub;
 		finishLengths[index] = length;
 		finishCrops[index] = crop;
+		if (duringFinish) {
+			duringFinish();
+		}
 		return {.accepted = !rejectFinish,
 		        .asynchronous = asynchronous,
 		        .committedLength = committedLength,
@@ -1043,6 +1048,107 @@ TEST(LoopStationState, AsyncCommitPreservesSpecificStorageFailure) {
 	CHECK(engine.track(SlotId::ONE).error == Error::SD_CARD_FULL);
 }
 
+TEST(LoopStationState, SameTickTakeAbortsWithoutPublishing) {
+	SongModel model;
+	model.global.quantize = QuantizeMode::OFF;
+	Delegate delegate;
+	Engine engine(model, &delegate);
+	engine.centrePressed(SlotId::ONE, at(0), 0);
+	engine.centrePressed(SlotId::ONE, at(0), 10);
+	CHECK(engine.track(SlotId::ONE).state == TrackState::EMPTY);
+	CHECK_EQUAL(1, delegate.aborts[0]);
+	CHECK_EQUAL(0, delegate.finishes[0]);
+	CHECK_EQUAL(0, engine.track(SlotId::ONE).historySize);
+}
+
+TEST(LoopStationState, OneTickTakeCommitsOnceDespiteRepeatedCompletion) {
+	SongModel model;
+	model.global.quantize = QuantizeMode::OFF;
+	Delegate delegate;
+	delegate.asynchronous = true;
+	Engine engine(model, &delegate);
+	engine.centrePressed(SlotId::ONE, at(0), 0);
+	engine.centrePressed(SlotId::ONE, at(1), 20);
+	engine.notifyCommitComplete(SlotId::ONE, true);
+	engine.notifyCommitComplete(SlotId::ONE, true);
+	CHECK(engine.track(SlotId::ONE).state == TrackState::PLAYING);
+	CHECK_EQUAL(1, engine.track(SlotId::ONE).phraseLength);
+	CHECK_EQUAL(1, engine.track(SlotId::ONE).historySize);
+	CHECK_EQUAL(1, delegate.finishes[0]);
+}
+
+TEST(LoopStationState, SmartStopBeforeCaptureOriginUsesPerformedShortLength) {
+	SongModel model;
+	Delegate delegate;
+	Engine engine(model, &delegate);
+	engine.centrePressed(SlotId::ONE, at(97), 0);
+	engine.centrePressed(SlotId::ONE, at(98), 20);
+	CHECK_EQUAL(1, delegate.finishLengths[0]);
+	CHECK_EQUAL(1, engine.track(SlotId::ONE).phraseLength);
+}
+
+TEST(LoopStationState, FinishDelegateCannotBeReenteredWhileYieldingToAudioOrPads) {
+	SongModel model;
+	model.tracks[0].settings.durationBars = 1;
+	Delegate delegate;
+	delegate.asynchronous = true;
+	Engine engine(model, &delegate);
+	engine.centrePressed(SlotId::ONE, at(0), 0);
+	delegate.duringFinish = [&] {
+		CHECK(engine.track(SlotId::ONE).finishingCapture);
+		engine.processTick(at(96));
+		engine.centrePressed(SlotId::ONE, at(96), 1000);
+	};
+	engine.processTick(at(96));
+	CHECK_EQUAL(1, delegate.finishes[0]);
+	CHECK_FALSE(engine.track(SlotId::ONE).finishingCapture);
+	CHECK(engine.track(SlotId::ONE).state == TrackState::COMMITTING);
+	engine.notifyCommitComplete(SlotId::ONE, true);
+	CHECK_EQUAL(1, engine.track(SlotId::ONE).historySize);
+}
+
+TEST(LoopStationState, FailedShortOverdubPreservesRedoAndAcknowledgesWithoutRecording) {
+	SongModel model;
+	Delegate delegate;
+	delegate.asynchronous = true;
+	Engine engine(model, &delegate);
+	engine.restoreBoundPhrase(SlotId::ONE, 1, true, true, 3, 1);
+	engine.centrePressed(SlotId::ONE, at(0), 0);
+	engine.processTick(at(1));
+	engine.notifyCommitComplete(SlotId::ONE, false, Error::ALLOCATION);
+	engine.notifyCommitComplete(SlotId::ONE, false, Error::SD_CARD);
+	CHECK(engine.track(SlotId::ONE).error == Error::ALLOCATION);
+	CHECK_EQUAL(3, engine.track(SlotId::ONE).historySize);
+	CHECK_EQUAL(1, engine.track(SlotId::ONE).historyCursor);
+	CHECK(engine.track(SlotId::ONE).redoAvailable);
+	engine.centrePressed(SlotId::ONE, at(2), 40);
+	CHECK(engine.track(SlotId::ONE).state == TrackState::PLAYING);
+	CHECK_EQUAL(1, delegate.begins[0]);
+}
+
+TEST(LoopStationState, BackgroundOverdubCannotFinishAgainWhileCommitIsPending) {
+	SongModel model;
+	Delegate delegate;
+	delegate.asynchronous = true;
+	Engine engine(model, &delegate);
+	engine.restoreBoundPhrase(SlotId::ONE, 96, true);
+	engine.centrePressed(SlotId::ONE, at(0), 0);
+	engine.centrePressed(SlotId::ONE, at(48), 1000);
+	CHECK(engine.track(SlotId::ONE).finishingOverdub);
+	engine.processTick(at(96));
+	for (uint32_t tick = 97; tick < 200; ++tick) {
+		engine.processTick(at(tick));
+	}
+	CHECK_EQUAL(1, delegate.finishes[0]);
+	CHECK(engine.track(SlotId::ONE).state == TrackState::COMMITTING);
+	CHECK_FALSE(engine.requestExit(at(200)));
+	CHECK_FALSE(engine.track(SlotId::ONE).event.pending());
+	engine.notifyCommitComplete(SlotId::ONE, true);
+	CHECK_FALSE(engine.track(SlotId::ONE).finishingOverdub);
+	CHECK(engine.track(SlotId::ONE).state == TrackState::PLAYING);
+	CHECK(engine.exitReady());
+}
+
 TEST(LoopStationState, RejectedBackingReportsSpecificErrorAndPreservesPhrase) {
 	SongModel model;
 	Delegate delegate;
@@ -1060,6 +1166,27 @@ TEST(LoopStationState, RejectedBackingReportsSpecificErrorAndPreservesPhrase) {
 	CHECK_EQUAL(96, engine.track(SlotId::ONE).phraseLength);
 	engine.centrePressed(SlotId::ONE, at(97), 1000);
 	CHECK(engine.track(SlotId::ONE).state == TrackState::PLAYING);
+}
+
+TEST(LoopStationState, InternalFinalizationFailurePreservesCommittedHistoryAndAllowsAcknowledgement) {
+	SongModel model;
+	Delegate delegate;
+	delegate.asynchronous = true;
+	Engine engine(model, &delegate);
+	engine.restoreBoundPhrase(SlotId::ONE, 96, true, true, 3, 1);
+	engine.centrePressed(SlotId::ONE, at(0), 0);
+	engine.processTick(at(96));
+	CHECK(engine.track(SlotId::ONE).state == TrackState::COMMITTING);
+	engine.notifyCommitComplete(SlotId::ONE, false, Error::INTERNAL);
+	CHECK(engine.track(SlotId::ONE).state == TrackState::ERROR);
+	CHECK(engine.track(SlotId::ONE).error == Error::INTERNAL);
+	CHECK_EQUAL(96, engine.track(SlotId::ONE).phraseLength);
+	CHECK_EQUAL(3, engine.track(SlotId::ONE).historySize);
+	CHECK_EQUAL(1, engine.track(SlotId::ONE).historyCursor);
+	CHECK(engine.track(SlotId::ONE).redoAvailable);
+	engine.centrePressed(SlotId::ONE, at(97), 1000);
+	CHECK(engine.track(SlotId::ONE).state == TrackState::PLAYING);
+	CHECK_EQUAL(1, delegate.begins[0]);
 }
 
 TEST_GROUP(LoopStationFanOut){};

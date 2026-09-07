@@ -122,7 +122,8 @@ void AudioClip::abortRecording() {
 
 	renderData.xScroll = -1; // Force re-render
 
-	recorder->pointerHeldElsewhere = false; // Must do before calling recorder->abort()
+	// A Loop Station commit owns the recorder across detachment and rollback.
+	recorder->pointerHeldElsewhere = recorder->isCommitPending();
 
 	recorder->abort();
 
@@ -212,7 +213,7 @@ void AudioClip::finishLinearRecording(ModelStackWithTimelineCounter* modelStack,
 		}
 	}
 
-	recorder->pointerHeldElsewhere = false;
+	recorder->pointerHeldElsewhere = recorder->isCommitPending();
 
 	recorder->endSyncedRecording(buttonLatencyForTempolessRecord); // Must call before setSample(), cos it sets up
 	                                                               // important stuff like the sample length
