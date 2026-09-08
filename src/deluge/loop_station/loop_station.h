@@ -24,9 +24,12 @@ constexpr uint32_t kMaxLoopSequenceLength = 1610612736;
 enum class SlotId : uint8_t { ONE, TWO, THREE, FOUR, FIVE, SIX, SEVEN, EIGHT };
 enum class RecordAction : uint8_t { RECORD_OVERDUB_PLAY, RECORD_PLAY_OVERDUB };
 enum class QuantizeMode : uint8_t { OFF, SMART, MEASURE };
+// Keep persisted values/names compatible; PlaybackTiming now owns quantization.
 enum class StartFromStopped : uint8_t { RESUME_QUANTIZED, FROM_START };
+enum class PlaybackTiming : uint8_t { SYNCED, IMMEDIATE };
 enum class TrackState : uint8_t { EMPTY, RECORDING, OVERDUBBING, PLAYING, STOPPED, COMMITTING, ERROR };
 enum class StartMode : uint8_t { IMMEDIATE, FADE };
+// LOOP_END is a legacy stored value, displayed/handled as an Instant transition.
 enum class StopMode : uint8_t { LOOP_END, IMMEDIATE, FADE };
 enum class PlaybackMode : uint8_t { LOOP, ONE_SHOT };
 enum class SourceType : uint8_t { LEFT, RIGHT, STEREO, BALANCED, MIX_PRE_FX, MIX_POST_FX, SONG_TRACK };
@@ -111,7 +114,14 @@ constexpr uint8_t kPhysicalInputPreMixGainShift = 2;
 }
 
 // Stable setting identifiers shared by the firmware menu layer and host tests.
-enum class GlobalParameter : uint8_t { RECORD_ACTION, QUANTIZE, START_FROM_STOPPED, DIM_BORDER_COLOUR };
+enum class GlobalParameter : uint8_t {
+	RECORD_ACTION,
+	QUANTIZE,
+	START_FROM_STOPPED,
+	DIM_BORDER_COLOUR,
+	START_TIMING,
+	STOP_TIMING
+};
 enum class TrackParameter : uint8_t {
 	SOURCE,
 	SOURCE_TRACK,
@@ -135,6 +145,8 @@ struct GlobalSettings {
 	RecordAction recordAction = RecordAction::RECORD_PLAY_OVERDUB;
 	QuantizeMode quantize = QuantizeMode::SMART;
 	StartFromStopped startFromStopped = StartFromStopped::RESUME_QUANTIZED;
+	PlaybackTiming startTiming = PlaybackTiming::SYNCED;
+	PlaybackTiming stopTiming = PlaybackTiming::SYNCED;
 	PadColour dimBorderColour = PadColour::BLUE;
 };
 
@@ -197,6 +209,8 @@ struct Transport {
 	uint32_t eighthNoteLength = 1;
 	bool playing = false;
 	bool arrangement = false;
+	// Gesture time lies after the integer tick (important just after a bar line).
+	bool afterTickBoundary = false;
 };
 
 struct ScheduledEvent {
@@ -316,7 +330,7 @@ public:
 	[[nodiscard]] TrackRuntime const& track(SlotId slot) const;
 	[[nodiscard]] TrackRuntime& track(SlotId slot);
 
-	// Called once for the coalesced 2x2 centre gesture, on release.
+	// Called once for the coalesced 2x2 gesture: stopped taps on release, other actions on press.
 	void centrePressed(SlotId slot, Transport const& transport, uint32_t gestureTimeMs);
 	void clearHeld(SlotId slot);
 	bool undo(SlotId slot);
@@ -341,7 +355,8 @@ private:
 	void execute(SlotId slot, PendingAction action, Transport const& transport, uint32_t requestedTick);
 	void beginCapture(SlotId slot, bool overdub, uint32_t tick, Transport const& transport);
 	void finishCapture(SlotId slot, bool overdub, uint32_t tick, uint32_t requestedTick);
-	void stop(SlotId slot, uint32_t tick, bool forceImmediate = false);
+	void stop(SlotId slot, Transport const& transport, bool forceImmediate = false);
+	[[nodiscard]] static uint32_t playbackActionTick(Transport const& transport, PlaybackTiming timing);
 	void beginPlayback(SlotId slot, Transport const& transport, bool fromStart);
 	void setPlaybackGain(SlotId slot, int32_t gain, bool forceNotify = false);
 	void updateFade(SlotId slot, uint32_t tick);

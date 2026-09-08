@@ -45,7 +45,10 @@ public:
 		case GlobalParameter::QUANTIZE:
 			return {"Off", "Smart", "Measure"};
 		case GlobalParameter::START_FROM_STOPPED:
-			return {"Resume Quantized", "From Start"};
+			return {"Resume Phase", "From Start"};
+		case GlobalParameter::START_TIMING:
+		case GlobalParameter::STOP_TIMING:
+			return {"Synced", "Immediate"};
 		case GlobalParameter::DIM_BORDER_COLOUR:
 			return {"Red", "Orange", "Yellow", "Green", "Cyan", "Blue", "Purple", "Magenta", "White"};
 		}
@@ -66,6 +69,9 @@ public:
 			auto found = std::find(kProgressColours.begin(), kProgressColours.end(), colour);
 			setValue(found == kProgressColours.end() ? 0 : std::distance(kProgressColours.begin(), found));
 		}
+		else if (parameter_ == TrackParameter::STOP_MODE) {
+			setValue(model().tracks[static_cast<size_t>(activeSlot)].settings.stopMode == StopMode::FADE ? 1 : 0);
+		}
 		else {
 			setValue(readTrackParameter(model(), activeSlot, parameter_));
 		}
@@ -74,6 +80,10 @@ public:
 		if (parameter_ == TrackParameter::PROGRESS_COLOUR) {
 			auto index = std::clamp<int32_t>(getValue(), 0, static_cast<int32_t>(kProgressColours.size() - 1));
 			writeTrackParameter(model(), activeSlot, parameter_, static_cast<int32_t>(kProgressColours[index]));
+		}
+		else if (parameter_ == TrackParameter::STOP_MODE) {
+			writeTrackParameter(model(), activeSlot, parameter_,
+			                    static_cast<int32_t>(getValue() == 1 ? StopMode::FADE : StopMode::IMMEDIATE));
 		}
 		else {
 			writeTrackParameter(model(), activeSlot, parameter_, getValue());
@@ -91,9 +101,9 @@ public:
 		case TrackParameter::PLAYBACK:
 			return {"Loop", "One Shot"};
 		case TrackParameter::START_MODE:
-			return {"Immediate", "Fade"};
+			return {"Instant", "Fade"};
 		case TrackParameter::STOP_MODE:
-			return {"Loop End", "Immediate", "Fade"};
+			return {"Instant", "Fade"};
 		default:
 			return {};
 		}
@@ -249,6 +259,10 @@ PLACE_SDRAM_BSS GlobalSelection recordQuantize{l10n::String::STRING_FOR_LOOP_STA
                                                GlobalParameter::QUANTIZE};
 PLACE_SDRAM_BSS GlobalSelection startFromStopped{l10n::String::STRING_FOR_LOOP_STATION_START_FROM_STOPPED,
                                                  GlobalParameter::START_FROM_STOPPED};
+PLACE_SDRAM_BSS GlobalSelection startTiming{l10n::String::STRING_FOR_LOOP_STATION_START_TIMING,
+                                            GlobalParameter::START_TIMING};
+PLACE_SDRAM_BSS GlobalSelection stopTiming{l10n::String::STRING_FOR_LOOP_STATION_STOP_TIMING,
+                                           GlobalParameter::STOP_TIMING};
 PLACE_SDRAM_BSS GlobalSelection dimBorderColour{l10n::String::STRING_FOR_LOOP_STATION_DIM_BORDER_COLOUR,
                                                 GlobalParameter::DIM_BORDER_COLOUR};
 
@@ -265,8 +279,9 @@ PLACE_SDRAM_BSS FadeTime fadeTime{l10n::String::STRING_FOR_LOOP_STATION_FADE_TIM
 PLACE_SDRAM_BSS TrackTranspose transpose{l10n::String::STRING_FOR_LOOP_STATION_TRANSPOSE};
 PLACE_SDRAM_BSS CopyToTrack copyToTrack{l10n::String::STRING_FOR_LOOP_STATION_COPY_TO_TRACK};
 
-PLACE_SDRAM_BSS Submenu globalSettingsMenu{l10n::String::STRING_FOR_LOOP_STATION,
-                                           {&recordAction, &recordQuantize, &startFromStopped}};
+PLACE_SDRAM_BSS Submenu globalSettingsMenu{
+    l10n::String::STRING_FOR_LOOP_STATION,
+    {&recordAction, &recordQuantize, &startTiming, &stopTiming, &startFromStopped}};
 
 PLACE_SDRAM_BSS Submenu trackSettingsMenu{l10n::String::STRING_FOR_LOOP_STATION_TRACK,
                                           {&source,

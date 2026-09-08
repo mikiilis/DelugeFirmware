@@ -17,6 +17,7 @@
 #include "hid/display/display.h"
 #include "hid/led/indicator_leds.h"
 #include "hid/led/pad_leds.h"
+#include "loop_station/scheduler.h"
 #include "model/clip/audio_clip.h"
 #include "model/model_stack.h"
 #include "model/sample/sample.h"
@@ -107,13 +108,15 @@ Transport LoopStationView::transport() const {
 	// the musical position at the pad gesture. Using it as the record endpoint
 	// can assign a much shorter or longer clip length and make AudioClip
 	// time-stretch otherwise correctly recorded audio.
-	uint32_t tick = playbackHandler.playbackState ? static_cast<uint32_t>(musicalPositionQ16() >> 16) : 0;
+	uint64_t position = musicalPositionQ16();
+	uint32_t tick = static_cast<uint32_t>(position >> 16);
 	uint32_t bar = std::max<uint32_t>(1, currentSong->getBarLength());
 	return {.tick = tick,
 	        .barLength = bar,
 	        .eighthNoteLength = std::max<uint32_t>(1, currentSong->getQuarterNoteLength() / 2),
 	        .playing = playbackHandler.playbackState != 0,
-	        .arrangement = playbackHandler.playbackState && currentPlaybackMode == &arrangement};
+	        .arrangement = playbackHandler.playbackState && currentPlaybackMode == &arrangement,
+	        .afterTickBoundary = (position & 0xFFFF) != 0};
 }
 
 uint64_t LoopStationView::musicalPositionQ16() const {
@@ -1269,7 +1272,7 @@ void LoopStationView::renderOLED(deluge::hid::display::oled_canvas::Canvas& canv
 void LoopStationView::graphicsRoutine() {
 	if (!engine_)
 		return;
-	processMusicalTick();
+	serviceBackgroundWork();
 	indicator_leds::setLedState(IndicatorLED::RECORD, engine_->anyCapturing());
 	uiNeedsRendering(this, 0xFFFFFFFF, 0);
 	if (exitRequested_ && engine_->exitReady()) {
@@ -1281,8 +1284,19 @@ void LoopStationView::graphicsRoutine() {
 void LoopStationView::processMusicalTick() {
 	if (!engine_)
 		return;
-	auto now = transport();
-	engine_->processTick(now);
+	// Session calls this at an actioned swung tick. Do not execute deadlines
+	// using interpolated UI time or write UI-relative delays into the scheduler.
+	int32_t delay = serviceSchedulerTick(*engine_, transport(),
+	                                     static_cast<uint32_t>(playbackHandler.lastSwungTickActioned), INT32_MAX);
+	// Engine delegates may schedule clip work while processing this tick.
+	// Preserve their updated deadline, not a copy taken before those callbacks.
+	playbackHandler.swungTicksTilNextEvent = std::min(playbackHandler.swungTicksTilNextEvent, delay);
+	updateRecordingMode();
+}
+
+void LoopStationView::serviceBackgroundWork() {
+	if (!engine_)
+		return;
 	processPendingCommits();
 	for (size_t i = 0; i < kTrackCount; ++i) {
 		auto slot = static_cast<SlotId>(i);
@@ -1316,9 +1330,13 @@ void LoopStationView::processMusicalTick() {
 	if (monitoringCaptureMask_ != capturingMask()) {
 		refreshMonitoring();
 	}
-	uint32_t ticks = engine_->ticksUntilNextEvent(now.tick);
-	if (ticks != std::numeric_limits<uint32_t>::max()) {
-		playbackHandler.swungTicksTilNextEvent = std::min<int32_t>(playbackHandler.swungTicksTilNextEvent, ticks);
+	// A completed commit can create an auto-overdub or another deadline. Ask
+	// the playback handler to wake/reschedule safely; graphics never executes
+	// queued musical actions or directly mutates its relative tick interval.
+	if (engine_->anyCapturing()
+	    || engine_->ticksUntilNextEvent(static_cast<uint32_t>(playbackHandler.lastSwungTickActioned))
+	           != std::numeric_limits<uint32_t>::max()) {
+		playbackHandler.expectEvent();
 	}
 }
 

@@ -1,5 +1,6 @@
 #include "CppUTest/TestHarness.h"
 #include "loop_station/loop_station.h"
+#include "loop_station/scheduler.h"
 #include <functional>
 
 using namespace deluge::loop_station;
@@ -439,6 +440,8 @@ TEST(LoopStationState, FixedLengthCompletesAtExactBars) {
 
 TEST(LoopStationState, OneShotRetriggersAndStopsAtPhraseEnd) {
 	SongModel model;
+	model.global.startTiming = PlaybackTiming::IMMEDIATE;
+	model.global.stopTiming = PlaybackTiming::IMMEDIATE;
 	model.global.recordAction = RecordAction::RECORD_PLAY_OVERDUB;
 	model.tracks[0].settings.playback = PlaybackMode::ONE_SHOT;
 	Engine engine(model);
@@ -469,6 +472,8 @@ TEST(LoopStationState, DoubleTapDuringOverdubStops) {
 	CHECK(engine.track(SlotId::ONE).state == TrackState::PLAYING);
 	CHECK(engine.track(SlotId::ONE).event.action == PendingAction::STOP);
 	engine.processTick(at(144));
+	CHECK(engine.track(SlotId::ONE).state == TrackState::PLAYING);
+	engine.processTick(at(192));
 	CHECK(engine.track(SlotId::ONE).state == TrackState::STOPPED);
 	CHECK_EQUAL(1, delegate.aborts[0]);
 }
@@ -765,6 +770,8 @@ TEST(LoopStationState, CentrePressAcknowledgesErrorWithoutStartingAnotherAction)
 
 TEST(LoopStationState, StopFadeUsesBarDurationAndReachesZero) {
 	SongModel model;
+	model.global.startTiming = PlaybackTiming::IMMEDIATE;
+	model.global.stopTiming = PlaybackTiming::IMMEDIATE;
 	model.tracks[0].settings.stopMode = StopMode::FADE;
 	model.tracks[0].settings.fadeTimeBars = 2;
 	Delegate delegate;
@@ -823,7 +830,7 @@ TEST(LoopStationState, StoppedLoopRestartHonoursLoopSync) {
 	engine.processTick(at(192));
 	CHECK(engine.track(SlotId::ONE).state == TrackState::PLAYING);
 	CHECK_EQUAL(0, engine.track(SlotId::ONE).playbackStartTick);
-	CHECK_EQUAL(150, engine.track(SlotId::TWO).playbackStartTick);
+	CHECK_EQUAL(192, engine.track(SlotId::TWO).playbackStartTick);
 }
 
 TEST(LoopStationState, NewCompletedTakeInvalidatesRedo) {
@@ -901,7 +908,7 @@ TEST(LoopStationState, ClearNotifiesDelegateAndResetKeepsSongSettings) {
 
 TEST(LoopStationState, StartAllUsesOneSharedQuantizedBoundary) {
 	SongModel model;
-	model.global.quantize = QuantizeMode::MEASURE;
+	model.global.quantize = QuantizeMode::OFF; // Recording quantization does not control playback timing.
 	model.tracks[1].settings.playback = PlaybackMode::ONE_SHOT;
 	Delegate delegate;
 	Engine engine(model, &delegate);
@@ -1189,7 +1196,396 @@ TEST(LoopStationState, InternalFinalizationFailurePreservesCommittedHistoryAndAl
 	CHECK_EQUAL(1, delegate.begins[0]);
 }
 
+TEST(OperationalLoopStationModel, PlaybackTimingDefaultsRoundTripsAndRejectsInvalidValues) {
+	SongModel model;
+	CHECK(model.global.startTiming == PlaybackTiming::SYNCED);
+	writeGlobalParameter(model, GlobalParameter::START_TIMING, static_cast<int32_t>(PlaybackTiming::IMMEDIATE));
+	CHECK_EQUAL(static_cast<int32_t>(PlaybackTiming::IMMEDIATE),
+	            readGlobalParameter(model, GlobalParameter::START_TIMING));
+	for (int32_t invalid : {-1, 2, 99, 256}) {
+		writeGlobalParameter(model, GlobalParameter::START_TIMING, invalid);
+		CHECK(model.global.startTiming == PlaybackTiming::SYNCED);
+	}
+	model.global.startTiming = static_cast<PlaybackTiming>(99);
+	model.sanitize();
+	CHECK(model.global.startTiming == PlaybackTiming::SYNCED);
+}
+
+TEST(OperationalLoopStationModel, StopTimingIsIndependentAndRejectsInvalidValues) {
+	SongModel model;
+	CHECK(model.global.stopTiming == PlaybackTiming::SYNCED);
+	writeGlobalParameter(model, GlobalParameter::STOP_TIMING, static_cast<int32_t>(PlaybackTiming::IMMEDIATE));
+	CHECK_EQUAL(static_cast<int32_t>(PlaybackTiming::IMMEDIATE),
+	            readGlobalParameter(model, GlobalParameter::STOP_TIMING));
+	CHECK(model.global.startTiming == PlaybackTiming::SYNCED);
+	for (int32_t invalid : {-1, 2, 99, 256}) {
+		writeGlobalParameter(model, GlobalParameter::STOP_TIMING, invalid);
+		CHECK(model.global.stopTiming == PlaybackTiming::SYNCED);
+	}
+	model.global.stopTiming = static_cast<PlaybackTiming>(99);
+	model.sanitize();
+	CHECK(model.global.stopTiming == PlaybackTiming::SYNCED);
+}
+
+TEST(LoopStationState, IndependentStartAndStopTimingForTapsAndGroupButtons) {
+	for (auto start : {PlaybackTiming::IMMEDIATE, PlaybackTiming::SYNCED}) {
+		for (auto stop : {PlaybackTiming::IMMEDIATE, PlaybackTiming::SYNCED}) {
+			for (bool group : {false, true}) {
+				SongModel model;
+				model.global.startTiming = start;
+				model.global.stopTiming = stop;
+				Engine engine(model);
+				engine.restoreBoundPhrase(SlotId::ONE, 144, false);
+				if (group)
+					engine.startAll(at(20));
+				else
+					engine.centrePressed(SlotId::ONE, at(20), 1000);
+				CHECK(engine.track(SlotId::ONE).state
+				      == (start == PlaybackTiming::IMMEDIATE ? TrackState::PLAYING : TrackState::STOPPED));
+				engine.processTick(at(96));
+				CHECK(engine.track(SlotId::ONE).state == TrackState::PLAYING);
+				if (group)
+					engine.stopAll(at(102));
+				else {
+					engine.centrePressed(SlotId::ONE, at(101), 2000);
+					engine.centrePressed(SlotId::ONE, at(102), 2100);
+				}
+				CHECK(engine.track(SlotId::ONE).state
+				      == (stop == PlaybackTiming::IMMEDIATE ? TrackState::STOPPED : TrackState::PLAYING));
+				if (stop == PlaybackTiming::SYNCED)
+					CHECK_EQUAL(192, engine.track(SlotId::ONE).event.tick);
+				engine.processTick(at(192));
+				CHECK(engine.track(SlotId::ONE).state == TrackState::STOPPED);
+			}
+		}
+	}
+}
+
+TEST(LoopStationState, ImmediatePlaybackKeepsSingleStartAndDoubleStopGestures) {
+	SongModel model;
+	model.global.startTiming = PlaybackTiming::IMMEDIATE;
+	model.global.stopTiming = PlaybackTiming::IMMEDIATE;
+	model.global.quantize = QuantizeMode::MEASURE;
+	Delegate delegate;
+	Engine engine(model, &delegate);
+	engine.restoreBoundPhrase(SlotId::ONE, 144, false);
+	engine.centrePressed(SlotId::ONE, at(20), 1000);
+	CHECK(engine.track(SlotId::ONE).state == TrackState::PLAYING);
+	CHECK_FALSE(engine.track(SlotId::ONE).event.pending());
+	CHECK_EQUAL(0, delegate.begins[0]);
+	engine.centrePressed(SlotId::ONE, at(21), 2000);
+	engine.centrePressed(SlotId::ONE, at(22), 2100);
+	CHECK(engine.track(SlotId::ONE).state == TrackState::STOPPED);
+	CHECK_FALSE(engine.track(SlotId::ONE).event.pending());
+	CHECK_EQUAL(1, delegate.aborts[0]);
+	CHECK_EQUAL(0, engine.track(SlotId::ONE).playbackGain);
+	// Initial recording still follows Record Quantize = Measure.
+	engine.centrePressed(SlotId::TWO, at(23), 3000);
+	CHECK(engine.track(SlotId::TWO).state == TrackState::EMPTY);
+	CHECK_EQUAL(96, engine.track(SlotId::TWO).event.tick);
+}
+
+TEST(LoopStationState, SyncedStartAndDoubleStopUseBarsNotPhraseEnds) {
+	SongModel model;
+	model.global.quantize = QuantizeMode::OFF;
+	Delegate delegate;
+	Engine engine(model, &delegate);
+	engine.restoreBoundPhrase(SlotId::ONE, 144, false);
+	engine.centrePressed(SlotId::ONE, at(20), 1000);
+	CHECK(engine.track(SlotId::ONE).state == TrackState::STOPPED);
+	CHECK_EQUAL(96, engine.track(SlotId::ONE).event.tick);
+	engine.processTick(at(95));
+	CHECK(engine.track(SlotId::ONE).state == TrackState::STOPPED);
+	engine.processTick(at(96));
+	CHECK(engine.track(SlotId::ONE).state == TrackState::PLAYING);
+	engine.centrePressed(SlotId::ONE, at(101), 2000);
+	engine.centrePressed(SlotId::ONE, at(102), 2100);
+	CHECK_EQUAL(192, engine.track(SlotId::ONE).event.tick);
+	engine.processTick(at(144));
+	CHECK(engine.track(SlotId::ONE).state == TrackState::PLAYING);
+	engine.processTick(at(192));
+	CHECK(engine.track(SlotId::ONE).state == TrackState::STOPPED);
+}
+
+TEST(LoopStationState, PlaybackTimingIsIndependentOfRestartPositionAndLoopSync) {
+	for (auto timing : {PlaybackTiming::IMMEDIATE, PlaybackTiming::SYNCED}) {
+		for (bool fromStart : {false, true}) {
+			for (bool sync : {false, true}) {
+				SongModel model;
+				model.global.startTiming = timing;
+				model.global.stopTiming = timing;
+				model.global.startFromStopped =
+				    fromStart ? StartFromStopped::FROM_START : StartFromStopped::RESUME_QUANTIZED;
+				model.tracks[0].settings.loopSync = sync;
+				Engine engine(model);
+				engine.restoreBoundPhrase(SlotId::ONE, 96, false);
+				engine.track(SlotId::ONE).savedStopPhase = 17;
+				engine.centrePressed(SlotId::ONE, at(20), 1000);
+				uint32_t target = timing == PlaybackTiming::IMMEDIATE ? 20 : 96;
+				if (target != 20) {
+					CHECK(engine.track(SlotId::ONE).state == TrackState::STOPPED);
+					CHECK_EQUAL(target, engine.track(SlotId::ONE).event.tick);
+					engine.processTick(at(target));
+				}
+				CHECK(engine.track(SlotId::ONE).state == TrackState::PLAYING);
+				CHECK_EQUAL(fromStart ? target : (sync ? 0 : target - 17), engine.track(SlotId::ONE).playbackStartTick);
+			}
+		}
+	}
+}
+
+TEST(LoopStationState, ImmediateGroupActionsIgnoreRecordQuantizationAndDoNotStopCapture) {
+	SongModel model;
+	model.global.startTiming = PlaybackTiming::IMMEDIATE;
+	model.global.stopTiming = PlaybackTiming::IMMEDIATE;
+	model.global.quantize = QuantizeMode::MEASURE;
+	Engine engine(model);
+	engine.restoreBoundPhrase(SlotId::ONE, 144, false);
+	engine.restoreBoundPhrase(SlotId::TWO, 48, false);
+	engine.centrePressed(SlotId::THREE, at(0), 0);
+	engine.startAll(at(20));
+	CHECK(engine.track(SlotId::ONE).state == TrackState::PLAYING);
+	CHECK(engine.track(SlotId::TWO).state == TrackState::PLAYING);
+	engine.stopAll(at(21));
+	CHECK(engine.track(SlotId::ONE).state == TrackState::STOPPED);
+	CHECK(engine.track(SlotId::TWO).state == TrackState::STOPPED);
+	CHECK(engine.track(SlotId::THREE).state == TrackState::RECORDING);
+}
+
+TEST(LoopStationState, SyncedGroupStopUsesOneBarForDifferentPhraseLengths) {
+	SongModel model;
+	model.global.quantize = QuantizeMode::OFF;
+	Engine engine(model);
+	engine.restoreBoundPhrase(SlotId::ONE, 144, true);
+	engine.restoreBoundPhrase(SlotId::TWO, 48, true);
+	engine.stopAll(at(20));
+	CHECK_EQUAL(96, engine.track(SlotId::ONE).event.tick);
+	CHECK_EQUAL(96, engine.track(SlotId::TWO).event.tick);
+	engine.processTick(at(48));
+	CHECK(engine.track(SlotId::TWO).state == TrackState::PLAYING);
+	engine.processTick(at(96));
+	CHECK(engine.track(SlotId::ONE).state == TrackState::STOPPED);
+	CHECK(engine.track(SlotId::TWO).state == TrackState::STOPPED);
+}
+
+TEST(LoopStationState, SyncedActionsOnBarBoundaryDoNotWaitAnExtraBar) {
+	SongModel model;
+	Engine engine(model);
+	engine.restoreBoundPhrase(SlotId::ONE, 144, false);
+	engine.centrePressed(SlotId::ONE, at(96), 1000);
+	CHECK(engine.track(SlotId::ONE).state == TrackState::PLAYING);
+	engine.centrePressed(SlotId::ONE, at(96), 2000);
+	engine.centrePressed(SlotId::ONE, at(96), 2100);
+	CHECK(engine.track(SlotId::ONE).state == TrackState::STOPPED);
+	CHECK_FALSE(engine.track(SlotId::ONE).event.pending());
+}
+
+TEST(LoopStationState, SyncedFadeStartsAtBarAndFinishesAfterConfiguredDuration) {
+	SongModel model;
+	model.tracks[0].settings.stopMode = StopMode::FADE;
+	model.tracks[0].settings.fadeTimeBars = 2;
+	Engine engine(model);
+	engine.restoreBoundPhrase(SlotId::ONE, 144, true);
+	engine.centrePressed(SlotId::ONE, at(10), 1000);
+	engine.centrePressed(SlotId::ONE, at(11), 1100);
+	CHECK_EQUAL(96, engine.track(SlotId::ONE).fadeStartTick);
+	CHECK_EQUAL(288, engine.track(SlotId::ONE).event.tick);
+	engine.processTick(at(95));
+	CHECK_EQUAL(1 << 24, engine.track(SlotId::ONE).playbackGain);
+	engine.processTick(at(192));
+	CHECK_EQUAL(1 << 23, engine.track(SlotId::ONE).playbackGain);
+	engine.processTick(at(288));
+	CHECK(engine.track(SlotId::ONE).state == TrackState::STOPPED);
+}
+
+TEST(LoopStationState, ImmediateResumeSupersedesQueuedSyncedResume) {
+	SongModel model;
+	Engine engine(model);
+	engine.restoreBoundPhrase(SlotId::ONE, 144, false);
+	engine.centrePressed(SlotId::ONE, at(20), 1000);
+	CHECK(engine.track(SlotId::ONE).event.pending());
+	model.global.startTiming = PlaybackTiming::IMMEDIATE;
+	model.global.stopTiming = PlaybackTiming::IMMEDIATE;
+	engine.centrePressed(SlotId::ONE, at(30), 2000);
+	CHECK(engine.track(SlotId::ONE).state == TrackState::PLAYING);
+	CHECK_FALSE(engine.track(SlotId::ONE).event.pending());
+}
+
+TEST(LoopStationState, StartFadeBeginsAtSelectedPlaybackBoundary) {
+	for (auto timing : {PlaybackTiming::IMMEDIATE, PlaybackTiming::SYNCED}) {
+		SongModel model;
+		model.global.startTiming = timing;
+		model.global.stopTiming = timing;
+		model.tracks[0].settings.startMode = StartMode::FADE;
+		Engine engine(model);
+		engine.restoreBoundPhrase(SlotId::ONE, 144, false);
+		engine.centrePressed(SlotId::ONE, at(20), 1000);
+		uint32_t start = timing == PlaybackTiming::IMMEDIATE ? 20 : 96;
+		engine.processTick(at(start));
+		CHECK(engine.track(SlotId::ONE).state == TrackState::PLAYING);
+		CHECK_EQUAL(start, engine.track(SlotId::ONE).fadeStartTick);
+		CHECK_EQUAL(0, engine.track(SlotId::ONE).playbackGain);
+		engine.processTick(at(start + 48));
+		CHECK_EQUAL(1 << 23, engine.track(SlotId::ONE).playbackGain);
+		engine.processTick(at(start + 96));
+		CHECK_EQUAL(1 << 24, engine.track(SlotId::ONE).playbackGain);
+	}
+}
+
+TEST(LoopStationState, InstantStopCancelsAnActiveStartFade) {
+	SongModel model;
+	model.global.startTiming = PlaybackTiming::IMMEDIATE;
+	model.global.stopTiming = PlaybackTiming::IMMEDIATE;
+	model.tracks[0].settings.startMode = StartMode::FADE;
+	Engine engine(model);
+	engine.restoreBoundPhrase(SlotId::ONE, 144, false);
+	engine.centrePressed(SlotId::ONE, at(20), 1000);
+	engine.processTick(at(30));
+	engine.stopAll(at(30));
+	CHECK(engine.track(SlotId::ONE).state == TrackState::STOPPED);
+	engine.processTick(at(60));
+	CHECK_EQUAL(0, engine.track(SlotId::ONE).playbackGain);
+}
+
+TEST(LoopStationState, MissingBarLengthDoesNotStrandPlaybackActions) {
+	SongModel model;
+	Engine engine(model);
+	engine.restoreBoundPhrase(SlotId::ONE, 144, false);
+	engine.centrePressed(SlotId::ONE, at(20, 0), 1000);
+	CHECK(engine.track(SlotId::ONE).state == TrackState::PLAYING);
+	engine.stopAll(at(21, 0));
+	CHECK(engine.track(SlotId::ONE).state == TrackState::STOPPED);
+}
+
 TEST_GROUP(LoopStationFanOut){};
+
+TEST(LoopStationState, SchedulerDelayUsesSchedulerOriginNotUiPosition) {
+	SongModel model;
+	Engine engine(model);
+	engine.restoreBoundPhrase(SlotId::ONE, 144, false);
+	engine.centrePressed(SlotId::ONE, at(20), 1000);
+	// Graphics/gesture clock is at 40; scheduler is still processing tick 24.
+	CHECK_EQUAL(72, serviceSchedulerTick(engine, at(40), 24, INT32_MAX));
+	CHECK(engine.track(SlotId::ONE).state == TrackState::STOPPED);
+	CHECK_EQUAL(96, engine.track(SlotId::ONE).event.tick);
+	// A separate metronome/clip event may wake earlier and must be preserved.
+	CHECK_EQUAL(4, serviceSchedulerTick(engine, at(40), 24, 4));
+}
+
+TEST(LoopStationState, SchedulerCatchupDoesNotExecuteQueuedStartOrStopEarly) {
+	for (bool stop : {false, true}) {
+		SongModel model;
+		Engine engine(model);
+		engine.restoreBoundPhrase(SlotId::ONE, 144, stop);
+		if (stop)
+			engine.stopAll(at(20));
+		else
+			engine.startAll(at(20));
+		// Wall/display time has passed 96, but this callback belongs to tick 24.
+		CHECK_EQUAL(72, serviceSchedulerTick(engine, at(100), 24, INT32_MAX));
+		CHECK(engine.track(SlotId::ONE).event.pending());
+		CHECK(engine.track(SlotId::ONE).state == (stop ? TrackState::PLAYING : TrackState::STOPPED));
+		serviceSchedulerTick(engine, at(100), 96, INT32_MAX);
+		CHECK_FALSE(engine.track(SlotId::ONE).event.pending());
+		CHECK(engine.track(SlotId::ONE).state == (stop ? TrackState::STOPPED : TrackState::PLAYING));
+	}
+}
+
+TEST(LoopStationState, FractionalBarBoundaryUsesFollowingBarForStartAndStop) {
+	for (bool stop : {false, true}) {
+		for (auto timing : {PlaybackTiming::SYNCED, PlaybackTiming::IMMEDIATE}) {
+			SongModel model;
+			model.global.startTiming = model.global.stopTiming = timing;
+			Engine engine(model);
+			engine.restoreBoundPhrase(SlotId::ONE, 144, stop);
+			auto gesture = at(96);
+			gesture.afterTickBoundary = true;
+			if (stop)
+				engine.stopAll(gesture);
+			else
+				engine.startAll(gesture);
+			if (timing == PlaybackTiming::SYNCED) {
+				CHECK_EQUAL(192, engine.track(SlotId::ONE).event.tick);
+				serviceSchedulerTick(engine, at(97), 97, INT32_MAX);
+				CHECK(engine.track(SlotId::ONE).event.pending());
+				serviceSchedulerTick(engine, at(192), 192, INT32_MAX);
+			}
+			CHECK(engine.track(SlotId::ONE).state == (stop ? TrackState::STOPPED : TrackState::PLAYING));
+		}
+	}
+}
+
+TEST(LoopStationState, SchedulerAdvancesFadeWithoutGraphics) {
+	SongModel model;
+	model.tracks[0].settings.stopMode = StopMode::FADE;
+	Engine engine(model);
+	engine.restoreBoundPhrase(SlotId::ONE, 144, true);
+	engine.stopAll(at(20));
+	CHECK_EQUAL(72, serviceSchedulerTick(engine, at(40), 24, INT32_MAX));
+	CHECK_EQUAL(1, serviceSchedulerTick(engine, at(96), 96, INT32_MAX));
+	CHECK_EQUAL(1, serviceSchedulerTick(engine, at(144), 144, INT32_MAX));
+	CHECK_EQUAL(1 << 23, engine.track(SlotId::ONE).playbackGain);
+	serviceSchedulerTick(engine, at(192), 192, INT32_MAX);
+	CHECK(engine.track(SlotId::ONE).state == TrackState::STOPPED);
+}
+
+TEST(LoopStationState, SchedulerWakesForOneShotWithoutGraphics) {
+	SongModel model;
+	model.tracks[0].settings.playback = PlaybackMode::ONE_SHOT;
+	Engine engine(model);
+	engine.restoreBoundPhrase(SlotId::ONE, 144, true);
+	CHECK_EQUAL(120, serviceSchedulerTick(engine, at(40), 24, INT32_MAX));
+	serviceSchedulerTick(engine, at(144), 144, INT32_MAX);
+	CHECK(engine.track(SlotId::ONE).state == TrackState::STOPPED);
+}
+
+TEST(LoopStationState, SchedulerIgnoresCommittingDeadlinesAndDoesNotSpin) {
+	SongModel model;
+	Engine engine(model);
+	engine.restoreBoundPhrase(SlotId::ONE, 144, true);
+	engine.track(SlotId::ONE).state = TrackState::COMMITTING;
+	engine.track(SlotId::ONE).event = {.action = PendingAction::STOP, .tick = 20};
+	CHECK_EQUAL(INT32_MAX, serviceSchedulerTick(engine, at(40), 24, INT32_MAX));
+}
+
+TEST(LoopStationState, SchedulerCatchupDoesNotUnderflowImmediateOneShotStart) {
+	SongModel model;
+	model.global.startTiming = PlaybackTiming::IMMEDIATE;
+	model.tracks[0].settings.playback = PlaybackMode::ONE_SHOT;
+	Engine engine(model);
+	engine.restoreBoundPhrase(SlotId::ONE, 144, false);
+	engine.startAll(at(40));
+	CHECK_EQUAL(160, serviceSchedulerTick(engine, at(40), 24, INT32_MAX));
+	CHECK(engine.track(SlotId::ONE).state == TrackState::PLAYING);
+	serviceSchedulerTick(engine, at(184), 184, INT32_MAX);
+	CHECK(engine.track(SlotId::ONE).state == TrackState::STOPPED);
+}
+
+TEST(LoopStationState, SchedulerTimingCombinationsAcrossBarResolutions) {
+	for (uint32_t bar : {24u, 96u, 384u}) {
+		for (auto start : {PlaybackTiming::SYNCED, PlaybackTiming::IMMEDIATE}) {
+			for (auto stop : {PlaybackTiming::SYNCED, PlaybackTiming::IMMEDIATE}) {
+				SongModel model;
+				model.global.startTiming = start;
+				model.global.stopTiming = stop;
+				Engine engine(model);
+				engine.restoreBoundPhrase(SlotId::ONE, bar * 3 / 2, false);
+				engine.centrePressed(SlotId::ONE, at(bar / 4, bar), 1000);
+				serviceSchedulerTick(engine, at(bar + 1, bar), bar / 2, INT32_MAX);
+				CHECK(engine.track(SlotId::ONE).state
+				      == (start == PlaybackTiming::SYNCED ? TrackState::STOPPED : TrackState::PLAYING));
+				serviceSchedulerTick(engine, at(bar + 1, bar), bar, INT32_MAX);
+				engine.centrePressed(SlotId::ONE, at(bar + 2, bar), 2000);
+				engine.centrePressed(SlotId::ONE, at(bar + 3, bar), 2100);
+				serviceSchedulerTick(engine, at(bar * 2 + 1, bar), bar + 4, INT32_MAX);
+				CHECK(engine.track(SlotId::ONE).state
+				      == (stop == PlaybackTiming::SYNCED ? TrackState::PLAYING : TrackState::STOPPED));
+				serviceSchedulerTick(engine, at(bar * 2 + 1, bar), bar * 2, INT32_MAX);
+				CHECK(engine.track(SlotId::ONE).state == TrackState::STOPPED);
+			}
+		}
+	}
+}
 
 TEST(LoopStationFanOut, SharedSourceRendersOnceAndMonitoringDeduplicates) {
 	FanOutRouter router;

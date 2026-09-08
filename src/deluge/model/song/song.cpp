@@ -1692,6 +1692,8 @@ weAreInArrangementEditorOrInClipInstance:
 	writer.writeAttribute("recordAction", util::to_underlying(loopStation.global.recordAction));
 	writer.writeAttribute("quantize", util::to_underlying(loopStation.global.quantize));
 	writer.writeAttribute("startFromStopped", util::to_underlying(loopStation.global.startFromStopped));
+	writer.writeAttribute("startTiming", util::to_underlying(loopStation.global.startTiming));
+	writer.writeAttribute("stopTiming", util::to_underlying(loopStation.global.stopTiming));
 	writer.writeAttribute("dimBorderColour", util::to_underlying(loopStation.global.dimBorderColour));
 	writer.writeOpeningTagEnd();
 	writer.writeArrayStart("tracks");
@@ -2235,6 +2237,9 @@ unknownTag:
 
 			else if (!strcmp(tagName, "loopStation")) {
 				using namespace deluge::loop_station;
+				PlaybackTiming legacyTiming = PlaybackTiming::SYNCED;
+				bool hasStartTiming = false;
+				bool hasStopTiming = false;
 				reader.match('{');
 				while (*(tagName = reader.readNextTagOrAttributeName())) {
 					if (!strcmp(tagName, "recordAction")) {
@@ -2249,6 +2254,24 @@ unknownTag:
 					else if (!strcmp(tagName, "startFromStopped")) {
 						loopStation.global.startFromStopped =
 						    static_cast<StartFromStopped>(reader.readTagOrAttributeValueInt());
+						reader.exitTag(tagName);
+					}
+					else if (!strcmp(tagName, "playbackTiming")) {
+						legacyTiming = clampEnum<PlaybackTiming, PlaybackTiming::IMMEDIATE>(
+						    static_cast<uint32_t>(reader.readTagOrAttributeValueInt()), PlaybackTiming::SYNCED);
+						reader.exitTag(tagName);
+					}
+					else if (!strcmp(tagName, "startTiming") || !strcmp(tagName, "stopTiming")) {
+						auto timing = clampEnum<PlaybackTiming, PlaybackTiming::IMMEDIATE>(
+						    static_cast<uint32_t>(reader.readTagOrAttributeValueInt()), PlaybackTiming::SYNCED);
+						if (!strcmp(tagName, "startTiming")) {
+							loopStation.global.startTiming = timing;
+							hasStartTiming = true;
+						}
+						else {
+							loopStation.global.stopTiming = timing;
+							hasStopTiming = true;
+						}
 						reader.exitTag(tagName);
 					}
 					else if (!strcmp(tagName, "dimBorderColour")) {
@@ -2355,6 +2378,13 @@ unknownTag:
 					}
 				}
 				reader.exitTag("loopStation", true);
+				// Explicit per-action values win over the legacy field, regardless of attribute order.
+				if (!hasStartTiming) {
+					loopStation.global.startTiming = legacyTiming;
+				}
+				if (!hasStopTiming) {
+					loopStation.global.stopTiming = legacyTiming;
+				}
 				loopStation.sanitize();
 			}
 

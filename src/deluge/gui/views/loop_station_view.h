@@ -56,6 +56,7 @@ private:
 	AudioClip* ensureBackingClip(deluge::loop_station::SlotId slot);
 	void clearBackingClip(deluge::loop_station::SlotId slot);
 	void processPendingCommits();
+	void serviceBackgroundWork();
 	void resumeCommittedClip(deluge::loop_station::SlotId slot);
 	RGB palette(deluge::loop_station::PadColour colour) const;
 	RGB destinationColour(deluge::loop_station::PendingAction action) const;

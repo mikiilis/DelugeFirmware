@@ -34,12 +34,12 @@ If the first recording gesture is made while playback is stopped, Session playba
 
 The 16×8 main matrix contains two rows of four tracks:
 
-| Matrix area            | Tracks     |
-| ---------------------- | ---------- |
-| Columns 0–15, rows 0–3 | 1, 2, 3, 4 |
-| Columns 0–15, rows 4–7 | 5, 6, 7, 8 |
+| Matrix area                     | Tracks     |
+| ------------------------------- | ---------- |
+| Physical top half (rows 4–7)    | 1, 2, 3, 4 |
+| Physical bottom half (rows 0–3) | 5, 6, 7, 8 |
 
-Each track uses a 4×4 cell. Its twelve outside pads form a clockwise progress border beginning at the top-left. The four pads in the 2×2 centre are one logical button; pressing more than one centre pad at once still produces only one gesture. The two sidebar columns are unused.
+Each track uses a 4×4 cell. Its twelve outside pads form a clockwise progress border beginning at the top-left. The four pads in the 2×2 centre are one logical button; pressing more than one centre pad at once still produces only one gesture. The sidebar includes Start All / Stop All controls.
 
 Press any border pad to select that track; its complete border brightens while selected. If the slot is unused, this
 creates its backing Audio Clip so Monitoring can become audible immediately. Press a border pad on the same track again
@@ -53,18 +53,21 @@ selects the track nor enables its monitor.
 | ----------------------------------- | ---------------------------------------------------------------------- |
 | Centre, empty track                 | Start or queue an initial recording                                    |
 | Centre, recording                   | Finish recording and follow the configured record action               |
+| Centre, stopped loop                | Start playback using the configured Start Timing                       |
 | Centre, playing loop                | Start overdubbing immediately; one-shot retriggers instead             |
 | Centre, overdubbing                 | Return to Play immediately and complete the untouched remainder safely |
 | Double-tap centre                   | Stop the phrase; a provisional overdub is aborted                      |
 | Hold stopped centre for two seconds | Clear the phrase and its revision history, retaining the slot settings |
 | Any border pad                      | Select that track; press its border again to deselect                  |
 | :key[Shift] + centre                | Create the backing clip if needed and open the track-settings menu     |
-| :key[Back]                          | Move the selected loop to the previous revision                         |
-| :key[Shift] + :key[Back]            | Move the selected loop to the next revision                             |
-| :key[Shift] + :key[Tap Tempo]       | Toggle the metronome                                                    |
+| :key[Back]                          | Move the selected loop to the previous revision                        |
+| :key[Shift] + :key[Back]            | Move the selected loop to the next revision                            |
+| :key[Shift] + :key[Tap Tempo]       | Toggle the metronome                                                   |
 | Press :key[Select]                  | Open the song-level Loop Station settings menu                         |
+| Top-left sidebar pad (green)        | Start All eligible stopped loops using Start Timing                    |
+| Top-right sidebar pad (red)         | Stop All eligible playing loops using Stop Timing                      |
 
-The song menu contains Record Action, Record Quantize, and Start From Stopped. The track menu contains physical source,
+The song menu contains Record Action, Record Quantize, Start Timing, Stop Timing, and Restart Behavior. The track menu contains physical source,
 monitoring, duration, progress colour, playback and synchronization behavior, start/stop/fade behavior, and the normal
 Audio Clip actions, source, master, compressor, filters, sidechain, sample, attack, and priority controls. Overdub is
 always additive: there are no Replace or Feedback modes. `FX` appears once and directly opens that loop track's EQ,
@@ -73,6 +76,94 @@ are independent per track.
 
 Border selection also targets that loop with the normal quick-FX buttons and gold modulation encoders. Deselecting the
 loop returns those controls to the song.
+
+## Configuration reference
+
+### Song settings
+
+Press :key[Select] while in Loop Station. Turn it to choose a setting, press it to open the setting,
+and turn it to change the value. Use :key[Back] to return. These settings belong to the current song;
+save the song to retain them.
+
+| Setting          | Choices                            | Default          | What it controls                                                                                                                                                  |
+| ---------------- | ---------------------------------- | ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Record Action    | REC > PLAY > DUB; REC > DUB > PLAY | REC > PLAY > DUB | Whether the initial recording leads to playback or automatically starts an overdub after the first WAV finishes committing.                                       |
+| Record Quantize  | Off; Smart; Measure                | Smart            | Initial recording start/end timing. Does not control playback starts/stops or overdub duration.                                                                   |
+| Start Timing     | Synced; Immediate                  | Synced           | When a stopped loop starts, including Start All. Synced waits for a song bar boundary; Immediate has no musical wait.                                             |
+| Stop Timing      | Synced; Immediate                  | Synced           | When a playing loop stops or begins its stop fade, including Stop All. Independent of Start Timing.                                                               |
+| Restart Behavior | Resume Phase; From Start           | Resume Phase     | Where playback resumes, not when. Resume Phase follows song phase with Loop Sync on or the saved sample position with Loop Sync off. From Start restarts at zero. |
+
+The device-wide **Enable Loop Station** switch is separate from these song settings and defaults to Off.
+On seven-segment displays, Start Timing is `STRT`, Stop Timing is `STPT`, and Restart Behavior is `RSTR`.
+
+### Track settings
+
+Hold :key[Shift] and press a track's centre to open its settings. This does not select the track for monitoring;
+use a border press for that. Each slot has its own settings, which are retained when its phrase is cleared.
+
+| Setting          | Choices / range                                                              | Default                   | What it controls                                                                                                                                                                                                                                            |
+| ---------------- | ---------------------------------------------------------------------------- | ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Audio Source     | Left; Right; Stereo; Balanced                                                | Left                      | Physical input used for this track's recording and monitoring. Balanced is the balanced-input mode, not stereo capture.                                                                                                                                     |
+| Monitoring       | Off; On                                                                      | On                        | Whether live physical input is audible through the selected idle track or an active capture. Turning it off does not disable recording input.                                                                                                               |
+| Record Duration  | Off; positive whole bars                                                     | Off                       | Off means manually end the initial take. A positive value automatically finishes it after that many bars. Maximum is 65,535 bars, reduced if necessary by the current song's maximum sequence length. Does not change an existing phrase or overdub length. |
+| Progress Colour  | Gold; Yellow; Lime; Turquoise; Cyan; Sky; Blue; Purple; Magenta; Pink; White | By slot, below            | Colour of the playing progress ring and stopped border. State colours remain reserved.                                                                                                                                                                      |
+| Playback         | Loop; One Shot                                                               | Loop                      | Loop repeats and supports overdubs. One Shot plays one phrase and stops; it does not overdub.                                                                                                                                                               |
+| Loop Sync        | Off; On                                                                      | On                        | On follows tempo through time-stretching. Off plays at recorded speed. This does not bypass Start Timing or Stop Timing.                                                                                                                                    |
+| Start Transition | Instant; Fade                                                                | Instant                   | Abrupt start or fade-in, beginning at the Start Timing boundary.                                                                                                                                                                                            |
+| Stop Transition  | Instant; Fade                                                                | Instant                   | Abrupt stop or fade-out beginning at the Stop Timing boundary.                                                                                                                                                                                              |
+| Fade Time        | 1–64 bars                                                                    | 1 bar                     | Shared length of start and stop fades. Shown only when at least one transition is Fade.                                                                                                                                                                     |
+| Transpose        | −24.50 to +24.50 semitones, in 0.01 steps                                    | 0.00                      | Live pre-FX pitch shift of loop playback and audible monitoring. Initial takes and overdubs remain dry and untransposed.                                                                                                                                    |
+| Copy To Track    | Any of the other seven tracks                                                | No action until confirmed | Copies the Loop Station track configuration, not audio or FX. Choose a destination and press Select to confirm.                                                                                                                                             |
+
+Default progress colours for tracks 1–8 are **Yellow, Cyan, Blue, Purple, Magenta, White, Gold, Lime**.
+There are no user-configurable tap thresholds, Replace/Feedback overdub modes, internal-source selectors,
+Source Track selector, or Dim Border Colour entry in the current Loop Station menus.
+
+### Backing Audio Clip controls
+
+The remainder of Track Settings exposes the ordinary controls of that slot's backing Audio Clip and Audio Output.
+They are independent per track and saved through the normal song data; they are not extra Loop Station timing settings.
+
+| Entry      | Available controls / purpose                                                                                   |
+| ---------- | -------------------------------------------------------------------------------------------------------------- |
+| Actions    | Edit track/clip names; set clip length equal to sample length.                                                 |
+| Master     | Level and pan.                                                                                                 |
+| Compressor | Threshold, ratio, blend, attack, release, and sidechain high-pass filter.                                      |
+| Filters    | Low-pass filter, high-pass filter, and filter routing.                                                         |
+| FX         | EQ, delay, reverb, stutter, modulation FX, and distortion (saturation, bitcrush, sample-rate reduction).       |
+| Sidechain  | Volume ducking, sync, shape, attack, and release.                                                              |
+| Sample     | File selection, ordinary sample transpose, reverse, pitch/speed behavior, waveform markers, and interpolation. |
+| Attack     | Audio Clip attack envelope. Separate from the bar-length Start Transition fade.                                |
+| Priority   | Normal voice priority under resource pressure.                                                                 |
+
+These entries retain ordinary Audio Clip behavior, including contextual availability. The Sample menu's transpose
+is a separate clip parameter from Loop Station's live Transpose. Replacing a sample or editing clip length is an audio
+edit, not a playback-timing option; save a copy of the song before changing a loop's backing audio.
+
+### Copy configuration safely
+
+Open the source track's settings, choose **Copy To Track**, select the destination, then press :key[Select].
+Rotating through destinations does not copy anything. The destination receives all settings in the Loop Station
+track-settings table above, including transpose and progress colour, except that Copy To Track itself is an action.
+
+The destination keeps its recorded audio, name, revision history, playback state, and FX chain. Song-wide timing and
+recording settings are not copied. An unused destination may receive its empty backing clip. A destination currently
+recording, overdubbing, completing an overdub in the background, or committing rejects the operation as busy.
+
+### Common timing configurations
+
+Single tap to start a stopped loop and double-tap to stop stay the same in every configuration:
+
+| Desired behavior                          | Start Timing | Stop Timing |
+| ----------------------------------------- | ------------ | ----------- |
+| Start and stop without a musical wait     | Immediate    | Immediate   |
+| Start and stop together with the bar grid | Synced       | Synced      |
+| Start now, finish on a bar                | Immediate    | Synced      |
+| Enter on a bar, cut playback now          | Synced       | Immediate   |
+
+For abrupt starts/stops, also use **Instant** for both track transitions. If Fade is selected, Immediate means
+the fade begins now, not that it is skipped. Choose **From Start** to restart the phrase at zero, or **Resume Phase**
+to keep its phase behavior; neither changes the chosen action time. Record Quantize remains independent.
 
 ## Pad states
 
@@ -92,7 +183,7 @@ increase upward; playing progress therefore begins at the top-left border pad, p
 fade between dim and bright, peaking exactly on each song beat. The animation therefore follows tempo changes and
 external sync rather than advancing from wall-clock time.
 
-Progress colour offers yellow, cyan, blue, purple, magenta, and white. Green, red, and orange are reserved for Play,
+Progress colour offers the eleven choices listed above. Green, red, and orange are reserved for Play,
 Record, and Overdub, so old or malformed settings using those colours are replaced with that slot's deterministic
 default.
 
@@ -125,12 +216,43 @@ after one pass and cannot enter overdub.
 
 The two record actions are `REC > DUB > PLAY` and `REC > PLAY > DUB`. `REC > PLAY > DUB` is the default.
 
-With Loop Sync on, a tempo change time-stretches the phrase while retaining its musical length and song phase. With
-Loop Sync off, the WAV loops at its recorded speed independently of later tempo changes. Start From Stopped can either
-resume on the next bar (`RESUME QUANTIZED`) or retrigger immediately from phase zero (`FROM START`); an unsynced resume
-continues immediately from its saved sample position. Start and Stop Fade durations are measured in bars.
+Start Timing and Stop Timing control existing loops separately, independently of Record Quantize. Each offers:
+
+Synced actions follow the musical scheduler rather than the display refresh. A tap just after a bar line waits for the
+following bar; only an action exactly on the boundary executes there. Starting a stopped transport at tick zero remains
+an eligible boundary.
+
+- `IMMEDIATE`: a single stopped-loop tap starts playback without a musical wait; a double tap stops without waiting for a bar or phrase end.
+- `SYNCED` (default): those same gestures schedule playback start/stop at the next song bar boundary. An action already on a bar boundary executes there, without waiting an extra bar. Different-length loops use the same bar grid, not their individual phrase ends.
+
+The right-hand Start All / Stop All buttons use the respective Start Timing and Stop Timing settings. Active captures and pending commits
+retain their existing safety rules; these settings do not change recording or overdub duration.
+
+Restart Behavior chooses the playback position, not the action time: `RESUME PHASE` rejoins song phase with Loop Sync
+on, or continues from the saved sample position with Loop Sync off; `FROM START` restarts at phase zero. One-shots always
+restart from phase zero. With Loop Sync on, a tempo change time-stretches the phrase; with it off, the WAV plays at its
+recorded speed. Neither choice overrides Start Timing or Stop Timing.
+
+Per-track Start Transition and Stop Transition offer `INSTANT` or `FADE`. An explicit fade begins at the selected action
+time and lasts the configured number of bars. Choose Instant for an abrupt start/stop. The former Start From Stopped and
+Start Mode labels are now Restart Behavior and Start Transition; Stop Mode is now Stop Transition. Legacy Loop End stop
+values are treated as Instant transitions because Stop Timing now controls the stop boundary.
+
+Tap gestures are unchanged: one tap starts a stopped loop, two taps stop a playing loop, and a two-second hold on a
+stopped centre clears it. To preserve hold-to-clear, stopped-loop taps still dispatch on pad release. The new timing
+choice removes or adds the musical wait; it does not change press/release detection.
+
+Start Timing and Stop Timing are saved separately in the song's Loop Station metadata (`startTiming` and `stopTiming`:
+0 = Synced, 1 = Immediate). This allows immediate starts with synced stops, or the reverse. Older songs with a shared
+`playbackTiming` value apply it to both settings; explicit separate values take precedence. Missing timing values default
+to Synced. Existing restart-position and fade settings are retained. The legacy XML attribute
+names `startFromStopped`, `startMode`, and `stopMode` remain readable.
 
 ## Song and clip data
+
+Save the song to retain configuration and revision history. There is no separate per-song Loop Station settings file:
+song XML contains the settings and bindings, ordinary WAV files contain the audio, and only the device-wide enable
+switch lives in `SETTINGS/CommunityFeatures.XML`.
 
 Each used slot is backed by an ordinary Session Audio Clip and its own Audio Output. The clip is created lazily on the first recording or settings gesture and receives a stable slot ID from 1 through 8. This lets clips remain usable in Session and Arrangement views.
 
@@ -152,7 +274,10 @@ only the affected slot.
 
 ## Current limitations
 
+If a slot enters the blinking red Error state, the next centre press acknowledges it; it does not also start a new
+action. Other slots remain usable. Wait for active commits before attempting another take on the affected slot.
+
 - Initial takes use the normal `SampleRecorder` and SD streaming path. The dedicated eight-way shared-source fan-out is not yet connected.
-- Overdubs use a dedicated pre-FX dry tap. The old loop is copied at unity and physical input is added with saturation only while Overdub is active, even when the audible Monitoring return is Off; silence therefore preserves earlier layers, and track FX, level, pan, compression, and normalization do not enter the cumulative WAV.
+- Overdubs use a dedicated pre-FX dry tap. The old loop is copied at unity and physical input is added with saturation throughout the full overdub pass, including background completion after returning to Play, even when audible Monitoring is Off. Silence preserves earlier layers; track FX, level, pan, compression, and normalization do not enter the cumulative WAV.
 - Persistent history retains one ordinary WAV per completed revision and is limited by available SD-card space and metadata memory rather than a fixed take count.
 - Hardware acceptance testing for eight simultaneous recordings, external clock, OLED, and seven-segment displays is required for a release build.

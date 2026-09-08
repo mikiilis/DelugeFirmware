@@ -55,6 +55,10 @@ void SongModel::sanitize() {
 	    clampEnum<QuantizeMode, QuantizeMode::MEASURE>(static_cast<uint32_t>(global.quantize), QuantizeMode::SMART);
 	global.startFromStopped = clampEnum<StartFromStopped, StartFromStopped::FROM_START>(
 	    static_cast<uint32_t>(global.startFromStopped), StartFromStopped::RESUME_QUANTIZED);
+	global.startTiming = clampEnum<PlaybackTiming, PlaybackTiming::IMMEDIATE>(static_cast<uint32_t>(global.startTiming),
+	                                                                          PlaybackTiming::SYNCED);
+	global.stopTiming = clampEnum<PlaybackTiming, PlaybackTiming::IMMEDIATE>(static_cast<uint32_t>(global.stopTiming),
+	                                                                         PlaybackTiming::SYNCED);
 	global.dimBorderColour =
 	    clampEnum<PadColour, PadColour::WHITE>(static_cast<uint32_t>(global.dimBorderColour), PadColour::BLUE);
 	for (size_t i = 0; i < tracks.size(); ++i) {
@@ -82,6 +86,10 @@ int32_t readGlobalParameter(SongModel const& model, GlobalParameter parameter) {
 		return static_cast<int32_t>(model.global.quantize);
 	case GlobalParameter::START_FROM_STOPPED:
 		return static_cast<int32_t>(model.global.startFromStopped);
+	case GlobalParameter::START_TIMING:
+		return static_cast<int32_t>(model.global.startTiming);
+	case GlobalParameter::STOP_TIMING:
+		return static_cast<int32_t>(model.global.stopTiming);
 	case GlobalParameter::DIM_BORDER_COLOUR:
 		return static_cast<int32_t>(model.global.dimBorderColour);
 	}
@@ -105,6 +113,14 @@ void writeGlobalParameter(SongModel& model, GlobalParameter parameter, int32_t v
 	case GlobalParameter::DIM_BORDER_COLOUR:
 		model.global.dimBorderColour =
 		    clampEnum<PadColour, PadColour::WHITE>(static_cast<uint32_t>(value), PadColour::BLUE);
+		break;
+	case GlobalParameter::START_TIMING:
+		model.global.startTiming =
+		    clampEnum<PlaybackTiming, PlaybackTiming::IMMEDIATE>(static_cast<uint32_t>(value), PlaybackTiming::SYNCED);
+		break;
+	case GlobalParameter::STOP_TIMING:
+		model.global.stopTiming =
+		    clampEnum<PlaybackTiming, PlaybackTiming::IMMEDIATE>(static_cast<uint32_t>(value), PlaybackTiming::SYNCED);
 		break;
 	}
 }
@@ -270,7 +286,7 @@ void Engine::centrePressed(SlotId slot, Transport const& transport, uint32_t ges
 		}
 		runtime.event = {};
 		transition(slot, TrackState::PLAYING);
-		stop(slot, transport.tick);
+		stop(slot, transport);
 		return;
 	}
 
@@ -304,7 +320,7 @@ void Engine::centrePressed(SlotId slot, Transport const& transport, uint32_t ges
 	}
 	case TrackState::PLAYING:
 		if (doubleTap) {
-			stop(slot, transport.tick);
+			stop(slot, transport);
 		}
 		else if (settings.playback == PlaybackMode::ONE_SHOT) {
 			runtime.playbackStartTick = transport.tick;
@@ -322,7 +338,7 @@ void Engine::centrePressed(SlotId slot, Transport const& transport, uint32_t ges
 			if (delegate_) {
 				delegate_->abortCapture(slot, true);
 			}
-			stop(slot, transport.tick);
+			stop(slot, transport);
 		}
 		else {
 			// Press center to stop overdub early - return to PLAY immediately,
@@ -333,23 +349,19 @@ void Engine::centrePressed(SlotId slot, Transport const& transport, uint32_t ges
 			}
 		}
 		break;
-	case TrackState::STOPPED:
-		if (settings.playback == PlaybackMode::ONE_SHOT
-		    || model_.global.startFromStopped == StartFromStopped::FROM_START) {
-			beginPlayback(slot, transport, true);
-		}
-		else if (!settings.loopSync) {
-			runtime.playbackStartTick = transport.tick - runtime.savedStopPhase;
-			beginPlayback(slot, transport, false);
+	case TrackState::STOPPED: {
+		uint32_t target = playbackActionTick(transport, model_.global.startTiming);
+		bool fromStart = settings.playback == PlaybackMode::ONE_SHOT
+		                 || model_.global.startFromStopped == StartFromStopped::FROM_START;
+		auto action = fromStart ? PendingAction::RETRIGGER : PendingAction::RESUME;
+		if (target == transport.tick) {
+			execute(slot, action, transport, target);
 		}
 		else {
-			uint32_t target = quantizedStart(QuantizeMode::MEASURE, transport.tick, transport.barLength);
-			if (target == transport.tick)
-				beginPlayback(slot, transport, false);
-			else
-				schedule(slot, PendingAction::RESUME, target, target);
+			schedule(slot, action, target, target);
 		}
 		break;
+	}
 	case TrackState::COMMITTING:
 	case TrackState::ERROR:
 		break;
@@ -375,7 +387,7 @@ void Engine::execute(SlotId slot, PendingAction action, Transport const& transpo
 		finishCapture(slot, true, transport.tick, requestedTick);
 		break;
 	case PendingAction::STOP:
-		stop(slot, transport.tick, true);
+		stop(slot, transport, true);
 		break;
 	case PendingAction::RETRIGGER:
 		beginPlayback(slot, transport, true);
@@ -389,7 +401,7 @@ void Engine::execute(SlotId slot, PendingAction action, Transport const& transpo
 }
 
 void Engine::startAll(Transport const& transport) {
-	uint32_t target = quantizedStart(model_.global.quantize, transport.tick, transport.barLength);
+	uint32_t target = playbackActionTick(transport, model_.global.startTiming);
 	for (size_t i = 0; i < runtime_.size(); ++i) {
 		auto slot = static_cast<SlotId>(i);
 		auto& runtime = runtime_[i];
@@ -400,9 +412,6 @@ void Engine::startAll(Transport const& transport) {
 		auto const& settings = model_.tracks[i].settings;
 		bool fromStart = settings.playback == PlaybackMode::ONE_SHOT
 		                 || model_.global.startFromStopped == StartFromStopped::FROM_START;
-		if (!fromStart && !settings.loopSync) {
-			runtime.playbackStartTick = target - runtime.savedStopPhase;
-		}
 		auto action = fromStart ? PendingAction::RETRIGGER : PendingAction::RESUME;
 		if (target == transport.tick) {
 			execute(slot, action, transport, target);
@@ -414,10 +423,6 @@ void Engine::startAll(Transport const& transport) {
 }
 
 void Engine::stopAll(Transport const& transport) {
-	uint32_t target = transport.tick;
-	if (model_.global.quantize == QuantizeMode::MEASURE) {
-		target = quantizedStart(QuantizeMode::MEASURE, transport.tick + 1, transport.barLength);
-	}
 	for (size_t i = 0; i < runtime_.size(); ++i) {
 		auto slot = static_cast<SlotId>(i);
 		auto& runtime = runtime_[i];
@@ -426,12 +431,7 @@ void Engine::stopAll(Transport const& transport) {
 		if (runtime.state != TrackState::PLAYING || runtime.finishingOverdub || runtime.event.pending()) {
 			continue;
 		}
-		if (target == transport.tick) {
-			stop(slot, target, true);
-		}
-		else {
-			schedule(slot, PendingAction::STOP, target, target);
-		}
+		stop(slot, transport);
 	}
 }
 
@@ -570,26 +570,38 @@ void Engine::setOverdubEnd(TrackRuntime& runtime, uint32_t tick) {
 	runtime.overdubEndTick = static_cast<uint32_t>(std::min<uint64_t>(end, std::numeric_limits<uint32_t>::max()));
 }
 
-void Engine::stop(SlotId slot, uint32_t tick, bool forceImmediate) {
+uint32_t Engine::playbackActionTick(Transport const& transport, PlaybackTiming timing) {
+	if (timing == PlaybackTiming::IMMEDIATE || transport.barLength == 0) {
+		return transport.tick;
+	}
+	uint64_t tick = static_cast<uint64_t>(transport.tick) + transport.afterTickBoundary;
+	uint64_t bar = transport.barLength;
+	uint64_t target = ((tick + bar - 1) / bar) * bar;
+	return static_cast<uint32_t>(std::min<uint64_t>(target, std::numeric_limits<uint32_t>::max()));
+}
+
+void Engine::stop(SlotId slot, Transport const& transport, bool forceImmediate) {
+	uint32_t tick = transport.tick;
 	auto& runtime = track(slot);
 	if (runtime.finishingCapture) {
 		return;
 	}
 	auto const& settings = model_.tracks[indexOf(slot)].settings;
 	if (!forceImmediate && runtime.state == TrackState::PLAYING && runtime.phraseLength != 0) {
-		if (settings.stopMode == StopMode::LOOP_END) {
-			uint32_t phase = loopPhaseAt(tick, runtime.playbackStartTick, runtime.phraseLength);
-			uint32_t remaining = phase == 0 ? runtime.phraseLength : runtime.phraseLength - phase;
-			schedule(slot, PendingAction::STOP, tick + remaining, tick + remaining);
-			return;
-		}
+		uint32_t target = playbackActionTick(transport, model_.global.stopTiming);
 		if (settings.stopMode == StopMode::FADE) {
-			runtime.fadeStartTick = tick;
-			runtime.fadeEndTick = tick + settings.fadeTimeBars;
-			// processTick expands the bar-relative endpoint using the live bar length.
+			runtime.fadeStartTick = target;
+			runtime.fadeEndTick =
+			    target + std::max<uint32_t>(1, settings.fadeTimeBars) * std::max<uint32_t>(1, transport.barLength);
 			runtime.fadeStartGain = runtime.playbackGain;
 			runtime.fadeEndGain = 0;
-			runtime.event = {.action = PendingAction::STOP, .tick = 0, .requestedTick = tick};
+			schedule(slot, PendingAction::STOP, runtime.fadeEndTick, target);
+			return;
+		}
+		// Legacy LOOP_END and IMMEDIATE values both mean an instant transition.
+		// The global playback timing now owns the bar-boundary decision.
+		if (target > tick) {
+			schedule(slot, PendingAction::STOP, target, target);
 			return;
 		}
 	}
@@ -598,6 +610,7 @@ void Engine::stop(SlotId slot, uint32_t tick, bool forceImmediate) {
 		runtime.savedStopPhase = delegate_->playbackPhase(slot, runtime.savedStopPhase);
 	}
 	runtime.event = {};
+	runtime.fadeStartTick = runtime.fadeEndTick = 0;
 	runtime.overdubEndTick = 0;
 	if (runtime.state == TrackState::RECORDING || runtime.state == TrackState::OVERDUBBING) {
 		finishCapture(slot, runtime.state == TrackState::OVERDUBBING, tick, tick);
@@ -618,8 +631,12 @@ void Engine::stop(SlotId slot, uint32_t tick, bool forceImmediate) {
 void Engine::beginPlayback(SlotId slot, Transport const& transport, bool fromStart) {
 	auto& runtime = track(slot);
 	auto const& settings = model_.tracks[indexOf(slot)].settings;
+	// A new action supersedes any previously queued resume/stop.
+	runtime.event = {};
 	if (fromStart)
 		runtime.playbackStartTick = transport.tick;
+	else if (!settings.loopSync)
+		runtime.playbackStartTick = transport.tick - runtime.savedStopPhase;
 	if (settings.startMode == StartMode::FADE) {
 		setPlaybackGain(slot, 0, true);
 		runtime.fadeStartGain = 0;
@@ -673,11 +690,6 @@ void Engine::processTick(Transport const& transport) {
 		if (runtime.finishingCapture || runtime.state == TrackState::COMMITTING) {
 			continue;
 		}
-		if (runtime.event.action == PendingAction::STOP && runtime.event.tick == 0) {
-			auto bars = std::max<uint32_t>(1, model_.tracks[i].settings.fadeTimeBars);
-			runtime.fadeEndTick = runtime.event.requestedTick + bars * std::max<uint32_t>(1, transport.barLength);
-			runtime.event.tick = runtime.fadeEndTick;
-		}
 		updateFade(slot, transport.tick);
 		if (runtime.event.pending() && transport.tick >= runtime.event.tick) {
 			auto event = runtime.event;
@@ -709,7 +721,8 @@ void Engine::processTick(Transport const& transport) {
 		}
 
 		if (runtime.state == TrackState::PLAYING && settings.playback == PlaybackMode::ONE_SHOT
-		    && runtime.phraseLength != 0 && transport.tick - runtime.playbackStartTick >= runtime.phraseLength) {
+		    && runtime.phraseLength != 0 && transport.tick >= runtime.playbackStartTick
+		    && transport.tick - runtime.playbackStartTick >= runtime.phraseLength) {
 			transition(slot, TrackState::STOPPED);
 		}
 	}
@@ -778,7 +791,20 @@ bool Engine::anyCapturing() const {
 
 uint32_t Engine::ticksUntilNextEvent(uint32_t currentTick) const {
 	uint32_t result = std::numeric_limits<uint32_t>::max();
-	for (auto const& runtime : runtime_) {
+	for (size_t i = 0; i < runtime_.size(); ++i) {
+		auto const& runtime = runtime_[i];
+		if (runtime.finishingCapture || runtime.state == TrackState::COMMITTING) {
+			continue;
+		}
+		// Fades must advance without relying on the graphics refresh cadence.
+		if (runtime.fadeEndTick > runtime.fadeStartTick) {
+			result = std::min(result, runtime.fadeStartTick > currentTick ? runtime.fadeStartTick - currentTick : 1);
+		}
+		if (runtime.state == TrackState::PLAYING && model_.tracks[i].settings.playback == PlaybackMode::ONE_SHOT
+		    && runtime.phraseLength != 0) {
+			uint64_t end = static_cast<uint64_t>(runtime.playbackStartTick) + runtime.phraseLength;
+			result = std::min<uint64_t>(result, end > currentTick ? end - currentTick : 0);
+		}
 		if (runtime.event.pending()) {
 			result = std::min(result, runtime.event.tick > currentTick ? runtime.event.tick - currentTick : 0);
 		}
