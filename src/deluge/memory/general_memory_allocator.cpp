@@ -40,6 +40,8 @@ extern uint32_t program_stack_start;
 extern uint32_t program_stack_end;
 // NOLINTEND
 GeneralMemoryAllocator::GeneralMemoryAllocator() : lock(false) {
+#ifndef MEMORY_ALLOCATOR_TEST_REGIONS
+	// Native 32-bit ownership tests supply host-backed regions after construction.
 	uint32_t external_small_end = EXTERNAL_MEMORY_END;
 	uint32_t external_small_start = external_small_end - RESERVED_EXTERNAL_SMALL_ALLOCATOR;
 	uint32_t external_end = external_small_start;
@@ -75,6 +77,7 @@ GeneralMemoryAllocator::GeneralMemoryAllocator() : lock(false) {
 	                                            internal_small_start, internal_small_end, nullptr);
 	regions[MEMORY_REGION_INTERNAL_SMALL].minAlign_ = 16;
 	regions[MEMORY_REGION_INTERNAL_SMALL].pivot_ = 64;
+#endif
 }
 constexpr size_t kInternalSwitchSize = 128;
 constexpr size_t kExternalSwitchSize = 128;
@@ -107,7 +110,7 @@ extern "C" void* delugeAlloc(unsigned int requiredSize, bool mayUseOnChipRam) {
 	return GeneralMemoryAllocator::get().alloc(requiredSize, mayUseOnChipRam, false, nullptr);
 }
 extern "C" void delugeDealloc(void* address) {
-#ifdef IN_UNIT_TESTS
+#if defined(IN_UNIT_TESTS) && !defined(MEMORY_ALLOCATOR_TEST_REGIONS)
 	free(address);
 #else
 	GeneralMemoryAllocator::get().dealloc(address);

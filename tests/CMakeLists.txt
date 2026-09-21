@@ -21,3 +21,5 @@ endif ()
 add_subdirectory(spec)
 add_subdirectory(unit)
 add_subdirectory(recorder_lifecycle)
+
+add_subdirectory(loop_storage)

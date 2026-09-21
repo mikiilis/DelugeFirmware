@@ -40,6 +40,17 @@ struct RecorderLifecycleTrace {
 	uint64_t audioDataLength;
 	uint32_t clusterCount;
 	bool clusterLoading;
+	Sample const* sourceSample;
+	int32_t sourceReasons;
+	bool writerResourcesReleased;
+	bool cleanupActive;
+	uint8_t dirtyCacheMask;
+	uint8_t writingCacheMask;
+	bool inputActive;
+	bool backingMissing;
+	deluge::loop_station::StorageFailure storageFailure;
+	uint32_t inputPeak;
+	uint32_t capturedPeak;
 };
 // Volatile retains the debugger-visible writes even under Release LTO.
 volatile RecorderLifecycleTrace recorderLifecycleTrace[64]{};
@@ -70,6 +81,28 @@ void SampleRecorder::traceLifecycle(LifecycleEvent event, Cluster const* cluster
 	entry.retainedStartupClusters = retainedStartupClusters_;
 	entry.loopStationSlot = diagnosticLoopStationSlot;
 	entry.source = mode;
+	entry.inputActive = captureOutputInputActive;
+	entry.backingMissing = captureOutputBackingMissing;
+	uint8_t dirty = 0, writing = 0;
+	for (size_t i = 0; i < loopCache_.size(); ++i) {
+		if (loopCache_[i].dirty)
+			dirty |= 1u << i;
+		if (loopCache_[i].writing)
+			writing |= 1u << i;
+	}
+	entry.dirtyCacheMask = dirty;
+	entry.writingCacheMask = writing;
+	entry.storageFailure.stage = storageFailure.stage;
+	entry.storageFailure.rawResult = storageFailure.rawResult;
+	entry.storageFailure.offset = storageFailure.offset;
+	entry.storageFailure.requested = storageFailure.requested;
+	entry.storageFailure.actual = storageFailure.actual;
+	entry.inputPeak = inputPeak;
+	entry.capturedPeak = capturedPeak;
+	entry.sourceSample = loopSource_;
+	entry.sourceReasons = loopSource_ ? loopSource_->numReasonsToBeLoaded : 0;
+	entry.writerResourcesReleased = writerResourcesReleased_;
+	entry.cleanupActive = cleanupActive_;
 	entry.audioDataLength = sample ? sample->audioDataLengthBytes : 0;
 	entry.clusterCount = sample ? sample->clusters.getNumElements() : 0;
 	entry.clusterLoading = cluster && cluster == audioFileManager.clusterBeingLoaded;
@@ -89,6 +122,7 @@ bool Output::removeRecorder(SampleRecorder* expected) {
 
 SampleRecorder::~SampleRecorder() {
 	traceLifecycle(LifecycleEvent::DESTROYED);
+	releaseLoopClusters();
 	if (sample != nullptr) {
 		detachSample();
 		if (!haveAddedSampleToArray && sample->numReasonsToBeLoaded == 0) {
@@ -123,7 +157,14 @@ void SampleRecorder::releaseRetainedStartupClusters(uint32_t firstIndex) {
 }
 
 // Used on destruction and abort. The caller must clear sample after detaching it.
-void SampleRecorder::detachSample() {
+void SampleRecorder::releaseWriterResources() {
+	if (writerResourcesReleased_)
+		return;
+	writerResourcesReleased_ = true;
+	if (loopFrames_) {
+		releaseLoopClusters();
+		return;
+	}
 	releaseRetainedStartupClusters();
 
 	int32_t removeForClustersUntilIndex = currentRecordClusterIndex;
@@ -148,7 +189,10 @@ void SampleRecorder::detachSample() {
 		audioFileManager.removeReasonFromCluster(*cluster, "E249");
 		firstUnwrittenClusterIndex++;
 	}
+}
 
+void SampleRecorder::detachSample() {
+	releaseWriterResources();
 	sample->removeReason("E400");
 }
 
@@ -209,6 +253,7 @@ void SampleRecorder::releaseCommit(bool success) {
 }
 
 void SampleRecorder::abort() {
+	captureOutputInputActive = false;
 	if (status != RecorderStatus::ABORTED) {
 		status = RecorderStatus::ABORTED;
 		traceLifecycle(LifecycleEvent::ABORTED);
@@ -216,11 +261,17 @@ void SampleRecorder::abort() {
 }
 
 Error SampleRecorder::cleanupAbortedRecording() {
+	if (loopIOActive_ || loopPreparing_ || cleanupActive_)
+		return Error::NONE;
 	// Holding the recorder pointer alone is insufficient: the clip/history can own its Sample too.
 	if (commitPending_) {
 		return Error::NONE;
 	}
-	traceLifecycle(LifecycleEvent::CLEANED);
+	struct Guard {
+		bool& active;
+		Guard(bool& flag) : active(flag) { active = true; }
+		~Guard() { active = false; }
+	} guard(cleanupActive_);
 	// Close before unlinking; a failed write may have left the file open.
 	file.reset();
 	if (sample != nullptr) { // This might get called multiple times, so check we haven't already detached it.
@@ -230,7 +281,16 @@ Error SampleRecorder::cleanupAbortedRecording() {
 		// before that trips over us. Previously caused an E281. So, for that to happen,
 		// SampleManager::deleteAnyTempRecordedSamplesFromMemory() (indirectly) calls us here first.
 
-		detachSample(); // Does not set sample to NULL - we do that below
+		// Aborted dependents must release their source even when their own Sample
+		// is retained. Keep our Sample reason until all other owners have drained.
+		releaseWriterResources();
+		if (sample->numReasonsToBeLoaded > 1) {
+			if (!cleanupDeferred_)
+				traceLifecycle(LifecycleEvent::CLEANUP_DEFERRED);
+			cleanupDeferred_ = true;
+			return Error::NONE;
+		}
+		detachSample(); // Resource release is idempotent; drop the final Sample reason.
 
 #if ALPHA_OR_BETA_VERSION
 		// Commit owners must release provisional references before allowing cleanup.
@@ -251,6 +311,7 @@ Error SampleRecorder::cleanupAbortedRecording() {
 		sample = nullptr; // So we don't try to detach it again when we're destructed
 	}
 
+	traceLifecycle(LifecycleEvent::CLEANED);
 	// Delete the file if one was created
 	if (!filePathCreated.isEmpty()) {
 

@@ -1,36 +1,73 @@
 # Loop Station architecture
 
-Loop Station is split into firmware-independent and integration layers:
+`loop_station.h/.cpp` is the operational firmware-independent model and engine.
+It owns eight slots, sanitized settings, gestures, pending actions, revision
+navigation, geometry and routing helpers. Side effects cross `EngineDelegate`.
+The unused parallel `deluge::loop_station::core` implementation was removed.
 
-- `model/` owns sanitized song settings, clip bindings, revision descriptors,
-  immutable phrase metadata, and revision cursor semantics.
-- `engine/` owns gesture/state transitions, 64-bit song-tick scheduling,
-  quantization, stop/resume behavior, capture draining, and error recovery. All
-  side effects cross `EngineDelegate`.
-- `audio/` owns recorder-cost calculation, physical-input fan-out and monitoring
-  priority, dry cumulative overdub mixing, transpose ratios, and tick-based gain
-  ramps. `AudioEngine` enforces the shared 16-channel capacity across Loop
-  Station and every other recorder client.
-- `playback/` is the narrow bridge used by the swung Session scheduler.
-- `settings/` exposes bounded adapters shared by menu code and tests.
+`LoopStationView` binds the engine to ordinary Audio Clips and delegates capture,
+input gates, playback, errors and durable revision publication. Song XML owns
+settings and history; WAV files hold audio. Menus use the same bounded parameter
+adapters as persistence and host tests.
 
-## Invariants
+Start Action and Stop Action share one deadline calculation for individual and
+group gestures. Sixths-of-a-tick arithmetic retains straight and triplet pulse
+ratios; Q16 positions preserve fractional deadlines. `AudioEngine` splits render
+windows at those deadlines. Display refresh never executes queued actions.
+`scheduler.h` retains the integer scheduler adapter and bounded diagnostic trace
+for host coverage; production action execution uses the audio-window hook.
 
-- There are exactly eight independent slots.
-- Capture is always dry and occurs before transpose, fades, FX, level, and pan.
-- A stereo recorder costs two channel units and a mono recorder costs one;
-  eight stereo reservations fit simultaneously.
-- The first accepted take fixes the phrase length and playback origin.
-- A cumulative revision records the logical tick phase represented by sample
-  frame zero. Revision swaps rotate samples, never the musical origin.
-- Redo metadata is truncated only when its replacement commit succeeds.
-- Recorder capacity remains charged until asynchronous SD finalization and close
-  complete; a slot cannot be recorded again while its commit is pending.
-- A revision is provisional until its WAV finalizes successfully. Failed commits
-  restore the previous durable revision without truncating redo history.
-- An error keeps the previous stable phrase and requires an acknowledgement
-  press before performance gestures resume.
+Bound Audio Clips play at native speed. Sample frames own phrase length,
+playback progress and the logical phase represented by physical sample zero.
+Changing tempo affects future action deadlines, never existing audio duration.
 
-The host tests compile these layers without display, hardware, recorder, or
-filesystem dependencies. Firmware integration stores sanitized settings on
-`Song` and the stable slot binding on `AudioClip`.
+`sample_recorder_loop.cpp` implements continuous overdub into a working WAV.
+An eight-cluster cache and a single SD snapshot bound its audio memory use.
+Subsequent passes read the cumulative data; every pass adds dry physical input.
+Dirty/in-flight entries remain pinned. Closing the input gate is immediate;
+untouched first-pass backing can finish copying in card work with playback off.
+
+The shared recorder budget remains charged through finalization. A working WAV
+may be audible before it is durable. History publication is transactional, does
+not restart playback, and retains the previous durable revision for rollback.
+One overdub session produces one revision, regardless of pass count.
+
+`commit.h` coordinates publication and rollback under the slot's capture guard.
+On failure it gates and aborts the dependent recorder, detaches playback/capture,
+restores durable history, and notifies the engine before releasing the parent's
+commit hold. Successful publication leaves an immediate dependent overdub running.
+Aborted recorder cleanup releases writer resources once and waits, without blocking,
+for remaining Sample owners before deletion. Clip/song removal releases pending
+commit holds, and temporary-sample garbage collection skips owned Samples.
+Dirty cache writes rotate through entries; missing backing is traced as an
+underrun instead of being mislabeled as a filesystem error.
+
+See [the E282 investigation and implementation record](../../../Loop_Station_E282_Investigation_Plan.md)
+for the reproduced ownership failure, regression coverage and remaining device checks.
+
+See [the specification](../../../LOOP_STATION_SPEC.md) and
+[implementation plan](../../../Loop_Station_Implementation_Plan.md) for behavior,
+migration, validation and hardware acceptance requirements.
+
+`storage.h` contains the shared checked snapshot transaction used by overdub
+writers and the production-FatFS host harness. It verifies seek/write counts and
+syncs partial sectors before raw-reader visibility. The first failure stage and
+filesystem result survive cleanup in recorder diagnostics. Active failure handling
+uses a reentrancy guard; abort detaches the output route immediately while Sample
+and cache ownership continue through deferred cleanup.
+
+After overdub input closes, cache prefetch follows both the independent audible
+cursor (four clusters ahead) and the copy cursor (two ahead), deduplicated within
+the eight-entry budget. Background copying waits for a complete destination batch
+instead of turning temporary cache pressure into a terminal backing error.
+
+Capture startup shares the per-slot transaction guard with finishing and commit
+publication. Exit waits for that guard, and transport-stop intent persists across
+yielding startup. Reopening the view must preserve live engine/recorder ownership.
+Loading or clearing a song during capture first drains an exit; retry Load from
+Song View afterwards.
+
+`revision.h/.cpp` own cumulative revision history and Sample reasons.
+`diagnostics.h` provides a RAM-only ownership context and `lastStringFault` for
+S001 investigation. The real String/allocator tests live in
+`tests/32bit_unit_tests/loop_revision`; run them on Linux with multilib support.

@@ -116,13 +116,15 @@ public:
 	// 1..8 identifies a Loop Station slot, 0 is an ordinary Audio Clip. This is
 	// intentionally not copied by generic clip cloning.
 	uint8_t loopStationSlotId = 0;
-	// Loop Station clips can free-run in the sample domain when Loop Sync is off.
-	// This is runtime-derived from the song's track settings when the view opens.
-	bool loopStationTempoSync = true;
-	// Logical loop phase represented by sample position zero. A mid-loop
-	// overdub creates a rotated replacement WAV, but must not move the first
-	// take's musical phase-zero. This value is in clip ticks and is persisted.
+	// UINT32_MAX marks legacy tick metadata until its sample is available.
 	uint32_t loopStationSampleZeroTicks = 0;
+	uint32_t loopStationSampleZeroFrames = UINT32_MAX;
+	uint32_t loopStationResumeFrame = 0;
+	uint32_t loopStationResumeSampleTime = 0;
+	bool loopStationHasStarted = false;
+	uint32_t loopStationPhaseZeroFrames() const;
+	uint32_t loopStationPhaseZeroTicks() const;
+	void resumeLoopStationAtFrame(ModelStackWithTimelineCounter* modelStack, uint32_t frame);
 
 	VoicePriority voicePriority;
 

@@ -29,7 +29,9 @@
 #include "gui/ui/browser/sample_browser.h"
 #include "gui/ui/load/load_song_ui.h"
 #include "gui/ui/slicer.h"
+#include "gui/ui/ui.h"
 #include "gui/ui_timer_manager.h"
+#include "gui/views/loop_station_view.h"
 #include "gui/views/view.h"
 #include "hid/display/display.h"
 #include "hid/encoder_input.h"
@@ -782,6 +784,9 @@ startAgain:
 		if (timeTilNextTick < numSamples) {
 			numSamples = timeTilNextTick;
 		}
+
+		if (getRootUI() == &loopStationView)
+			loopStationView.finalizeAudioWindow(numSamples);
 
 		// And now we know how long the window's definitely going to be, see if we want to do any trigger clock or
 		// MIDI clock out ticks during it

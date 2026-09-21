@@ -16,11 +16,13 @@
  */
 
 #pragma once
+#include "loop_station/storage.h"
 
 #include "definitions_cxx.hpp"
 #include "dsp/envelope_follower/absolute_value.h"
 #include "dsp/stereo_sample.h"
 #include "fatfs/fatfs.hpp"
+#include <array>
 #include <cstddef>
 #include <gsl/gsl>
 #include <optional>
@@ -60,6 +62,21 @@ public:
 	void setRecordingThreshold(RecorderConfig config);
 	void feedAudio(std::span<StereoSample> input, bool applyGain = false, uint8_t gainToApply = 5);
 	Error cardRoutine();
+	// A private cumulative working WAV. Fixed cache size, unchanged durable base.
+	Error setupLoopOverdub(uint32_t frames, Sample* source = nullptr, uint32_t sourceStart = 0,
+	                       uint32_t sourceFrame = 0);
+	void processLoopOverdub(std::span<StereoSample> backing, std::span<const StereoSample> input,
+	                        bool backgroundCopy = false);
+	void stopLoopOverdubInput() {
+		captureOutputInputActive = false;
+		loopEnding_ = true;
+	}
+	[[nodiscard]] bool loopOverdubReady() const {
+		return loopFrames_ && loopEnding_ && numSamplesCaptured >= loopFrames_;
+	}
+	[[nodiscard]] bool isLoopOverdub() const { return loopFrames_ != 0; }
+	[[nodiscard]] uint32_t loopFrameCursor() const { return loopFrameCursor_; }
+
 	void endSyncedRecording(int32_t buttonLatencyForTempolessRecording);
 	bool inputLooksDifferential();
 	bool inputHasNoRightChannel();
@@ -84,7 +101,11 @@ public:
 		DESTROYED,
 		TRIM_CHECK,
 		TRIM_REJECTED,
-		TRIM_COMPLETE
+		TRIM_COMPLETE,
+		CLEANUP_DEFERRED,
+		SOURCE_RETAINED,
+		CACHE_UNDERRUN,
+		STORAGE_FAILED
 	};
 	void traceLifecycle(LifecycleEvent event, Cluster const* cluster = nullptr, uint32_t targetFileSize = 0) const;
 
@@ -149,6 +170,9 @@ public:
 	// Preserve the first terminal failure so asynchronous owners can report the
 	// real cause after the recorder has detached from its AudioClip. hadCardError
 	// remains for compatibility with existing recorder callers.
+	deluge::loop_station::StorageFailure storageFailure{};
+	uint32_t inputPeak = 0;
+	uint32_t capturedPeak = 0;
 	Error terminalError = Error::NONE;
 	bool hadCardError = false;
 	// Loop Station owns presentation of errors for its asynchronous commits.
@@ -187,7 +211,35 @@ private:
 #ifdef IN_UNIT_TESTS
 	friend struct SampleRecorderLifecycleTestAccess;
 #endif
+	struct LoopCacheEntry {
+		Cluster* cluster = nullptr;
+		uint32_t index = 0;
+		bool dirty = false;
+		bool writing = false;
+	};
+	std::array<LoopCacheEntry, 8> loopCache_{};
+	Sample* loopSource_ = nullptr;
+	uint32_t loopSourceStart_ = 0;
+	uint32_t loopSourceFrame_ = 0;
+	uint32_t loopFrames_ = 0;
+	uint32_t loopFrameCursor_ = 0;
+	uint32_t loopPlaybackCursor_ = 0;
+	bool loopEnding_ = false;
+	bool loopIOActive_ = false;
+	bool loopPreparing_ = false;
+	void* loopWriteSnapshot_ = nullptr;
+	Error prepareLoopClusters();
+	Error copyLoopRemainder();
+	Error serviceLoopWrites();
+	void releaseLoopClusters();
+	LoopCacheEntry* loopCacheAt(uint32_t index);
 	bool commitPending_ = false;
+	bool writerResourcesReleased_ = false;
+	bool cleanupActive_ = false;
+	bool cleanupDeferred_ = false;
+	uint8_t loopNextWriteEntry_ = 0;
+	void releaseWriterResources();
+	Error latchStorageFailure(deluge::loop_station::StorageFailure failure);
 	// Written startup clusters retain their original writer reason for immediate playback.
 	// Track the actual ownership, independently of array length (which trimming can change).
 	uint8_t retainedStartupClusters_ = 0;

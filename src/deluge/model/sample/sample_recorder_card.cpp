@@ -16,6 +16,13 @@
 
 // Returns error if one occurred just now - not if one was already noted before
 Error SampleRecorder::cardRoutine() {
+	if (loopIOActive_ || loopPreparing_)
+		return Error::NONE;
+
+	// A backing underrun is terminal for this take. Do not let a later write
+	// failure replace it while waiting for the view to acknowledge the error.
+	if (isLoopOverdub() && captureOutputBackingMissing)
+		abort();
 
 	// If aborted, delete the file.
 	if (status == RecorderStatus::ABORTED) {
@@ -119,6 +126,18 @@ aborted:
 			}
 
 			haveAddedSampleToArray = true;
+		}
+
+		if (isLoopOverdub()) {
+			error = serviceLoopWrites();
+			if (error != Error::NONE) {
+				if (terminalError == Error::NONE)
+					terminalError = error;
+				// I/O failures are classified by the writer; allocation/backing
+				// failures must not invent a filesystem error. End capture now.
+				abort();
+			}
+			return error;
 		}
 
 		// Might want to write just one cluster

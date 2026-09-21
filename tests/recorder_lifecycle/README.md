@@ -109,3 +109,77 @@ Record the binary SHA-256 as well as the displayed version (different dirty
 builds may have the same version string), source, quantization, margins, tempo,
 and loop duration. Compare Smart with Off and include stops on either side of
 cluster boundaries. Verify saved/reloaded loop audio and undo/redo after stress.
+
+## Continuous Loop Station overdub
+
+`recorder_loop_tests.cpp` compiles the production bounded-cache cumulative writer.
+It covers additive passes, short loops wrapping repeatedly within one audio buffer,
+closing the input gate, preservation of untouched first-pass frames, SD snapshot
+updates during yielding writes, and write-failure cleanup. Source copying and SD
+callbacks use the same fixture ownership checks as recorder lifecycle tests.
+
+Run `cmake --build build/tests --config Debug --target RecorderLifecycleTests RecorderFinalizationTests`,
+then `ctest --test-dir build/tests -C Debug -R 'Recorder(Lifecycle|Finalization)Tests' --output-on-failure`.
+The fake filesystem does not measure real SD throughput or prove eight-track
+audio continuity; those remain hardware acceptance tests.
+
+## E282 dependent-recorder regressions
+
+The LoopRecorder group also exercises a linear parent with a real continuous
+overdub dependent, parent-first and child-first cleanup, repeated deferral, eight
+dependents, and reentrant close cleanup. The production `resolveCaptureCommit`
+coordinator is tested with real recorder ownership and simulated clip/history
+references: yielding rollback, recursive completion, publication failure after a
+dependent appears, and successful publication with immediate overdub preserved.
+Additional cases cover dirty-cache write fairness and backing-underrun diagnosis.
+Fixtures check that Sample, cluster and allocation counts return to zero.
+
+The recorder trace includes source Sample identity/reference count and cleanup
+phase. `SOURCE_RETAINED`, `CLEANUP_DEFERRED` (once per recorder) and `CACHE_UNDERRUN`
+identify dependencies and distinguish the initiating failure from cleanup.
+
+Validation on 2026-09-09: UnitTests, RecorderLifecycleTests and
+RecorderFinalizationTests pass with UBSan (`halt_on_error=1`). The separate
+address+undefined sanitizer build compiles, but ASan exits with illegal instruction
+before tests start on this host. An empty `main` compiled with the same Xcode
+compiler, SDK and sanitizers also exits 132, inside and outside the sandbox.
+ASan validation remains outstanding on a working sanitizer host.
+
+## Overdub storage and recovery follow-up
+
+Build `LoopStorageTests` alongside the recorder and engine suites. It links the
+production FatFS implementation to a memory-backed FAT16 disk and exercises the
+shared `writeLoopSnapshot` transaction. Partial sectors must be synced before
+raw cluster readers use their SD address; the regression demonstrates that a
+successful FatFS write alone does not provide that guarantee.
+
+The recorder trace's `storageFailure` records the first operation stage, raw
+FatFS result, file offset and requested/actual count. `inputPeak` and
+`capturedPeak` are unsigned Q31 magnitudes (the latter before 24-bit truncation).
+Dirty/in-flight cache masks and input/backing flags describe the failure state.
+Inspect the STORAGE_FAILED entry before later cleanup events overwrite the ring.
+No file logging or allocation occurs in capture diagnostics.
+
+Run:
+
+```sh
+cmake --build build/tests --config Debug --target UnitTests RecorderLifecycleTests RecorderFinalizationTests LoopStorageTests
+UBSAN_OPTIONS=halt_on_error=1 ctest --test-dir build/tests -C Debug -R '^(UnitTests|RecorderLifecycleTests|RecorderFinalizationTests|LoopStorageTests)$' --output-on-failure
+```
+
+Only ff.c's pre-existing unaligned native loads are excluded from alignment
+instrumentation in LoopStorageTests; other UBSan checks remain active. This
+harness does not emulate SD latency/DMA, full clip rendering or microphone input.
+
+Finish-cache regressions additionally cover playback advancing beyond a stationary
+writer's prefetch window, and background copying reaching a destination while all
+eight cache entries are dirty. Both previously latched backing unavailable. The
+fixed behavior preserves playback prefetch and waits without advancing capture
+until destination buffers are available; subsequent card service makes progress.
+
+Repeated-overdub regressions also exercise 100 successive parent/child recorder
+handoffs, cumulative audio during delayed publication, final source-reason
+release, and background copy waiting for an asynchronously loaded backing
+cluster. Retired Samples are reclaimed explicitly in the fixture because the
+AudioFileManager eviction service is not linked. Real String/revision allocator
+coverage is in the separate Linux 32-bit `LoopRevisionOwnershipTests` target.

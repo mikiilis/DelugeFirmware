@@ -3,9 +3,11 @@
 add_executable(RecorderLifecycleTests
     ../unit/RunAllTests.cpp
     recorder_lifecycle_tests.cpp
+    recorder_loop_tests.cpp
     fixture.cpp
     ../../src/deluge/model/sample/sample_recorder_lifecycle.cpp
     ../../src/deluge/model/sample/sample_recorder_card.cpp
+    ../../src/deluge/model/sample/sample_recorder_loop.cpp
     ../../src/deluge/model/sample/sample_cluster_lifecycle.cpp
 )
 target_include_directories(RecorderLifecycleTests PRIVATE mocks . ../../src ../../src/deluge)
@@ -28,6 +30,7 @@ add_executable(RecorderFinalizationTests
     fixture.cpp
     ../../src/deluge/model/sample/sample_recorder_lifecycle.cpp
     ../../src/deluge/model/sample/sample_recorder_card.cpp
+    ../../src/deluge/model/sample/sample_recorder_loop.cpp
     ../../src/deluge/model/sample/sample_recorder_finalization.cpp
     ../../src/deluge/model/sample/sample_cluster_lifecycle.cpp
 )

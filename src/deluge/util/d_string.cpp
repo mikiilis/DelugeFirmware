@@ -1,3 +1,4 @@
+#include "loop_station/diagnostics.h"
 /*
  * Copyright © 2019-2023 Synthstrom Audible Limited
  *
@@ -15,10 +16,10 @@
  * If not, see <https://www.gnu.org/licenses/>.
  */
 
-#include "util/d_string.h"
 #include "definitions_cxx.hpp"
 #include "memory/general_memory_allocator.h"
 #include "util/cfunctions.h"
+#include "util/d_string.h"
 #include <bit>
 #include <cstring>
 #include <io/debug/log.h>
@@ -140,7 +141,15 @@ void String::set(String const* otherString) {
 #if ALPHA_OR_BETA_VERSION
 	// if the other string has memory and it's not in the non audio region
 	if (sm != nullptr) {
-		if (!(EXTERNAL_MEMORY_END - RESERVED_EXTERNAL_ALLOCATOR < (uint32_t)sm && (uint32_t)sm < EXTERNAL_MEMORY_END)) {
+		auto& allocator = GeneralMemoryAllocator::get();
+		auto address = reinterpret_cast<uintptr_t>(sm);
+		auto inRegion = [&](int region) {
+			return address > allocator.regions[region].start && address < allocator.regions[region].end;
+		};
+		// Small external storage sits above the general external region. A single
+		// END - RESERVED_EXTERNAL_ALLOCATOR bound excludes valid general allocations.
+		if (!inRegion(MEMORY_REGION_EXTERNAL) && !inRegion(MEMORY_REGION_EXTERNAL_SMALL)) {
+			deluge::loop_station::snapshotStringFault(this, otherString, sm, __builtin_return_address(0));
 			FREEZE_WITH_ERROR("S001");
 			return;
 		}

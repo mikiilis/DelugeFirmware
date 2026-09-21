@@ -42,17 +42,25 @@ public:
 		switch (parameter_) {
 		case GlobalParameter::RECORD_ACTION:
 			return {"REC > DUB > PLAY", "REC > PLAY > DUB"};
-		case GlobalParameter::QUANTIZE:
-			return {"Off", "Smart", "Measure"};
-		case GlobalParameter::START_FROM_STOPPED:
-			return {"Resume Phase", "From Start"};
-		case GlobalParameter::START_TIMING:
-		case GlobalParameter::STOP_TIMING:
-			return {"Synced", "Immediate"};
+		case GlobalParameter::START_ACTION:
+		case GlobalParameter::STOP_ACTION:
+			return {"Immediate", "Synced"};
+		case GlobalParameter::START_INTERVAL:
+		case GlobalParameter::STOP_INTERVAL:
+			return {"1 bar",         "1/2 bar",         "1/4 bar",         "1/8 bar",
+			        "1 bar triplet", "1/2 bar triplet", "1/4 bar triplet", "1/8 bar triplet"};
 		case GlobalParameter::DIM_BORDER_COLOUR:
 			return {"Red", "Orange", "Yellow", "Green", "Cyan", "Blue", "Purple", "Magenta", "White"};
 		}
 		return {};
+	}
+
+	bool isRelevant(ModControllableAudio*, int32_t) override {
+		if (parameter_ == GlobalParameter::START_INTERVAL)
+			return model().global.startAction.mode == ActionMode::SYNCED;
+		if (parameter_ == GlobalParameter::STOP_INTERVAL)
+			return model().global.stopAction.mode == ActionMode::SYNCED;
+		return true;
 	}
 
 private:
@@ -69,9 +77,6 @@ public:
 			auto found = std::find(kProgressColours.begin(), kProgressColours.end(), colour);
 			setValue(found == kProgressColours.end() ? 0 : std::distance(kProgressColours.begin(), found));
 		}
-		else if (parameter_ == TrackParameter::STOP_MODE) {
-			setValue(model().tracks[static_cast<size_t>(activeSlot)].settings.stopMode == StopMode::FADE ? 1 : 0);
-		}
 		else {
 			setValue(readTrackParameter(model(), activeSlot, parameter_));
 		}
@@ -80,10 +85,6 @@ public:
 		if (parameter_ == TrackParameter::PROGRESS_COLOUR) {
 			auto index = std::clamp<int32_t>(getValue(), 0, static_cast<int32_t>(kProgressColours.size() - 1));
 			writeTrackParameter(model(), activeSlot, parameter_, static_cast<int32_t>(kProgressColours[index]));
-		}
-		else if (parameter_ == TrackParameter::STOP_MODE) {
-			writeTrackParameter(model(), activeSlot, parameter_,
-			                    static_cast<int32_t>(getValue() == 1 ? StopMode::FADE : StopMode::IMMEDIATE));
 		}
 		else {
 			writeTrackParameter(model(), activeSlot, parameter_, getValue());
@@ -100,10 +101,6 @@ public:
 			return {"Gold", "Yellow", "Lime", "Turquoise", "Cyan", "Sky", "Blue", "Purple", "Magenta", "Pink", "White"};
 		case TrackParameter::PLAYBACK:
 			return {"Loop", "One Shot"};
-		case TrackParameter::START_MODE:
-			return {"Instant", "Fade"};
-		case TrackParameter::STOP_MODE:
-			return {"Instant", "Fade"};
 		default:
 			return {};
 		}
@@ -122,9 +119,6 @@ public:
 		writeTrackParameter(model(), activeSlot, parameter_, getValue());
 		if (parameter_ == TrackParameter::MONITORING) {
 			loopStationView.refreshMonitoring();
-		}
-		else if (parameter_ == TrackParameter::LOOP_SYNC) {
-			loopStationView.applyTrackSource(activeSlot);
 		}
 	}
 
@@ -168,25 +162,6 @@ public:
 		uint32_t barLength = std::max<uint32_t>(1, currentSong->getBarLength());
 		return std::min<uint32_t>(std::numeric_limits<uint16_t>::max(), kMaxLoopSequenceLength / barLength);
 	}
-	const char* getUnit() override { return " bars"; }
-};
-
-class FadeTime final : public Integer {
-public:
-	using Integer::Integer;
-
-	void readCurrentValue() override {
-		setValue(readTrackParameter(model(), activeSlot, TrackParameter::FADE_TIME_BARS));
-	}
-	void writeCurrentValue() override {
-		writeTrackParameter(model(), activeSlot, TrackParameter::FADE_TIME_BARS, getValue());
-	}
-	bool isRelevant(ModControllableAudio*, int32_t) override {
-		auto const& settings = model().tracks[static_cast<size_t>(activeSlot)].settings;
-		return settings.startMode == StartMode::FADE || settings.stopMode == StopMode::FADE;
-	}
-	[[nodiscard]] int32_t getMinValue() const override { return 1; }
-	[[nodiscard]] int32_t getMaxValue() const override { return 64; }
 	const char* getUnit() override { return " bars"; }
 };
 
@@ -255,14 +230,14 @@ public:
 
 PLACE_SDRAM_BSS GlobalSelection recordAction{l10n::String::STRING_FOR_LOOP_STATION_RECORD_ACTION,
                                              GlobalParameter::RECORD_ACTION};
-PLACE_SDRAM_BSS GlobalSelection recordQuantize{l10n::String::STRING_FOR_LOOP_STATION_RECORD_QUANTIZE,
-                                               GlobalParameter::QUANTIZE};
-PLACE_SDRAM_BSS GlobalSelection startFromStopped{l10n::String::STRING_FOR_LOOP_STATION_START_FROM_STOPPED,
-                                                 GlobalParameter::START_FROM_STOPPED};
-PLACE_SDRAM_BSS GlobalSelection startTiming{l10n::String::STRING_FOR_LOOP_STATION_START_TIMING,
-                                            GlobalParameter::START_TIMING};
-PLACE_SDRAM_BSS GlobalSelection stopTiming{l10n::String::STRING_FOR_LOOP_STATION_STOP_TIMING,
-                                           GlobalParameter::STOP_TIMING};
+PLACE_SDRAM_BSS GlobalSelection startMode{l10n::String::STRING_FOR_MODE, GlobalParameter::START_ACTION};
+PLACE_SDRAM_BSS GlobalSelection stopMode{l10n::String::STRING_FOR_MODE, GlobalParameter::STOP_ACTION};
+PLACE_SDRAM_BSS GlobalSelection startInterval{l10n::String::STRING_FOR_LOOP_STATION_INTERVAL,
+                                              GlobalParameter::START_INTERVAL};
+PLACE_SDRAM_BSS GlobalSelection stopInterval{l10n::String::STRING_FOR_LOOP_STATION_INTERVAL,
+                                             GlobalParameter::STOP_INTERVAL};
+PLACE_SDRAM_BSS Submenu startAction{l10n::String::STRING_FOR_LOOP_STATION_START_ACTION, {&startMode, &startInterval}};
+PLACE_SDRAM_BSS Submenu stopAction{l10n::String::STRING_FOR_LOOP_STATION_STOP_ACTION, {&stopMode, &stopInterval}};
 PLACE_SDRAM_BSS GlobalSelection dimBorderColour{l10n::String::STRING_FOR_LOOP_STATION_DIM_BORDER_COLOUR,
                                                 GlobalParameter::DIM_BORDER_COLOUR};
 
@@ -272,38 +247,17 @@ PLACE_SDRAM_BSS Duration duration{l10n::String::STRING_FOR_LOOP_STATION_RECORD_D
 PLACE_SDRAM_BSS TrackSelection progressColour{l10n::String::STRING_FOR_LOOP_STATION_PROGRESS_COLOUR,
                                               TrackParameter::PROGRESS_COLOUR};
 PLACE_SDRAM_BSS TrackSelection playback{l10n::String::STRING_FOR_LOOP_STATION_PLAYBACK, TrackParameter::PLAYBACK};
-PLACE_SDRAM_BSS TrackToggle loopSync{l10n::String::STRING_FOR_LOOP_STATION_LOOP_SYNC, TrackParameter::LOOP_SYNC};
-PLACE_SDRAM_BSS TrackSelection startMode{l10n::String::STRING_FOR_LOOP_STATION_START_MODE, TrackParameter::START_MODE};
-PLACE_SDRAM_BSS TrackSelection stopMode{l10n::String::STRING_FOR_LOOP_STATION_STOP_MODE, TrackParameter::STOP_MODE};
-PLACE_SDRAM_BSS FadeTime fadeTime{l10n::String::STRING_FOR_LOOP_STATION_FADE_TIME};
 PLACE_SDRAM_BSS TrackTranspose transpose{l10n::String::STRING_FOR_LOOP_STATION_TRANSPOSE};
 PLACE_SDRAM_BSS CopyToTrack copyToTrack{l10n::String::STRING_FOR_LOOP_STATION_COPY_TO_TRACK};
 
-PLACE_SDRAM_BSS Submenu globalSettingsMenu{
-    l10n::String::STRING_FOR_LOOP_STATION,
-    {&recordAction, &recordQuantize, &startTiming, &stopTiming, &startFromStopped}};
+PLACE_SDRAM_BSS Submenu globalSettingsMenu{l10n::String::STRING_FOR_LOOP_STATION,
+                                           {&recordAction, &startAction, &stopAction}};
 
 PLACE_SDRAM_BSS Submenu trackSettingsMenu{l10n::String::STRING_FOR_LOOP_STATION_TRACK,
-                                          {&source,
-                                           &monitoring,
-                                           &duration,
-                                           &progressColour,
-                                           &playback,
-                                           &loopSync,
-                                           &startMode,
-                                           &stopMode,
-                                           &fadeTime,
-                                           &transpose,
-                                           &copyToTrack,
-                                           &audioClipActionsMenu,
-                                           &audioClipMasterMenu,
-                                           &audioCompMenu,
-                                           &globalFiltersMenu,
-                                           &audioClipFXMenu,
-                                           &globalSidechainMenu,
-                                           &audioClipSampleMenu,
-                                           &audioClipAttackMenu,
-                                           &priorityMenu}};
+                                          {&source, &monitoring, &duration, &progressColour, &playback, &transpose,
+                                           &copyToTrack, &audioClipActionsMenu, &audioClipMasterMenu, &audioCompMenu,
+                                           &globalFiltersMenu, &audioClipFXMenu, &globalSidechainMenu,
+                                           &audioClipSampleMenu, &audioClipAttackMenu, &priorityMenu}};
 
 void selectTrack(SlotId slot) {
 	activeSlot = slot;

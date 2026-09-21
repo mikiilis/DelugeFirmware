@@ -126,6 +126,10 @@ void AudioClip::abortRecording() {
 	recorder->pointerHeldElsewhere = recorder->isCommitPending();
 
 	recorder->abort();
+	// Stop routing audio to a rejected recorder immediately. Its source/cache
+	// ownership still drains through guarded background cleanup.
+	if (recorder->outputRecordingFrom)
+		recorder->outputRecordingFrom->removeRecorder(recorder);
 
 	recorder = nullptr;
 
@@ -179,8 +183,8 @@ Error AudioClip::beginLinearRecording(ModelStackWithTimelineCounter* modelStack,
 
 	// recorder needs more config settings
 	recorder = AudioEngine::getNewRecorder(numChannels, AudioRecordingFolder::CLIPS, inputChannel, true,
-	                                       shouldRecordMarginsNow, buttonPressLatency, false, outputRecordingFrom,
-	                                       {.neverUseThreshold = not tempoless_recording});
+	                                       (loopStationSlotId ? false : shouldRecordMarginsNow), buttonPressLatency,
+	                                       false, outputRecordingFrom, {.neverUseThreshold = not tempoless_recording});
 	if (!recorder) {
 		return Error::INSUFFICIENT_RAM;
 	}
@@ -318,6 +322,10 @@ void AudioClip::processCurrentPos(ModelStackWithTimelineCounter* modelStack, uin
 		abortRecording();
 	}
 
+	if (loopStationSlotId && loopStationHasStarted && !voiceSample
+	    && modelStack->song->loopStation.tracks[loopStationSlotId - 1].settings.playback
+	           == deluge::loop_station::PlaybackMode::ONE_SHOT)
+		return;
 	// If at pos 0, that's the only place where anything really important happens: play the Sample
 	// also play it if we're auto extending and we just did that
 	if (!lastProcessedPos || lastProcessedPos == nextSampleRestartPos) {
@@ -345,7 +353,7 @@ void AudioClip::processCurrentPos(ModelStackWithTimelineCounter* modelStack, uin
 			                           || (((AudioOutput*)output)->envelope.state >= EnvelopeStage::RELEASE
 			                               && !doingLateStart); // Come to think of it, would doingLateStart ever (or
 			                                                    // normally) be true if we're at play pos 0?
-			if (voiceSample && loopStationSlotId != 0 && !loopStationTempoSync) {
+			if (voiceSample && loopStationSlotId != 0) {
 				// The low-level sample player owns free-running loop boundaries. Do
 				// not retrigger it when the clip's tick counter happens to wrap.
 				if (shouldResetEnvelope) {
@@ -426,6 +434,11 @@ doUnassignment:
 
 			// Ok, get playback all set up
 			doingLateStart = false;
+			if (loopStationSlotId) {
+				loopStationHasStarted = true;
+				loopStationResumeSampleTime = AudioEngine::audioSampleTimer;
+				loopStationResumeFrame = 0;
+			}
 			maySetupCache = true;
 
 			setupPlaybackBounds();
@@ -502,6 +515,12 @@ void AudioClip::resumePlayback(ModelStackWithTimelineCounter* modelStack, bool m
 	}
 
 	// Ok, get playback all set up
+	if (loopStationSlotId) {
+		loopStationHasStarted = true;
+		loopStationResumeSampleTime = AudioEngine::audioSampleTimer;
+		loopStationResumeFrame = static_cast<uint64_t>(std::max<int32_t>(0, lastProcessedPos))
+		                         * sampleHolder.getDurationInSamples(true) / std::max<int32_t>(1, loopLength);
+	}
 	doingLateStart = true;
 	maySetupCache = false;
 
@@ -526,6 +545,24 @@ void AudioClip::resumePlayback(ModelStackWithTimelineCounter* modelStack, bool m
 		voiceSample->forAudioClip = true;
 		((AudioOutput*)output)->resetEnvelope();
 	}
+}
+
+uint32_t AudioClip::loopStationPhaseZeroFrames() const {
+	uint32_t frames = std::max<int64_t>(1, sampleHolder.endPos - sampleHolder.startPos);
+	if (loopStationSampleZeroFrames != UINT32_MAX)
+		return loopStationSampleZeroFrames % frames;
+	return static_cast<uint64_t>(loopStationSampleZeroTicks) * frames / std::max<int32_t>(1, loopLength) % frames;
+}
+
+uint32_t AudioClip::loopStationPhaseZeroTicks() const {
+	return static_cast<uint64_t>(loopStationPhaseZeroFrames()) * std::max<int32_t>(1, loopLength)
+	       / std::max<int64_t>(1, sampleHolder.endPos - sampleHolder.startPos);
+}
+
+void AudioClip::resumeLoopStationAtFrame(ModelStackWithTimelineCounter* modelStack, uint32_t frame) {
+	setPos(modelStack, 0, true);
+	resumePlayback(modelStack, true);
+	loopStationResumeFrame = frame % std::max<uint32_t>(1, sampleHolder.getDurationInSamples(true));
 }
 
 void AudioClip::setupPlaybackBounds() {
@@ -566,11 +603,33 @@ bool AudioClip::render(ModelStackWithTimelineCounter* modelStack, std::span<q31_
 	}
 
 	Sample* sample = ((Sample*)sampleHolder.audioFile);
+	bool loopStationOneShot = loopStationSlotId
+	                          && modelStack->song->loopStation.tracks[loopStationSlotId - 1].settings.playback
+	                                 == deluge::loop_station::PlaybackMode::ONE_SHOT;
+	bool oneShotEnds = false;
+	if (loopStationOneShot) {
+		uint64_t duration =
+		    (static_cast<uint64_t>(sampleHolder.getDurationInSamples(true)) * kSampleRate + sample->sampleRate - 1)
+		    / sample->sampleRate;
+		uint32_t elapsed = AudioEngine::audioSampleTimer - loopStationResumeSampleTime;
+		if (elapsed >= duration) {
+			unassignVoiceSample(false);
+			return false;
+		}
+		uint64_t remaining = duration - elapsed;
+		oneShotEnds = remaining <= outputBuffer.size();
+		outputBuffer = outputBuffer.first(std::min<uint64_t>(remaining, outputBuffer.size()));
+	}
 
 	// First, if we're still attempting to do a "late start", see if we can do that (perhaps not if relevant audio data
 	// hasn't loaded yet)
 	if (doingLateStart && static_cast<AudioOutput*>(this->output)->envelope.state < EnvelopeStage::FAST_RELEASE) {
 		uint64_t numSamplesIn = guide.getSyncedNumSamplesIn();
+		if (loopStationSlotId) {
+			uint32_t elapsed = AudioEngine::audioSampleTimer - loopStationResumeSampleTime;
+			numSamplesIn = (loopStationResumeFrame + static_cast<uint64_t>(elapsed) * sample->sampleRate / kSampleRate)
+			               % std::max<uint32_t>(1, sampleHolder.getDurationInSamples(true));
+		}
 
 		LateStartAttemptStatus result = voiceSample->attemptLateSampleStart(&guide, sample, numSamplesIn);
 		if (result != LateStartAttemptStatus::SUCCESS) {
@@ -605,7 +664,7 @@ bool AudioClip::render(ModelStackWithTimelineCounter* modelStack, std::span<q31_
 	// duration. The sample therefore keeps its recorded speed after a tempo
 	// change. If transpose is active, compensate only that pitch ratio so pitch
 	// can change without making the loop run faster or slower.
-	if (loopStationSlotId != 0 && !loopStationTempoSync) {
+	if (loopStationSlotId != 0) {
 		if (sampleHolder.transpose || sampleHolder.cents) {
 			uint32_t nativePhaseIncrement =
 			    static_cast<uint32_t>((static_cast<uint64_t>(kMaxSampleValue) * sample->sampleRate) / kSampleRate);
@@ -690,7 +749,7 @@ justDontTimeStretch:
 
 		// If no time-stretcher, and not reading cache, we might want to "fudge" to eliminate the click at the loop
 		// point (if it's gonna loop)
-		if (timeStretchRatio == kMaxSampleValue && !voiceSample->timeStretcher
+		if (!loopStationSlotId && timeStretchRatio == kMaxSampleValue && !voiceSample->timeStretcher
 		    && (!voiceSample->cache || voiceSample->writingToCache)) {
 
 			// First, see if there is actually any pre-margin at all for us to crossfade to
@@ -749,7 +808,7 @@ justDontTimeStretch:
 		// after the end isn't heard.
 		// NOTE: only do this if there actually is some waveform "margin" after the end or before the beginning (if
 		// reversed) that we want to avoid hearing. Otherwise just do the release right at the start/end
-		if (static_cast<AudioOutput*>(this->output)->envelope.state < EnvelopeStage::FAST_RELEASE
+		if (!loopStationSlotId && static_cast<AudioOutput*>(this->output)->envelope.state < EnvelopeStage::FAST_RELEASE
 		    && ((guide.playDirection == 1) ? (sampleHolder.endPos < sample->lengthInSamples)
 		                                   : (sampleHolder.startPos != 0))) {
 
@@ -791,7 +850,7 @@ justDontTimeStretch:
 		                                  sampleControls.interpolationMode, 1);
 	}
 
-	if (!stillActive) {
+	if (!stillActive || oneShotEnds) {
 doUnassign:
 		unassignVoiceSample(false);
 		return false;
@@ -808,8 +867,8 @@ LoopType AudioClip::getLoopingType(ModelStackWithTimelineCounter const* modelSta
 	bool shouldLoop = (sampleControls.isCurrentlyReversed()
 	                   || sampleHolder.endPos <= ((Sample*)sampleHolder.audioFile)->lengthInSamples)
 	                  && currentPlaybackMode->willClipContinuePlayingAtEnd(modelStack);
-	if (shouldLoop && loopStationSlotId != 0 && !loopStationTempoSync) {
-		// With Loop Sync disabled the voice owns the loop boundary. This avoids
+	if (shouldLoop && loopStationSlotId != 0) {
+		// Bound Loop Station voices own their sample-frame loop boundaries. This avoids
 		// tick-driven restarts cutting the sample short or leaving silence after
 		// the song tempo changes.
 		return LoopType::LOW_LEVEL;
@@ -860,6 +919,11 @@ void AudioClip::expectNoFurtherTicks(Song* song, bool actuallySoundChange) {
 				// the late start, but keep doing the fade
 				else {
 					doingLateStart = false;
+					if (loopStationSlotId) {
+						loopStationHasStarted = true;
+						loopStationResumeSampleTime = AudioEngine::audioSampleTimer;
+						loopStationResumeFrame = 0;
+					}
 				}
 			}
 			else {
@@ -869,7 +933,7 @@ void AudioClip::expectNoFurtherTicks(Song* song, bool actuallySoundChange) {
 		}
 	}
 
-	if (recorder) {
+	if (recorder && !(loopStationSlotId && recorder->isLoopOverdub() && !recorder->captureOutputInputActive)) {
 		abortRecording();
 	}
 }
@@ -1117,9 +1181,7 @@ void AudioClip::writeDataToFile(Serializer& writer, Song* song) {
 	writer.writeAttribute("overdubsShouldCloneAudioTrack", overdubsShouldCloneOutput);
 	if (loopStationSlotId != 0) {
 		writer.writeAttribute("loopStationSlot", loopStationSlotId);
-		if (loopStationSampleZeroTicks != 0) {
-			writer.writeAttribute("loopStationSampleZeroTicks", loopStationSampleZeroTicks);
-		}
+		writer.writeAttribute("loopStationSampleZeroFrames", loopStationPhaseZeroFrames());
 	}
 
 	if (onAutomationClipView) {
@@ -1187,6 +1249,9 @@ someError:
 			loopStationSlotId = raw >= 1 && raw <= deluge::loop_station::kTrackCount ? raw : 0;
 		}
 
+		else if (!strcmp(tagName, "loopStationSampleZeroFrames")) {
+			loopStationSampleZeroFrames = reader.readTagOrAttributeValueInt();
+		}
 		else if (!strcmp(tagName, "loopStationSampleZeroTicks")) {
 			loopStationSampleZeroTicks = reader.readTagOrAttributeValueInt();
 		}

@@ -113,3 +113,17 @@ target_link_libraries(SmallPointerTests CppUTest CppUTestExt etl::etl)
 target_compile_options(SmallPointerTests PUBLIC
         $<$<COMPILE_LANGUAGE:CXX>:-fpermissive>
 )
+
+# Real revision history, String and allocator; only audio/SD boundaries are mocked.
+add_executable(LoopRevisionOwnershipTests
+        RunAllTests.cpp loop_revision/revision_tests.cpp
+        ../../src/deluge/loop_station/revision.cpp
+        ${deluge_mm_SOURCES} ${deluge_SOURCES} ${mock_SOURCES})
+target_include_directories(LoopRevisionOwnershipTests PRIVATE
+        loop_revision/mocks mocks ../../src/deluge ../../src/OSLikeStuff
+        ../../src/NE10/inc ../../src/lib ../../src)
+target_compile_definitions(LoopRevisionOwnershipTests PRIVATE MEMORY_ALLOCATOR_TEST_REGIONS=1)
+target_compile_options(LoopRevisionOwnershipTests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-fpermissive>)
+set_target_properties(LoopRevisionOwnershipTests PROPERTIES C_STANDARD 23 CXX_STANDARD 23 LINK_FLAGS -m32)
+target_link_libraries(LoopRevisionOwnershipTests PRIVATE CppUTest CppUTestExt etl::etl)
+add_test(NAME LoopRevisionOwnershipTests COMMAND LoopRevisionOwnershipTests)

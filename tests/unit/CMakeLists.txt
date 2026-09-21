@@ -65,11 +65,6 @@ file(GLOB_RECURSE deluge_SOURCES
         # For clock output scheduler tests
         ../../src/deluge/playback/clock_output_scheduler.cpp
         ../../src/deluge/loop_station/loop_station.cpp
-		../../src/deluge/loop_station/model/types.cpp
-		../../src/deluge/loop_station/engine/engine.cpp
-		../../src/deluge/loop_station/audio/audio.cpp
-		../../src/deluge/loop_station/settings/adapters.cpp
-		../../src/deluge/loop_station/view/geometry.cpp
         # For name comparison / default naming tests
         ../../src/deluge/util/name_compare.cpp
         ../../src/deluge/gui/ui/browser/default_name.cpp
@@ -91,8 +86,8 @@ add_executable(UnitTests
         default_name_tests.cpp
         rgb_tests.cpp
         notes_state_tests.cpp
-        loop_station_tests.cpp
 		loop_station_integration_tests.cpp
+        loop_station_action_tests.cpp
 )
 add_test(NAME UnitTests
         COMMAND UnitTests)

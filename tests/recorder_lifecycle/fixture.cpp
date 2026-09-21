@@ -109,3 +109,15 @@ extern "C" DRESULT disk_write(BYTE, const BYTE*, LBA_t, UINT) {
 	recorder_test::headerWrites++;
 	return recorder_test::headerFails ? RES_ERROR : RES_OK;
 }
+
+void* delugeAlloc(unsigned int size, bool) {
+	return GeneralMemoryAllocator::get().allocStealable(size);
+}
+void SampleRecorder::totalSampleLengthNowKnown(uint32_t frames, uint32_t end) {
+	sample->lengthInSamples = frames;
+	sample->audioDataLengthBytes = frames * sample->byteDepth * sample->numChannels;
+	sample->fileLoopEndSamples = end;
+}
+extern "C" LBA_t clst2sect(FATFS*, DWORD cluster) {
+	return 32 + cluster * 64;
+}

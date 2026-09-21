@@ -215,16 +215,10 @@ void AudioFileManager::deleteAnyTempRecordedSamplesFromMemory() {
 		if (audioFile->type == AudioFileType::SAMPLE) {
 			// If it's a temp-recorded one
 			if (!((Sample*)audioFile)->tempFilePathForRecording.isEmpty()) {
-
-				// if (ALPHA_OR_BETA_VERSION && audioFile->numReasons) FREEZE_WITH_ERROR("E281"); // It definitely
-				// shouldn't still have any reasons
-				//  No - it could still have a reason - the reason of its SampleRecorder. Scenario where this happened
-				//  was: recording AudioClip (instance) into Arranger when loading a new song, first causes Arranger
-				//  playback to switch to Session playback, which causes finishLinearRecording() on AudioClip, so when
-				//  song-swap does happen, the AudioClip no longer has a recorder, so the recorder doesn't clear stuff,
-				//  and it's still not quite yet finalized the file, so still holds the "reason" to the Sample.
-				//  TODO: although the Sample doesn't store a pointer to the SampleRecorder, we could easily search for
-				//  it - and delete it and its "reason"?
+				// A deferred recorder or dependent overdub can still own this Sample.
+				// Its recorder will unlink it after the remaining ownership drains.
+				if (audioFile->numReasonsToBeLoaded)
+					continue;
 
 				// We know Sample belonged to an AudioClip originally because only those ones can be TEMP
 				highestUsedAudioRecordingNumberNeedsReChecking[util::to_underlying(AudioRecordingFolder::CLIPS)] = true;

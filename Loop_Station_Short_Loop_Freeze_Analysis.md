@@ -1,3 +1,5 @@
+> Historical analysis: timing, phase and overdub behavior described here is superseded by the 2026-09-08 [Start/Stop refactor](Loop_Station_Implementation_Plan.md) and [current specification](LOOP_STATION_SPEC.md). Retained for the original failure investigation.
+
 # Short-loop error and freeze: analysis and fix plan
 
 Analysis date: 2026-09-07. Source revision: `f8ae1425`.

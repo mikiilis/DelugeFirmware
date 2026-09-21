@@ -19,8 +19,8 @@ struct SchedulerTraceEntry {
 	uint32_t targetTick;
 	uint8_t slot;
 	PendingAction action;
-	PlaybackTiming startTiming;
-	PlaybackTiming stopTiming;
+	ActionTiming startAction;
+	ActionTiming stopAction;
 };
 inline volatile SchedulerTraceEntry schedulerTrace[32]{};
 inline volatile uint32_t schedulerTraceSequence = 0;
@@ -42,8 +42,12 @@ inline int32_t serviceSchedulerTick(Engine& engine, Transport transport, uint32_
 		trace.targetTick = event.tick;
 		trace.slot = i;
 		trace.action = event.action;
-		trace.startTiming = engine.model().global.startTiming;
-		trace.stopTiming = engine.model().global.stopTiming;
+		trace.startAction.mode = engine.model().global.startAction.mode;
+		trace.startAction.division = engine.model().global.startAction.division;
+		trace.startAction.triplet = engine.model().global.startAction.triplet;
+		trace.stopAction.mode = engine.model().global.stopAction.mode;
+		trace.stopAction.division = engine.model().global.stopAction.division;
+		trace.stopAction.triplet = engine.model().global.stopAction.triplet;
 		schedulerTraceSequence = sequence + 1;
 	}
 	transport.tick = schedulerTick;

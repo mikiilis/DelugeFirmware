@@ -25,6 +25,7 @@
 #include "gui/views/arranger_view.h"
 #include "gui/views/audio_clip_view.h"
 #include "gui/views/instrument_clip_view.h"
+#include "gui/views/loop_station_view.h"
 #include "gui/views/performance_view.h"
 #include "gui/views/session_view.h"
 #include "gui/views/view.h"
@@ -133,290 +134,6 @@ OutputType getCurrentOutputType() {
 
 using namespace deluge;
 
-LoopStationRevision::LoopStationRevision(LoopStationRevision const& other)
-    : filePath(other.filePath), startPos(other.startPos), endPos(other.endPos), loopLength(other.loopLength),
-      originalLength(other.originalLength), sampleZeroTicks(other.sampleZeroTicks) {
-	setSample(other.sample);
-}
-
-LoopStationRevision& LoopStationRevision::operator=(LoopStationRevision const& other) {
-	if (this != &other) {
-		filePath = other.filePath;
-		startPos = other.startPos;
-		endPos = other.endPos;
-		loopLength = other.loopLength;
-		originalLength = other.originalLength;
-		sampleZeroTicks = other.sampleZeroTicks;
-		setSample(other.sample);
-	}
-	return *this;
-}
-
-LoopStationRevision::LoopStationRevision(LoopStationRevision&& other) noexcept
-    : filePath(other.filePath), sample(other.sample), startPos(other.startPos), endPos(other.endPos),
-      loopLength(other.loopLength), originalLength(other.originalLength), sampleZeroTicks(other.sampleZeroTicks) {
-	other.filePath.clear();
-	other.sample = nullptr;
-}
-
-LoopStationRevision& LoopStationRevision::operator=(LoopStationRevision&& other) noexcept {
-	if (this != &other) {
-		setSample(nullptr);
-		filePath = other.filePath;
-		other.filePath.clear();
-		sample = other.sample;
-		other.sample = nullptr;
-		startPos = other.startPos;
-		endPos = other.endPos;
-		loopLength = other.loopLength;
-		originalLength = other.originalLength;
-		sampleZeroTicks = other.sampleZeroTicks;
-	}
-	return *this;
-}
-
-LoopStationRevision::~LoopStationRevision() {
-	setSample(nullptr);
-}
-
-void LoopStationRevision::setSample(Sample* newSample) {
-	if (sample == newSample) {
-		return;
-	}
-	if (sample) {
-		sample->removeReason("LSRH");
-	}
-	sample = newSample;
-	if (sample) {
-		sample->addReason();
-	}
-}
-
-void LoopStationRevision::capture(AudioClip const& clip) {
-	filePath.set(clip.sampleHolder.audioFile ? &clip.sampleHolder.audioFile->filePath : &clip.sampleHolder.filePath);
-	setSample(static_cast<Sample*>(clip.sampleHolder.audioFile));
-	startPos = clip.sampleHolder.startPos;
-	endPos = clip.sampleHolder.endPos;
-	loopLength = std::max<int32_t>(1, clip.loopLength);
-	originalLength = std::max<int32_t>(1, clip.originalLength);
-	sampleZeroTicks = clip.loopStationSampleZeroTicks;
-}
-
-void LoopStationRevision::apply(AudioClip& clip) const {
-	clip.unassignVoiceSample(true);
-	clip.sampleHolder.setAudioFile(sample);
-	clip.sampleHolder.filePath.set(sample ? &sample->filePath : &filePath);
-	clip.sampleHolder.startPos = startPos;
-	clip.sampleHolder.endPos = endPos;
-	clip.loopLength = loopLength;
-	clip.originalLength = originalLength;
-	clip.loopStationSampleZeroTicks = sampleZeroTicks;
-	clip.renderData.xScroll = -1;
-}
-
-Error LoopStationRevision::loadSample(bool mayActuallyReadFile) {
-	if (sample || filePath.isEmpty()) {
-		return Error::NONE;
-	}
-	Error error = Error::NONE;
-	AudioFile* loaded = audioFileManager.getAudioFileFromFilename(filePath, mayActuallyReadFile, &error, nullptr,
-	                                                              AudioFileType::SAMPLE);
-	if (loaded) {
-		setSample(static_cast<Sample*>(loaded));
-	}
-	return error;
-}
-
-bool LoopStationRevisionHistory::hasCurrent() const {
-	return cursor >= 0 && cursor < static_cast<int32_t>(revisions.size());
-}
-
-bool LoopStationRevisionHistory::canUndo() const {
-	return hasCurrent();
-}
-
-bool LoopStationRevisionHistory::canRedo() const {
-	return cursor + 1 < static_cast<int32_t>(revisions.size());
-}
-
-LoopStationRevision const* LoopStationRevisionHistory::current() const {
-	return hasCurrent() ? &revisions[cursor] : nullptr;
-}
-
-void LoopStationRevisionHistory::clear() {
-	provisional = {};
-	provisionalPending = false;
-	revisions.clear();
-	cursor = -1;
-}
-
-bool LoopStationRevisionHistory::seedFromClip(AudioClip& clip) {
-	if (!revisions.empty() || !clip.sampleHolder.audioFile) {
-		return !revisions.empty();
-	}
-	try {
-		revisions.emplace_back();
-	} catch (deluge::exception error) {
-		if (error == deluge::exception::BAD_ALLOC) {
-			return false;
-		}
-		throw;
-	}
-	revisions.back().capture(clip);
-	cursor = 0;
-	return true;
-}
-
-bool LoopStationRevisionHistory::prepareAppend(AudioClip& clip, bool preserveCurrent) {
-	if (provisionalPending) {
-		return false;
-	}
-	// If this is the first overdub of a legacy/current clip, reserve both its
-	// seed revision and the provisional revision which will follow it.
-	size_t required = static_cast<size_t>(std::max<int32_t>(1, cursor + 2));
-	if (preserveCurrent && revisions.empty()) {
-		required = 2;
-	}
-	try {
-		revisions.reserve(required);
-	} catch (deluge::exception error) {
-		if (error == deluge::exception::BAD_ALLOC) {
-			return false;
-		}
-		throw;
-	}
-	return !preserveCurrent || seedFromClip(clip);
-}
-
-void LoopStationRevisionHistory::appendCurrent(AudioClip& clip) {
-	// Do not destroy a redo branch until a new revision has actually
-	// committed. This method is called only after the new Sample is valid.
-	auto firstRedo = revisions.begin() + std::min<size_t>(revisions.size(), static_cast<size_t>(cursor + 1));
-	revisions.erase(firstRedo, revisions.end());
-	revisions.emplace_back();
-	revisions.back().capture(clip);
-	cursor = static_cast<int32_t>(revisions.size()) - 1;
-}
-
-bool LoopStationRevisionHistory::stageCurrent(AudioClip& clip) {
-	if (provisionalPending || !clip.sampleHolder.audioFile) {
-		return false;
-	}
-	provisional.capture(clip);
-	provisionalPending = provisional.sample != nullptr;
-	return provisionalPending;
-}
-
-bool LoopStationRevisionHistory::publishStaged(AudioClip& clip) {
-	if (!provisionalPending || !provisional.sample) {
-		return false;
-	}
-	// The recorder creates the final path asynchronously, after stageCurrent().
-	// Refresh it only once finalization has succeeded.
-	provisional.filePath.set(&provisional.sample->filePath);
-	provisional.apply(clip);
-	auto firstRedo = revisions.begin() + std::min<size_t>(revisions.size(), static_cast<size_t>(cursor + 1));
-	revisions.erase(firstRedo, revisions.end());
-	revisions.emplace_back(std::move(provisional));
-	provisional = {};
-	provisionalPending = false;
-	cursor = static_cast<int32_t>(revisions.size()) - 1;
-	return true;
-}
-
-void LoopStationRevisionHistory::discardStaged() {
-	provisional = {};
-	provisionalPending = false;
-}
-
-Error LoopStationRevisionHistory::restoreCurrent(AudioClip& clip) {
-	LoopStationRevision* revision = hasCurrent() ? &revisions[cursor] : nullptr;
-	if (revision) {
-		Error error = revision->loadSample(true);
-		if (error != Error::NONE || !revision->sample) {
-			return error == Error::NONE ? Error::FILE_NOT_FOUND : error;
-		}
-		revision->apply(clip);
-	}
-	else {
-		clip.unassignVoiceSample(true);
-		clip.sampleHolder.setAudioFile(nullptr);
-		clip.sampleHolder.filePath.clear();
-		clip.sampleHolder.startPos = 0;
-		clip.sampleHolder.endPos = 0;
-		clip.loopStationSampleZeroTicks = 0;
-		clip.renderData.xScroll = -1;
-	}
-	return Error::NONE;
-}
-
-Error LoopStationRevisionHistory::rejectStaged(AudioClip& clip) {
-	Error error = restoreCurrent(clip);
-	if (error != Error::NONE) {
-		// Even an unavailable durable WAV must not leave playback holding the rejected Sample.
-		// Keep the durable history entry so a later retry can reload it.
-		clip.unassignVoiceSample(true);
-		clip.sampleHolder.setAudioFile(nullptr);
-		clip.sampleHolder.filePath.clear();
-		clip.sampleHolder.startPos = 0;
-		clip.sampleHolder.endPos = 0;
-		clip.loopStationSampleZeroTicks = 0;
-		clip.renderData.xScroll = -1;
-	}
-	discardStaged();
-	return error;
-}
-
-Error LoopStationRevisionHistory::loadSamples(AudioClip* currentClip, bool mayActuallyReadFiles) {
-	Error firstError = Error::NONE;
-	for (auto& revision : revisions) {
-		if (currentClip && currentClip->sampleHolder.audioFile
-		    && !strcmp(revision.filePath.get(), currentClip->sampleHolder.audioFile->filePath.get())) {
-			revision.setSample(static_cast<Sample*>(currentClip->sampleHolder.audioFile));
-			continue;
-		}
-		Error error = revision.loadSample(mayActuallyReadFiles);
-		if (error != Error::NONE && firstError == Error::NONE) {
-			firstError = error;
-		}
-	}
-	return firstError;
-}
-
-Error LoopStationRevisionHistory::navigate(AudioClip& clip, bool redo) {
-	int32_t target = cursor + (redo ? 1 : -1);
-	if (target < -1 || target >= static_cast<int32_t>(revisions.size())) {
-		return Error::RESULT_TAG_UNUSED;
-	}
-
-	LoopStationRevision* revision = target >= 0 ? &revisions[target] : nullptr;
-	if (revision) {
-		Error error = revision->loadSample(true);
-		if (error != Error::NONE || !revision->sample) {
-			return error == Error::NONE ? Error::FILE_NOT_FOUND : error;
-		}
-	}
-
-	if (revision) {
-		revision->apply(clip);
-	}
-	else {
-		clip.unassignVoiceSample(true);
-		clip.sampleHolder.setAudioFile(nullptr);
-		clip.sampleHolder.filePath.clear();
-		clip.sampleHolder.startPos = 0;
-		clip.sampleHolder.endPos = 0;
-		clip.loopStationSampleZeroTicks = 0;
-		if (!revisions.empty()) {
-			clip.loopLength = revisions.front().loopLength;
-			clip.originalLength = revisions.front().originalLength;
-		}
-	}
-	clip.renderData.xScroll = -1;
-	cursor = target;
-	return Error::NONE;
-}
-
 Song::Song() : backedUpParamManagers(sizeof(BackedUpParamManager)) {
 	outputClipInstanceListIsCurrentlyInvalid = false;
 	insideWorldTickMagnitude = FlashStorage::defaultMagnitude;
@@ -490,6 +207,7 @@ Song::Song() : backedUpParamManagers(sizeof(BackedUpParamManager)) {
 }
 
 Song::~Song() {
+	loopStationView.releaseSong(*this);
 
 	// Delete existing Clips, if any
 	for (int32_t c = 0; c < sessionClips.getNumElements(); c++) {
@@ -1690,10 +1408,12 @@ weAreInArrangementEditorOrInClipInstance:
 	// Clips and Outputs so older firmware can ignore it and still play them.
 	writer.writeOpeningTagBeginning("loopStation");
 	writer.writeAttribute("recordAction", util::to_underlying(loopStation.global.recordAction));
-	writer.writeAttribute("quantize", util::to_underlying(loopStation.global.quantize));
-	writer.writeAttribute("startFromStopped", util::to_underlying(loopStation.global.startFromStopped));
-	writer.writeAttribute("startTiming", util::to_underlying(loopStation.global.startTiming));
-	writer.writeAttribute("stopTiming", util::to_underlying(loopStation.global.stopTiming));
+	writer.writeAttribute("startActionMode", util::to_underlying(loopStation.global.startAction.mode));
+	writer.writeAttribute("startActionInterval", static_cast<int32_t>(loopStation.global.startAction.division)
+	                                                 + (loopStation.global.startAction.triplet ? 4 : 0));
+	writer.writeAttribute("stopActionMode", util::to_underlying(loopStation.global.stopAction.mode));
+	writer.writeAttribute("stopActionInterval", static_cast<int32_t>(loopStation.global.stopAction.division)
+	                                                + (loopStation.global.stopAction.triplet ? 4 : 0));
 	writer.writeAttribute("dimBorderColour", util::to_underlying(loopStation.global.dimBorderColour));
 	writer.writeOpeningTagEnd();
 	writer.writeArrayStart("tracks");
@@ -1709,10 +1429,6 @@ weAreInArrangementEditorOrInClipInstance:
 		writer.writeAttribute("durationBars", settings.durationBars);
 		writer.writeAttribute("progressColour", util::to_underlying(settings.progressColour));
 		writer.writeAttribute("playback", util::to_underlying(settings.playback));
-		writer.writeAttribute("loopSync", settings.loopSync);
-		writer.writeAttribute("startMode", util::to_underlying(settings.startMode));
-		writer.writeAttribute("stopMode", util::to_underlying(settings.stopMode));
-		writer.writeAttribute("fadeTimeBars", settings.fadeTimeBars);
 		auto const& history = loopStationRevisionHistory[i];
 		writer.writeAttribute("historyCursor", history.cursor);
 		if (history.revisions.empty()) {
@@ -1729,7 +1445,11 @@ weAreInArrangementEditorOrInClipInstance:
 			writer.writeAttribute("endSamplePos", revision.endPos);
 			writer.writeAttribute("loopLength", revision.loopLength);
 			writer.writeAttribute("originalLength", revision.originalLength);
-			writer.writeAttribute("sampleZeroTicks", revision.sampleZeroTicks);
+			writer.writeAttribute("sampleZeroFrames", revision.sampleZeroFrames != UINT32_MAX
+			                                              ? revision.sampleZeroFrames
+			                                              : static_cast<uint64_t>(revision.sampleZeroTicks)
+			                                                    * (revision.endPos - revision.startPos)
+			                                                    / std::max<int32_t>(1, revision.loopLength));
 			writer.closeTag(true);
 		}
 		writer.writeArrayEnding("revisions");
@@ -2237,9 +1957,6 @@ unknownTag:
 
 			else if (!strcmp(tagName, "loopStation")) {
 				using namespace deluge::loop_station;
-				PlaybackTiming legacyTiming = PlaybackTiming::SYNCED;
-				bool hasStartTiming = false;
-				bool hasStopTiming = false;
 				reader.match('{');
 				while (*(tagName = reader.readNextTagOrAttributeName())) {
 					if (!strcmp(tagName, "recordAction")) {
@@ -2247,31 +1964,13 @@ unknownTag:
 						    static_cast<RecordAction>(reader.readTagOrAttributeValueInt());
 						reader.exitTag(tagName);
 					}
-					else if (!strcmp(tagName, "quantize")) {
-						loopStation.global.quantize = static_cast<QuantizeMode>(reader.readTagOrAttributeValueInt());
-						reader.exitTag(tagName);
-					}
-					else if (!strcmp(tagName, "startFromStopped")) {
-						loopStation.global.startFromStopped =
-						    static_cast<StartFromStopped>(reader.readTagOrAttributeValueInt());
-						reader.exitTag(tagName);
-					}
-					else if (!strcmp(tagName, "playbackTiming")) {
-						legacyTiming = clampEnum<PlaybackTiming, PlaybackTiming::IMMEDIATE>(
-						    static_cast<uint32_t>(reader.readTagOrAttributeValueInt()), PlaybackTiming::SYNCED);
-						reader.exitTag(tagName);
-					}
-					else if (!strcmp(tagName, "startTiming") || !strcmp(tagName, "stopTiming")) {
-						auto timing = clampEnum<PlaybackTiming, PlaybackTiming::IMMEDIATE>(
-						    static_cast<uint32_t>(reader.readTagOrAttributeValueInt()), PlaybackTiming::SYNCED);
-						if (!strcmp(tagName, "startTiming")) {
-							loopStation.global.startTiming = timing;
-							hasStartTiming = true;
-						}
-						else {
-							loopStation.global.stopTiming = timing;
-							hasStopTiming = true;
-						}
+					else if (!strcmp(tagName, "startActionMode") || !strcmp(tagName, "stopActionMode")
+					         || !strcmp(tagName, "startActionInterval") || !strcmp(tagName, "stopActionInterval")) {
+						auto parameter = !strcmp(tagName, "startActionMode")       ? GlobalParameter::START_ACTION
+						                 : !strcmp(tagName, "stopActionMode")      ? GlobalParameter::STOP_ACTION
+						                 : !strcmp(tagName, "startActionInterval") ? GlobalParameter::START_INTERVAL
+						                                                           : GlobalParameter::STOP_INTERVAL;
+						writeGlobalParameter(loopStation, parameter, reader.readTagOrAttributeValueInt());
 						reader.exitTag(tagName);
 					}
 					else if (!strcmp(tagName, "dimBorderColour")) {
@@ -2317,6 +2016,8 @@ unknownTag:
 													revision.originalLength = std::max<int32_t>(1, value);
 												else if (!strcmp(tagName, "sampleZeroTicks"))
 													revision.sampleZeroTicks = value;
+												else if (!strcmp(tagName, "sampleZeroFrames"))
+													revision.sampleZeroFrames = value;
 											}
 											reader.exitTag(tagName);
 										}
@@ -2347,14 +2048,6 @@ unknownTag:
 									parsed.settings.progressColour = static_cast<PadColour>(value);
 								else if (!strcmp(tagName, "playback"))
 									parsed.settings.playback = static_cast<deluge::loop_station::PlaybackMode>(value);
-								else if (!strcmp(tagName, "loopSync"))
-									parsed.settings.loopSync = value;
-								else if (!strcmp(tagName, "startMode"))
-									parsed.settings.startMode = static_cast<StartMode>(value);
-								else if (!strcmp(tagName, "stopMode"))
-									parsed.settings.stopMode = static_cast<StopMode>(value);
-								else if (!strcmp(tagName, "fadeTimeBars"))
-									parsed.settings.fadeTimeBars = value;
 								else if (!strcmp(tagName, "historyCursor"))
 									historyCursor = value;
 								reader.exitTag(tagName);
@@ -2378,13 +2071,6 @@ unknownTag:
 					}
 				}
 				reader.exitTag("loopStation", true);
-				// Explicit per-action values win over the legacy field, regardless of attribute order.
-				if (!hasStartTiming) {
-					loopStation.global.startTiming = legacyTiming;
-				}
-				if (!hasStopTiming) {
-					loopStation.global.stopTiming = legacyTiming;
-				}
 				loopStation.sanitize();
 			}
 
@@ -5964,6 +5650,7 @@ void Song::removeSessionClipLowLevel(Clip* clip, int32_t clipIndex) {
 			loopStation.tracks[slot].clipSlotId = deluge::loop_station::kInvalidSlotBinding;
 			loopStationRevisionHistory[slot].clear();
 			audioClip->loopStationSlotId = 0;
+			loopStationView.releaseSlot(*this, slot);
 		}
 	}
 

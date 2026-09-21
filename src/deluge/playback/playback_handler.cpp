@@ -27,6 +27,7 @@
 #include "gui/views/arranger_view.h"
 #include "gui/views/automation_view.h"
 #include "gui/views/instrument_clip_view.h"
+#include "gui/views/loop_station_view.h"
 #include "gui/views/performance_view.h"
 #include "gui/views/session_view.h"
 #include "gui/views/view.h"
@@ -593,6 +594,10 @@ void PlaybackHandler::endPlayback() {
 	// Rohan: Must happen after currentSong->endInstancesOfActiveClips() is called (ok I can't
 	// remember why I wrote that, and now it needs to happen before so that
 	// Clip::beingRecordedFrom is still set when playback ends, so notes stop)
+	// Close Loop Station input gates and stage initial takes before Session
+	// tells ordinary clips to stop (which otherwise aborts their recorders).
+	if (getRootUI() == &loopStationView)
+		loopStationView.playbackEnded();
 	bool shouldDoInstantSongSwap = currentPlaybackMode->endPlayback();
 
 	// Do this after calling currentPlaybackMode->endPlayback(), cos for arrangement that has to get the current

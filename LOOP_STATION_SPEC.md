@@ -3,7 +3,7 @@
 ## Overview
 Eight-track live looper inspired by Boss RC-505. Each track operates independently with its own phrase, history, and state. Designed for live performance with immediate, responsive gestures.
 
-Updated 2026-09-08 to reflect the implemented menus and independent Start Timing / Stop Timing settings.
+Updated 2026-09-08 to reflect the implemented menus and unified Start Action / Stop Action settings and continuous overdub.
 For setup, all user-visible configuration, controls, and examples, see the [Loop Station user guide](website/src/content/docs/features/loop_station.mdx).
 Performance guarantees below are acceptance requirements, not a claim that hardware acceptance testing is complete.
 
@@ -14,44 +14,14 @@ Performance guarantees below are acceptance requirements, not a claim that hardw
 
 ## Component Architecture
 
-### Core Layers
+- `src/deluge/loop_station/loop_station.h/.cpp`: firmware-independent settings, gesture/state engine, timing, geometry, routing helpers and recorder admission.
+- `LoopStationView`: gestures, LEDs, menus, capture delegation and asynchronous revision publication.
+- `AudioEngine::tickSongFinalizeWindows`: services action deadlines and splits audio windows at fractional musical positions. Graphics never executes queued starts/stops.
+- `AudioClip`: native-speed playback and sample-frame phase for bound loops, including song load before opening this view.
+- `SampleRecorder`: ordinary initial take capture; bounded cluster-cache writer for continuous cumulative overdub.
+- `Song`: settings, bindings, immutable WAV revision history and migration. The unused parallel `loop_station::core` implementation has been removed.
 
-**Engine Layer** (pure logic, no I/O)
-- Track runtime: 8 independent slots with tick scheduling, state machine, revision navigation
-- Audio routing: Fan-out router for physical input capture (LEFT, RIGHT, STEREO, BALANCED)
-- Resource management: Recorder budget allocation, buffer management
-- Invariants: All timing in song ticks; no display, file, or hardware dependencies
-
-**View Layer** (UI & gestures)
-- Pad gesture handling: press, double-press (within 350 ms), stopped hold (2 seconds); thresholds are not user settings
-- Visual feedback: centre pad colors, border progress, status LEDs
-- Engine delegate: bridges UI events to engine commands, manages recorder lifecycle
-
-**Settings/Menu Layer**
-- Per-track configuration: source, monitoring, duration, progress colour, playback mode, sync, fades, transpose, and copy-to-track
-- Global feature gate: runtime enable/disable setting
-
-**Model/Persistence Layer**
-- Song model: per-slot revision lists with cursors (save/load, sanitize, migration)
-- Audio clip binding: links tracks to clip storage, provides recorder hooks
-- Sample recorder: low-level capture/encoding used by view delegate
-
-**Audio Processing Layer**
-- Pre-FX dry tap: capture point before track FX for overdub layering
-- Monitoring overrides: per-state audible input routing with priority rules
-
-**Playback Integration Layer**
-- Tick source: scheduler ticks (swung) for all position calculations
-- Next-event hooks: transport integration for auto-stop, quantization
-
-**Localization Layer**
-- Menu strings, seven-segment display text
-
-**Test Layer**
-- Host unit tests: state machine, revisions, phase math, quantization, routing, budget
-
-**Documentation Layer**
-- User-facing docs, architecture invariants (deep doc)
+Timing uses Q16 musical positions for pending actions and sample frames for recorded audio. Display and storage work do not own the action clock.
 
 ## Dependency Rule
 `Song/AudioClip → SongModel → Engine ← LoopStationView`
@@ -83,18 +53,10 @@ Pad scanning, display calls, file serialization, and `SampleRecorder` ownership 
 - Deleting a backing clip from Song View unbinds its Loop Station slot and releases that slot's revision history
 
 ### Phrase
-- A complete loop cycle with fixed musical length (in ticks)
-- Established by the first recording on an empty track
-- Length never changes after first recording
-- **Overdub behavior:**
-  - Press during PLAYING → overdub starts **immediately** at press tick (no quantization)
-  - Overdub **always runs exactly one full phrase length** (overdubEndTick = overdubStartTick + phraseLength)
-  - Cannot stop overdub early — it captures exactly one loop cycle
-  - Press again during overdub → UI returns to PLAYING immediately; recorder finishes phrase in background
-  - Double-tap during overdub → aborts, discards the overdub layer
-  - Result: new cumulative WAV (all previous layers + new input), same phrase length, same playback start tick
 
----
+The initial recording establishes a positive sample-frame length. All later playback and cumulative revisions retain that length. Musical tick length remains clip metadata; tempo changes never stretch or trim an existing loop.
+
+An overdub starts at the current sample position immediately, repeats continuously, and includes additions from previous passes. Stopping overdub immediately closes its input gate. If stopped before its first full pass, background work copies only untouched backing frames, even after playback or transport stops. One completed overdub session creates one undo revision, regardless of its number of passes.
 
 ## Live Performance Guarantees
 
@@ -102,7 +64,7 @@ Pad scanning, display calls, file serialization, and `SampleRecorder` ownership 
 
 - **Zero gaps / silence / glitches** during recording, overdubbing, or playback
 - **Seamless loop transitions** — phrase boundaries are imperceptible
-- **Responsive gesture feedback** with no unintended musical wait: recording follows Record Quantize; playback follows the independent Start Timing and Stop Timing settings. Stopped taps dispatch on release to distinguish hold-to-clear; selected fades remain intentional transitions.
+- **Responsive gesture feedback** with no unintended musical wait: recording and playback use Start Action and Stop Action. Stopped taps dispatch on release to distinguish hold-to-clear. Overdub input always starts and stops immediately.
 - **Existing loop remains audible** during overdub (no dropout, no mute)
 - **Input monitoring audible** in real-time during capture states
 - **Background commit** — UI never blocks waiting for SD write; state transitions feel instant
@@ -158,7 +120,7 @@ These guarantees apply to all 8 tracks simultaneously.
   - FX panel applies to this track
   - Input monitoring audible (if enabled for this track)
 
-**SELECT knob** always opens **global Loop Station settings** (Record Action, Record Quantize, Start Timing, Stop Timing, Restart Behavior)
+**SELECT knob** always opens **global Loop Station settings** (Record Action, Start Action, Stop Action)
 
 **SHIFT + Button** (press any LED in track's button):
 - Opens that track's settings directly on OLED
@@ -166,175 +128,60 @@ These guarantees apply to all 8 tracks simultaneously.
 
 ### State Transitions
 
-```text
-EMPTY → RECORDING → COMMITTING → PLAYING (or automatic OVERDUBBING)
-PLAYING → OVERDUBBING → PLAYING (background completion / durable commit)
-PLAYING / OVERDUBBING → double-tap → stop at Stop Timing → STOPPED
-STOPPED → short tap release → start at Start Timing → PLAYING
-STOPPED → hold 2 seconds, release → EMPTY
-```
+| Current state | Gesture | Result |
+| --- | --- | --- |
+| Empty | Centre press | Record at Start Action deadline |
+| Recording | Centre press | Finish at Stop Action deadline, immediately enter Play or Dub according to Record Action |
+| Playing, Loop | Centre press | Begin continuous overdub immediately |
+| Playing, One Shot | Centre press | Restart from logical beginning at Start Action deadline |
+| Overdubbing | Centre press | Close input immediately, return to Play; finish untouched backing in background |
+| Playing / Overdubbing | Double tap | Discard provisional double-tap overdub; stop backing at Stop Action deadline |
+| Stopped | Short centre release | Restart from logical beginning at Start Action deadline |
+| Stopped | Hold two seconds, release | Clear phrase/history, retain settings |
+| Pending user action | Centre tap | Cancel the pending action; automatic record-duration limit remains |
+| Error | Centre press | Acknowledge only; next gesture performs an action |
 
-These arrows describe logical outcomes; asynchronous capture finalization can temporarily gate further actions.
+A stopped hold fills the border clockwise in red over two seconds. Releasing earlier performs the normal stopped tap. SHIFT-centre opens settings and does not animate deletion.
 
-**From EMPTY:**
-- Press → RECORDING (quantized start)
+Visible performance state is independent of WAV durability. A completed initial capture begins playback or automatic overdub at the capture boundary, without a second Start Action wait or an SD-finalization wait. History navigation and clear remain guarded while a working revision is incomplete.
 
-**From RECORDING:**
-- Press or fixed-duration auto-stop → finish capture, lock phrase length, and finalize asynchronously
-- RECORD_PLAY_OVERDUB → PLAYING after completion
-- RECORD_OVERDUB_PLAY → COMMITTING, then OVERDUBBING from the commit-completion position
+### Start Action and Stop Action
 
-**From PLAYING:**
-- Press → OVERDUBBING (immediate, no quantization)
-- Double-tap → stop at Stop Timing, applying Stop Transition
-- One-shot auto-stop → STOPPED after phrase length
+These are the only timing controls and are song-wide. Each offers **Immediate** or **Synced**. Synced reveals an Interval selector with 1 bar, 1/2 bar, 1/4 bar, 1/8 bar and a triplet variant of each.
 
-**From OVERDUBBING:**
-- Press → PLAYING (immediate UI, recorder finishes phrase in background)
-- Double-tap → abort and discard provisional overdub immediately; stop previous phrase at Stop Timing, applying Stop Transition
-- Auto-commit at phrase end → PLAYING
+Defaults: **Start = Synced, 1/4 bar**; **Stop = Immediate**.
 
-**From STOPPED:**
-- Release (short press) → start at **Start Timing**, with position chosen by **Restart Behavior** and envelope chosen by **Start Transition**
-- Hold 2s → EMPTY (clear all revisions, keep settings)
-- During the hold, the track border fills red clockwise from the physical top-left over exactly 2 seconds
-- At the threshold the complete red ring remains lit; releasing confirms deletion, while releasing earlier performs the normal short-press action
-- SHIFT-held centre gestures do not show the delete animation and continue to open Track Settings
+Immediate executes when the gesture dispatches. Synced counts strictly future tempo pulses, not global bar lines:
 
-**From COMMITTING:**
-- Wait for async write → return to PLAYING or STOPPED (stateBeforeCommit)
+| Interval | Future pulses |
+| --- | --- |
+| 1 bar | Four quarter-note metronome clicks |
+| 1/2 bar | Two quarter-note clicks |
+| 1/4 bar | Next quarter-note click |
+| 1/8 bar | Next half-click subdivision |
+| Triplet | Same pulse count with pulse spacing multiplied by 2/3 |
 
-### Playback Timing, Position, and Transitions
+A gesture exactly on a pulse waits for the following pulse. The clock uses the metronome offset and continues to define timing when the audible metronome is disabled. Fractional subdivisions retain sub-tick precision; audio windows are split at their deadline, rounded up to the next audio sample. Tempo changes affect pending actions but never recorded sample lengths or speed.
 
-- **Start Timing** and **Stop Timing** are independent song-level settings; each is **Synced** (default) or **Immediate**.
-- Immediate executes without a musical wait. Synced uses the next song bar boundary, not the individual phrase end. A gesture already at a bar boundary executes there without an extra bar of delay.
-- Recording quantization, phrase length, Loop Sync, and Restart Behavior do not override playback timing. A missing/zero bar length falls back to immediate execution.
-- One stopped-loop tap starts; a double-tap stops. Gesture detection and the stopped release/clear distinction are unchanged.
-- **Restart Behavior = Resume Phase** rejoins the existing logical phase with Loop Sync on, or resumes the saved sample position with Loop Sync off. **From Start** resets phase zero at the actual start tick. Stopped one-shots always restart from zero.
-- Per-track **Start Transition = Instant / Fade** determines the playback envelope beginning at the chosen start tick.
-- Per-track **Stop Transition = Instant / Fade** determines whether to stop at the chosen stop tick or begin a fade there and enter STOPPED at its end.
-- **Fade Time** is shared by both transitions, measured in bars, and exposed as 1–64 bars. It appears only when either transition is Fade.
-- An instant stop cancels any active start fade; a new playback start clears a superseded queued action.
-- Fractional gesture position distinguishes an exact bar boundary from a tap just after it; only the exact boundary executes there in Synced mode.
-- Queued actions execute only from Session's musical scheduler using its actioned tick. Graphics handles background work and asks the playback handler to reschedule; it must not execute musical deadlines or write UI-relative delays into scheduler state.
-- Fades and one-shots advertise their own scheduler wakeups, independent of display refresh cadence. See [timing correction and hardware acceptance checklist](Loop_Station_Playback_Timing_Fix.md).
-- These playback controls do not change initial recording completion, overdub start/duration, background completion, or commit ownership rules.
-- The former **Start From Stopped**, **Start Mode**, and **Stop Mode** labels are now **Restart Behavior**, **Start Transition**, and **Stop Transition**. Legacy LOOP_END is displayed and handled as Instant; Stop Timing now owns the stop boundary.
+Example: start 1/4, stop 1 bar. Press Record: blink red until the next click, then record. Press again: keep recording through four future clicks, finish on the fourth and enter Play/Dub immediately. Double-tap a playing loop: blink the pending stop while audio continues through four future clicks, then stop.
 
----
+### Group actions and transport
 
-## Record Action Modes (Global Setting)
+Start All queues eligible stopped loops at a common Start Action deadline. It never restarts already playing tracks. Stop All cancels queued starts and covers recording, overdubbing and playback: initial takes finish at Stop Action and stay stopped; overdub input closes immediately while backing playback uses Stop Action. Each track retains independent phrase length.
 
-| Mode | Behavior |
-|------|----------|
-| RECORD_PLAY_OVERDUB (default) | Record → Play → Overdub → Play → Overdub... |
-| RECORD_OVERDUB_PLAY | Record → durable commit → Overdub (auto from commit-completion position) → Play → Overdub... |
+Transport shutdown cancels queued actions, finishes initial takes immediately, closes overdub gates and stops playback. Untouched audio and durable commits drain in background. Leaving the view follows Stop Action for initial recording, closes overdub input immediately, cancels queued starts, and waits for safe publication.
 
----
+### Audio and phase
 
-## Quantization Rules
+Initial recordings retain every captured frame; there is no Smart crop or tempo snap. Fixed Record Duration is a separate automatic limit in bars; cancelling a manual pending stop does not cancel that limit.
 
-### Recording Start/Stop
-- **OFF**: Immediate at press tick
-- **SMART**: Start immediate; stop snaps to nearest bar if within 1/8 note
-- **MEASURE**: Start at next bar; stop at next bar after press
+Bound loops play at native recorded speed before and after tempo changes, including restored songs. Stopped starts and one-shot retriggers begin at logical phrase zero. Ordinary Audio Clip FX remain available.
 
-### Overdub
-- **Always immediate** - no quantization for overdub start
-- **Always runs exactly one full phrase length** from press tick
-- **Cannot be quantized** - performance gesture
+The first take owns logical phase zero. A cumulative WAV may have physical frame zero at the overdub start position. Store that offset as `sampleZeroFrames`, modulo phrase frames. Translate logical and physical positions using this offset; never recalculate phase from the changed song tempo. The progress ring uses the actual playback sample position. A one-shot ends when audio playback ends, not when the old musical tick length expires.
 
----
+Overdub captures dry backing plus physical input with saturation, before transpose, FX, level and pan. Silence retains earlier layers. The writer pins a bounded eight-cluster cache and one SD snapshot; dirty or in-flight entries cannot be evicted. Each pass reads its prior cumulative data. SD callbacks may yield to audio without losing newer changes. No allocation or SD write occurs in the per-frame cumulative mixer.
 
-## Audio Behavior
-
-### First Recording (Initial Take)
-- Captures selected **physical input** (LEFT, RIGHT, STEREO, BALANCED) **dry** (no FX, no normalization)
-- Uses fixed unity capture gain; automatic normalization and post-record file alteration are disabled for every Loop Station WAV
-- Establishes phrase length and playback start tick
-- Sets logical phase zero = phrase start (sample 0 = loop start)
-
-### Playback
-- With **Loop Sync = ON**, playback preserves the phrase's fixed tick length and song phase; existing audio is time-stretched when tempo changes
-- With **Loop Sync = OFF**, playback runs at its recorded speed and free-runs independently of later tempo changes
-- Sample-rate conversion may still be applied when the recording and system sample rates differ; it is separate from musical time-stretching
-- **Track FX chain applied in real-time** to combined audio
-- With Loop Sync ON, playback phase is derived from: `(currentTick - playbackStartTick) % phraseLength`
-- With Loop Sync OFF, playback position advances in the sample domain and the current phase is saved when stopped
-- The engine playback gain and persistent AudioOutput playback gain are synchronized at every playback, history, clear, restore, and capture boundary
-- STOPPED is the only stable state that retains zero playback gain; EMPTY and a fresh RECORDING use unity as their latent baseline
-- Undo-to-empty, hold-to-clear, and undo-to-revision restore unity before the next take or selected revision becomes audible
-
-### Overdub (Additive Layer)
-**Trigger:** Press during PLAYING
-**Start:** Immediate at press tick (captures overdub start tick)
-**Duration:** Exactly one phrase length (overdubEndTick = overdubStartTick + phraseLength)
-**Capture:**
-- Existing loop playback (from WAV, dry) at unity gain
-- Physical input (dry, pre-FX, pre-level, pre-pan) at unity gain
-- The backing render and physical input enter the cumulative mixer at the same internal one-eighth scale
-- They are added first, then the combined signal receives one saturating ×8 compensation back to stored-WAV unity
-- Saturation is a signed 32-bit clamp after combined gain restoration; arithmetic must never wrap
-- No feedback attenuation is applied: a silence overdub preserves every previous layer at the same level across unlimited revisions, within 24-bit storage rounding
-**User Experience:**
-- Existing loop remains audible during overdub
-- Input adds on top in real time
-- Silence during overdub preserves previous layer perfectly
-**Completion:**
-- Press centre → UI returns to PLAYING immediately
-- Recorder continues in background until phrase end
-- On completion: commits new cumulative WAV (dry, all layers combined)
-- Phrase length and playback start tick **never change**
-
-### Overdub Chain (Infinite)
-```
-Record → Play → Overdub → Play → Overdub → Play → Overdub → ...
-```
-- Each overdub creates a new cumulative revision
-- Unlimited overdubs (storage permitting)
-- Each revision contains all previous layers + new input
-- Undo steps back through revisions one at a time
-- Redo steps forward (branch discarded on new overdub after undo)
-
-### One-Shot Playback
-- Retriggers from playbackStartTick on press
-- Stops automatically after phraseLength ticks
-- Never enters overdub mode
-
----
-
-## Phase Model (Critical for Mid-Phrase Overdubs)
-
-### Definitions
-- **Playback Start Tick**: Absolute tick where phrase logically begins (set on first recording)
-- **Phrase Length**: Fixed musical length in ticks (set on first recording)
-- **Overdub Start Tick**: Absolute tick where overdub recording begins (can be mid-phrase)
-- **Sample Zero Phase**: Logical phrase position represented by physical sample 0 in WAV
-
-### Phase Calculations
-```
-Logical Phase at Tick = (Tick - PlaybackStartTick) % PhraseLength
-
-Physical Sample Position =
-    LogicalPhase >= SampleZeroPhase
-        ? LogicalPhase - SampleZeroPhase
-        : PhraseLength - (SampleZeroPhase - LogicalPhase)
-```
-
-### Initial Recording
-- SampleZeroPhase = 0 (physical sample 0 = phrase start)
-- Playback position = Logical Phase
-
-### Overdub Recording
-- SampleZeroPhase = LogicalPhaseAt(OverdubStartTick)
-- Physical sample 0 in new WAV = overdub start position
-- During overdub: voice positioned at PhysicalSamplePosition
-
-### Post-Commit Playback
-- Initial recording: voice starts at position 0
-- After overdub: voice positioned at PhysicalSamplePosition for current logical phase
-
----
+On overdub input stop, no subsequent input is captured. If untouched audio remains, bounded background copying uses the retained source sample. The source and previous durable revision remain retained until the working WAV is published or rejected.
 
 ## Undo / Redo
 
@@ -364,7 +211,7 @@ Physical Sample Position =
 | RECORDING | Always audible if enabled |
 | PLAYING | Audible if track selected and no other track capturing same source |
 | OVERDUBBING | Audible for overdubbing track if Monitoring is enabled; recording input is independent of this switch |
-| FINISHING_OVERDUB | **Not audible** (recorder still captures input but user hears loop only) |
+| FINISHING_OVERDUB | No capture input; only untouched backing is copied |
 | Priority | Capturing tracks > Selected idle track |
 
 ### Input FX
@@ -389,12 +236,19 @@ Physical only: LEFT, RIGHT, STEREO, BALANCED
 - Non-SD capture failures must never be presented as SD card errors
 
 ### Async Commit Errors
-- COMMITTING state blocks new gestures on that track
-- The recorder and its channel units remain owned by the slot until its WAV has been finalized and closed
-- A provisional revision is not appended to undo/redo history until finalization succeeds
-- During overdub commit, the previous durable revision remains audible; the provisional cumulative WAV is swapped in only after success
-- On fail: preserve the prior revision, latch ERROR, and remember `stateBeforeError`
-- On success: complete state transition
+- Performance state can be Play, Dub or Stopped while a WAV is pending durability.
+- Recorders remain charged against the shared channel budget until finalized and closed.
+- A working revision can be audible before publication; the prior durable revision is retained for rollback.
+- History is appended and redo truncated only after successful finalization.
+- Failure rejects the working revision, preserves prior durable audio and latches an error on that slot.
+- A dependent overdub using the rejected revision closes input immediately and is aborted before rollback. The slot rejects conflicting gestures until rollback and error notification finish; an already requested stop remains stopped after error acknowledgement.
+- Aborted recorders release writer resources once but retain their Sample ownership and channel budget until dependent, playback and history references drain. Temporary-sample cleanup must respect these references; it must not delete or unlink audio still in use.
+- Cache underruns report backing unavailable, independently of filesystem errors. Dirty overdub cache entries receive round-robin write service.
+- Ending overdub prefetches for audible playback and background copying independently. Background copying waits for missing/loading destination buffers without advancing capture; it must not report a temporary destination shortage as missing backing.
+- Partial-sector overdub writes must reach storage before raw cluster readers can reload them. Successful short seeks/writes are failures, never accepted audio.
+- Storage diagnostics retain the first filesystem operation/result and byte counts through rollback. Active capture failure is guarded against reentrant gestures and immediately closes input and detaches the rejected output recorder.
+- Monitoring is recomputed on failure and acknowledgement using the existing capture/selected-track priority; an unselected idle track does not acquire a monitoring return solely because its capture failed.
+- Successful publication does not restart playback or move its phase.
 
 ### Error Acknowledgement
 - ERROR is a latched, fast red-blinking state; unrelated tracks remain operational
@@ -405,21 +259,13 @@ Physical only: LEFT, RIGHT, STEREO, BALANCED
 
 ## Edge Cases
 
-| Scenario | Behavior |
-|----------|----------|
-| Overdub at phrase boundary (tick = playbackStartTick + n×phraseLength) | SampleZeroPhase = 0, behaves like initial recording |
-| Rapid double-press during overdub (within 350ms) | Abort provisional overdub, then stop the previous phrase according to Stop Timing and Stop Transition |
-| Overdub runs full phrase without press | Auto-commits at phrase end, returns to PLAYING |
-| Smart stop on recording | Snaps to bar, phraseLength = snapped length |
-| Transport stopped during capture | Wait for commit, then exit view |
-| Switch song with active loops | Loops stop, revisions preserved |
-| Undo to empty, then new recording | Redo branch discarded, new revision appended |
-| Load song with loops | Revisions loaded, cursor restored, clips bound |
-| Overdub immediately after record (RECORD_OVERDUB_PLAY) | Auto-starts after the first WAV commits, from that current musical position, and records one complete phrase |
-| One-shot retrigger during play | Resets to phrase start, plays once |
-| Multiple tracks recording simultaneously | Each independent; shared writer capacity includes all active and finalizing recorders. Dedicated shared-source capture fan-out remains unconnected to the production recorder path |
-
----
+- Mid-phrase overdub and subsequent passes preserve the original sample-frame length and logical beginning.
+- Very short loops can wrap multiple times in one audio buffer; each visit includes the preceding addition.
+- A stop during first-pass overdub closes input immediately; backing remainder copying continues with transport stopped.
+- A pending manual stop can be cancelled without deleting a fixed recording-duration limit.
+- A failed allocation, source read or SD write affects one slot; it must not publish incomplete audio or truncate redo.
+- Undo to empty then record creates a replacement branch only after successful publication.
+- Loading duplicate slot IDs retains the first valid binding; later clips remain ordinary unbound Audio Clips.
 
 ## Configuration (Per Track)
 
@@ -429,10 +275,6 @@ Physical only: LEFT, RIGHT, STEREO, BALANCED
 | Monitoring | ON/OFF | ON |
 | Record Duration (bars) | Off = manual; 1 to min(65535, maximum sequence ticks / current bar length) | Off |
 | Playback | LOOP, ONE_SHOT | LOOP |
-| Loop Sync | ON/OFF | ON |
-| Start Transition | Instant, Fade | Instant |
-| Stop Transition | Instant, Fade | Instant (legacy stored LOOP_END) |
-| Fade Time (bars) | 1–64 in menu; visible when either transition is Fade | 1 |
 | Transpose | -24.50 to +24.50 semitones, 0.01 steps; stored as semitones and cents | 0.00 |
 | Progress Colour | 11 colours: Gold, Yellow, Lime, Turquoise, Cyan, Sky, Blue, Purple, Magenta, Pink, White | Per-track default; exact Red, Orange, and Green remain reserved for track states |
 | Copy To Track | Any of the other seven slots; SELECT confirms | No copy until confirmed |
@@ -445,28 +287,19 @@ Source Track and Dim Border Colour exist internally but are not exposed in the c
 
 ## Configuration (Global)
 
-| Parameter | Range | Default |
-|-----------|-------|---------|
-| Record Action | REC > PLAY > DUB, REC > DUB > PLAY | REC > PLAY > DUB |
-| Record Quantize | OFF, SMART, MEASURE | SMART |
-| Start Timing | Synced, Immediate | Synced |
-| Stop Timing | Synced, Immediate | Synced |
-| Restart Behavior | Resume Phase, From Start | Resume Phase |
+| Parameter | Choices | Default |
+| --- | --- | --- |
+| Record Action | REC > PLAY > DUB; REC > DUB > PLAY | REC > PLAY > DUB |
+| Start Action / Mode | Immediate; Synced | Synced |
+| Start Action / Interval | 1, 1/2, 1/4, 1/8 bar; triplet variants | 1/4 bar |
+| Stop Action / Mode | Immediate; Synced | Immediate |
+| Stop Action / Interval | 1, 1/2, 1/4, 1/8 bar; triplet variants | 1/4 bar (hidden while Immediate) |
 
 ### Settings Persistence and Migration
 
-- The enable switch is device-wide in `SETTINGS/CommunityFeatures.XML`; the five global performance settings are song-level, not device-wide.
-- Song XML stores `startTiming` and `stopTiming` independently in `loopStation`, with 0 = Synced and 1 = Immediate.
-- Legacy `playbackTiming` supplies either missing per-action value. Explicit separate fields win regardless of XML attribute order. Without either field or a legacy fallback, use Synced. Invalid timing values are clamped to Synced before conversion to the byte-sized enum.
-- Keep `startFromStopped` (0 = Resume Phase, 1 = From Start), `startMode` (0 = Instant, 1 = Fade), and `stopMode` (0 = legacy Instant, 1 = Instant, 2 = Fade) readable. New menu selections of Instant stop store 1; old 0 values remain valid.
-- Track settings, bindings, revision WAV paths, and history cursors remain in the song's Loop Station metadata. Audio stays in ordinary WAV files; backing clip/output settings use normal song serialization. There is no separate per-song Loop Station settings file.
+The device-wide enable switch remains in `SETTINGS/CommunityFeatures.XML`. Song XML stores `startActionMode`, `startActionInterval`, `stopActionMode`, and `stopActionInterval` inside `loopStation`. Mode is 0 = Immediate, 1 = Synced. Interval is 0–3 = bar/half/quarter/eighth, 4–7 = their triplet variants. Invalid modes use the per-action default; invalid intervals use straight quarter.
 
-- **Record Quantize** controls only the initial recording start/stop rules defined above; overdub remains immediate
-- **Restart Behavior = Resume Phase**, **Loop Sync = ON**: resume song-aligned phrase phase at Start Timing
-- **Restart Behavior = Resume Phase**, **Loop Sync = OFF**: resume the saved sample position at Start Timing
-- **Restart Behavior = From Start**: begin at phase zero at Start Timing, regardless of Loop Sync; Start Transition controls the gain envelope
-
----
+Ignore removed legacy `quantize`, `playbackTiming`, `startTiming`, `stopTiming`, `startFromStopped`, `loopSync`, `startMode`, `stopMode`, and fade fields. They do not override new defaults. Preserve Record Action, audio, bindings, other track settings and revision history. New saves omit obsolete timing fields. Legacy tick-based sample-zero offsets are converted against the saved phrase/sample lengths when frame offsets are absent.
 
 ## Transpose Algorithm
 
@@ -589,8 +422,8 @@ TRACK = one 4×4 pad = 4×4 LED square
 
 | Mode | Trigger | Content |
 |------|---------|---------|
-| Global Menu | SELECT press | Record Action, Record Quantize, Start Timing, Stop Timing, Restart Behavior |
-| Track Menu | SHIFT + Track button | Source, Monitoring, Record Duration, Progress Colour, Playback, Loop Sync, Start/Stop Transition, Fade Time, Transpose, Copy To Track, backing Audio Clip controls |
+| Global Menu | SELECT press | Record Action, Start Action, Stop Action |
+| Track Menu | SHIFT + Track button | Source, Monitoring, Record Duration, Progress Colour, Playback, Transpose, Copy To Track, backing Audio Clip controls |
 
 **Navigation**: SELECT rotate = scroll, SELECT press = enter/toggle, BACK = exit
 
@@ -607,7 +440,7 @@ TRACK = one 4×4 pad = 4×4 LED square
 - Copies source, source-track reference, monitoring, duration, progress colour, playback mode, loop sync, start mode, stop mode, fade time, and transpose
 - The destination's existing backing-clip identity, recorded audio, name, revision/undo history, playback state, Audio Output / FX chain, and global settings remain unchanged
 - An unbound destination may receive its normal empty `LOOP n` backing clip so the copied routing can be applied; this does not create or copy audio or revisions
-- The copied input routing, Loop Sync setting, colour, and monitoring behavior apply immediately
+- The copied input routing, colour, and monitoring behavior apply immediately
 - A destination that is RECORDING, OVERDUBBING, finishing an overdub, or COMMITTING is busy; the copy is rejected without changing any setting
 
 ### Colour Legend (Button + Border)
@@ -642,10 +475,8 @@ The physical top row of the two-column right sidebar contains the Loop Station g
 | Right | Red | **STOP ALL** stable playing phrases |
 
 - Enabled controls are bright; unavailable controls remain dim.
-- START ALL uses Start Timing; STOP ALL uses Stop Timing. Synced uses one shared song bar boundary, including immediate execution when already on that boundary. Record Quantize does not affect either control.
-- START ALL preserves Restart Behavior and each track's playback, phase-resume, and start-transition behaviour; STOP ALL applies each track's stop transition.
-- STOP ALL stops stable playback as a group and does not truncate RECORDING, OVERDUBBING, background overdub completion, or COMMITTING tracks.
-- EMPTY and ERROR tracks are ignored by both controls.
+- Start All and Stop All use their respective shared action deadlines described above.
+- Sidebar LEDs blink while a corresponding action is pending. Track LEDs show the pending destination until execution or cancellation.
 
 ### Gesture Mapping (Button Press)
 
@@ -661,52 +492,33 @@ The STOPPED hold displays a non-wrapping clockwise red border sweep. All 12 bord
 
 ## Invariants (Must Always Hold)
 
-1. Phrase length > 0 when any revision exists
-2. Playback start tick is established on first recording and preserved across overdubs; explicit retrigger or unsynced resume may re-anchor it
-3. Sample zero phase ∈ [0, phraseLength)
-4. Overdub end tick = overdub start tick + phraseLength when overdubbing
-5. FinishingOverdub → recorder still running, UI in PLAYING
-6. Current revision matches history cursor + 1 (or 0 if empty)
-7. Recorder cleared on abort/error before returning to engine
-8. Loop output never zeroed during overdub (must be audible)
-9. All positions use scheduler tick (lastSwungTickActioned)
-10. Backing missing flag set if any overdub buffer missed backing render
-11. Redo branch truncated on new overdub after undo
-12. First takes and overdubs never enable normalization or post-record gain alteration
-13. Dry backing and dry physical input enter the cumulative mixer at the same one-eighth scale
-14. The combined cumulative mix is restored once with saturating ×8 gain; silence overdubs do not attenuate prior revisions
-15. Delete progress is a non-wrapping 2-second clockwise border fill and never appears for SHIFT-held settings gestures
-16. Engine and AudioOutput playback gain never diverge; clearing or undoing a stopped phrase restores a unity baseline before the next recording
-17. Physical pad numbering is fixed top-left to bottom-right: tracks 1–4 on the top row and tracks 5–8 on the bottom row
-18. Recorder capacity is shared globally and remains charged through asynchronous WAV finalization; each capture is charged for the channel count it actually records
-19. A provisional take enters revision history only after its WAV is finalized and closed; failure restores the previous durable revision without truncating redo
-20. Copy To Track replaces only the destination `TrackSettings`; it never copies or clears audio, clip identity, revision history, runtime state, FX, or global settings
-21. Start Timing and Stop Timing are independent; individual and group playback actions use the appropriate setting, never Record Quantize or phrase-end quantization
+1. An accepted phrase has positive frame length; tempo changes never change it.
+2. Overdub is continuous and additive; its input gate closes immediately on stop.
+3. One overdub session publishes one revision, preserving logical sample-frame zero.
+4. Action deadlines are shared by individual and sidebar gestures; graphics never executes them.
+5. A pending gesture is cancellable independently of the automatic recording limit.
+6. A working WAV cannot replace durable history until finalization and close succeed.
+7. Dirty/in-flight recorder cache entries retain ownership through yielding SD operations.
+8. Clear, history and copy preserve clip identity, routing rules and other slots' state.
+9. Physical pad numbering remains top-left to bottom-right; all eight tracks are independent.
+10. Recorder capacity is shared globally and charged through finalization.
 
----
+## Validation
 
-## Test Coverage
+Host coverage includes state transitions, future-click scheduling, straight/triplet intervals, fractional boundaries, pending cancellation, group controls, continuous overdub, input gates, revision publication, resource accounting, routing, geometry and error recovery. Recorder tests exercise production capture lifecycle, cumulative short-loop writes, early-stop preservation, yielding writes and failure cleanup.
 
-- **Host unit tests**:
-  - State machine transitions
-  - Revision history (undo/redo, truncation on new overdub)
-  - Phase calculations (mid-phrase overdub, boundary cases)
-  - Quantization rules (OFF/SMART/MEASURE)
-  - Restart Behavior × Loop Sync behavior
-  - Independent Start Timing × Stop Timing combinations for single-start/double-stop gestures and group controls
-  - Shared bar boundaries for different phrase lengths, exact-boundary actions, missing bar length, and timing independent of recording quantization
-  - Start/stop transitions, fade boundaries, cancellation of active start fades, and superseded queued starts
-  - Latched error acknowledgement
-  - FanOutRouter source mixing
-  - Recorder admission, including actual mono/stereo costs, eight simultaneous stereo captures, and blocking rapid reuse while a prior commit is pending
-  - Tempo-change behavior with Loop Sync on and off
-  - Combined pre-FX transpose routing and dry recorder taps
-  - Equal-gain backing/input capture, saturating overflow, and repeated silence overdubs with no cumulative level decay
-  - Distinct backing-unavailable, source-unavailable, maximum-file-size, allocation, SD-full, missing-card, missing-filesystem, write-protected, and generic SD failure reporting
-  - Asynchronous commit success/failure, transactional revision publication, and dependent overdub start after finalization
-  - Clockwise delete-hold progress at start, midpoint, threshold, and beyond the threshold without wrapping
-  - Stop → undo-to-empty → record, stop → hold-clear → record, and stopped undo-to-revision all restore audible unity gain
-  - Physical pad-to-track mapping and default `LOOP 1`–`LOOP 8` naming from top-left to bottom-right
-  - Track configuration copy, including every copied setting and preservation of destination clip binding and revision history
+Run the UnitTests, RecorderLifecycleTests and RecorderFinalizationTests CTest targets, build debug firmware, and build the website. Hardware acceptance remains required for audio continuity, eight-track SD throughput, external clock, tempo changes, sample-frame progress, OLED and seven-segment menus.
 
-- **Run**: `./dbt test`
+### Capture transaction lifetime
+
+A slot remains busy throughout capture preflight, recorder setup, finishing,
+publication and rollback, including callbacks which yield to audio/SD/UI work.
+Gestures cannot replace or clear that slot during these operations. Other slots
+remain operational. Exit waits for all transactions; exit or transport stop
+requested during startup must drain the newly attached recorder. Reopening the
+view must not discard pending commits. Load/clear during capture first drains
+an exit to Song View, where Load can be pressed again.
+
+Repeated overdubs preserve cumulative audio and durable undo history across
+publication, rollback and vector growth. Existing loop tempo and immediate
+overdub input start/stop behavior remain unchanged.

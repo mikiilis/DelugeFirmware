@@ -19,8 +19,14 @@ public:
 	Sample() { recorder_test::liveSamples++; }
 	~Sample() { recorder_test::liveSamples--; }
 	struct Clusters {
-		std::array<SampleCluster, 4> entries{};
+		std::array<SampleCluster, 16> entries{};
 		int count = 0;
+		Error insertSampleClustersAtEnd(int n) {
+			if (count + n > entries.size())
+				return Error::INSUFFICIENT_RAM;
+			count += n;
+			return Error::NONE;
+		}
 		int getNumElements() const { return count; }
 		SampleCluster* getElement(int index) { return &entries.at(index); }
 		void deleteAtIndex(int index, int n) {

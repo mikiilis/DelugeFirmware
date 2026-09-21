@@ -361,6 +361,8 @@ void SampleRecorder::finishCapturing() {
 // Only call this after checking that status < RecorderStatus::FINISHED_CAPTURING_BUT_STILL_WRITING
 // Watch out - this could be called during SD writing - including during cardRoutine() for this class!
 void SampleRecorder::feedAudio(std::span<StereoSample> input, bool applyGain, uint8_t gainToApply) {
+	if (loopPreparing_ || isLoopOverdub())
+		return;
 	int32_t numSamples = input.size();
 	do {
 		int32_t numSamplesThisCycle = input.size();
@@ -431,6 +433,9 @@ doFinishCapturing:
 				for (StereoSample sample : input.first(numSamplesThisCycle)) {
 					q31_t rxBalanced = (sample.l / 2) - (sample.r / 2);
 
+					auto peak = rxBalanced < 0 ? uint32_t(-int64_t(rxBalanced)) : uint32_t(rxBalanced);
+					inputPeak = std::max(inputPeak, peak);
+					capturedPeak = std::max(capturedPeak, peak);
 					// Copy the last 24 bits (lower 3 bytes) to writePosNow
 					writePosNow = std::copy_n(&reinterpret_cast<std::byte*>(&rxBalanced)[1], 3, writePosNow);
 				}
@@ -439,10 +444,17 @@ doFinishCapturing:
 			// Or, all other, non-balanced input types
 			else {
 				for (auto [rxL, rxR] : input.first(numSamplesThisCycle)) {
+					auto magnitude = [](int32_t value) {
+						return value < 0 ? uint32_t(-int64_t(value)) : uint32_t(value);
+					};
+					inputPeak = std::max(inputPeak, magnitude(rxL));
+					if (recordingNumChannels == 2)
+						inputPeak = std::max(inputPeak, magnitude(rxR));
 					if (applyGain) {
 						rxL = lshiftAndSaturateUnknown(rxL, gainToApply);
 					}
 
+					capturedPeak = std::max(capturedPeak, magnitude(rxL));
 					// Copy the last 24 bits (lower 3 bytes) to writePosNow
 					writePosNow = std::copy_n(&reinterpret_cast<std::byte*>(&rxL)[1], 3, writePosNow);
 
@@ -467,6 +479,7 @@ doFinishCapturing:
 						if (applyGain) {
 							rxR = lshiftAndSaturateUnknown(rxR, gainToApply);
 						}
+						capturedPeak = std::max(capturedPeak, magnitude(rxR));
 
 						// Copy the last 24 bits (lower 3 bytes) to writePosNow
 						writePosNow = std::copy_n(&reinterpret_cast<std::byte*>(&rxR)[1], 3, writePosNow);
@@ -541,6 +554,15 @@ doFinishCapturing:
 }
 
 void SampleRecorder::endSyncedRecording(int32_t buttonLatencyForTempolessRecording) {
+	if (isLoopOverdub()) {
+		if (!loopOverdubReady()) {
+			abort();
+			return;
+		}
+		finishCapturing();
+		return;
+	}
+
 #if ALPHA_OR_BETA_VERSION
 	if (status == RecorderStatus::CAPTURING_DATA_WAITING_TO_STOP) {
 		FREEZE_WITH_ERROR("E272");

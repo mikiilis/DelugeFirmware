@@ -514,7 +514,7 @@ renderEnvelope:
 	// only while Overdub is visibly enabled. This deliberately does not depend on
 	// the Monitoring setting: monitoring controls the live return, not recording.
 	if (capturingPreFXOverdub) {
-		if (!backingRenderedForCapture) {
+		if (!backingRenderedForCapture && !(recorder->isLoopOverdub() && !recorder->captureOutputInputActive)) {
 			// Preserve the previous take. The view checks this latch before asking
 			// the view commits its sample and aborts the provisional recorder.
 			recorder->captureOutputBackingMissing = true;
@@ -522,20 +522,29 @@ renderEnvelope:
 		else {
 			alignas(CACHE_LINE_SIZE) std::array<StereoSample, SSI_TX_BUFFER_NUM_SAMPLES> captureMemory;
 			std::span<StereoSample> capture{captureMemory.data(), output.size()};
-			std::ranges::copy(output, capture.begin());
-			if (recorder->captureOutputInputActive && isPhysicalInput(inputChannel)) {
-				// Match physical input to the Audio Clip's one-eighth dry render.
-				// Recorder compensation below restores their combined value to unity.
-				// The cumulative revision is always dry. Transpose belongs exclusively
-				// to the audible path below and must never reach a recorder.
-				addPhysicalInput(capture, inputChannel, amplitudeAtStart, amplitudeAtEnd,
-				                 deluge::loop_station::kPhysicalInputPreMixGainShift, true);
+			if (recorder->isLoopOverdub()) {
+				std::ranges::fill(capture, StereoSample{});
+				if (recorder->captureOutputInputActive && isPhysicalInput(inputChannel)) {
+					addPhysicalInput(capture, inputChannel, amplitudeAtStart, amplitudeAtEnd,
+					                 deluge::loop_station::kPhysicalInputPreMixGainShift, true);
+				}
+				for (auto& sample : capture) {
+					sample.l = deluge::loop_station::restoreCaptureGain(sample.l);
+					sample.r = deluge::loop_station::restoreCaptureGain(sample.r);
+				}
+				recorder->processLoopOverdub(output, capture);
 			}
-			for (auto& sample : capture) {
-				sample.l = deluge::loop_station::restoreCaptureGain(sample.l);
-				sample.r = deluge::loop_station::restoreCaptureGain(sample.r);
+			else {
+				std::ranges::copy(output, capture.begin());
+				if (recorder->captureOutputInputActive && isPhysicalInput(inputChannel))
+					addPhysicalInput(capture, inputChannel, amplitudeAtStart, amplitudeAtEnd,
+					                 deluge::loop_station::kPhysicalInputPreMixGainShift, true);
+				for (auto& sample : capture) {
+					sample.l = deluge::loop_station::restoreCaptureGain(sample.l);
+					sample.r = deluge::loop_station::restoreCaptureGain(sample.r);
+				}
+				recorder->feedAudio(capture);
 			}
-			recorder->feedAudio(capture);
 		}
 		// During overdub, the existing loop should remain audible.
 		// Don't zero the output - the clip has an existing loop that was just rendered.

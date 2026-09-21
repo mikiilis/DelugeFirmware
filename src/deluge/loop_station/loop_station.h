@@ -23,14 +23,14 @@ constexpr uint32_t kMaxLoopSequenceLength = 1610612736;
 
 enum class SlotId : uint8_t { ONE, TWO, THREE, FOUR, FIVE, SIX, SEVEN, EIGHT };
 enum class RecordAction : uint8_t { RECORD_OVERDUB_PLAY, RECORD_PLAY_OVERDUB };
-enum class QuantizeMode : uint8_t { OFF, SMART, MEASURE };
-// Keep persisted values/names compatible; PlaybackTiming now owns quantization.
-enum class StartFromStopped : uint8_t { RESUME_QUANTIZED, FROM_START };
-enum class PlaybackTiming : uint8_t { SYNCED, IMMEDIATE };
+enum class ActionMode : uint8_t { IMMEDIATE, SYNCED };
+enum class ActionDivision : uint8_t { BAR, HALF, QUARTER, EIGHTH };
+struct ActionTiming {
+	ActionMode mode = ActionMode::SYNCED;
+	ActionDivision division = ActionDivision::QUARTER;
+	bool triplet = false;
+};
 enum class TrackState : uint8_t { EMPTY, RECORDING, OVERDUBBING, PLAYING, STOPPED, COMMITTING, ERROR };
-enum class StartMode : uint8_t { IMMEDIATE, FADE };
-// LOOP_END is a legacy stored value, displayed/handled as an Instant transition.
-enum class StopMode : uint8_t { LOOP_END, IMMEDIATE, FADE };
 enum class PlaybackMode : uint8_t { LOOP, ONE_SHOT };
 enum class SourceType : uint8_t { LEFT, RIGHT, STEREO, BALANCED, MIX_PRE_FX, MIX_POST_FX, SONG_TRACK };
 // Keep the original values stable for song-file compatibility. New progress
@@ -116,11 +116,11 @@ constexpr uint8_t kPhysicalInputPreMixGainShift = 2;
 // Stable setting identifiers shared by the firmware menu layer and host tests.
 enum class GlobalParameter : uint8_t {
 	RECORD_ACTION,
-	QUANTIZE,
-	START_FROM_STOPPED,
 	DIM_BORDER_COLOUR,
-	START_TIMING,
-	STOP_TIMING
+	START_ACTION,
+	STOP_ACTION,
+	START_INTERVAL,
+	STOP_INTERVAL
 };
 enum class TrackParameter : uint8_t {
 	SOURCE,
@@ -129,10 +129,6 @@ enum class TrackParameter : uint8_t {
 	DURATION_BARS,
 	PROGRESS_COLOUR,
 	PLAYBACK,
-	LOOP_SYNC,
-	START_MODE,
-	STOP_MODE,
-	FADE_TIME_BARS,
 	TRANSPOSE
 };
 
@@ -143,10 +139,8 @@ constexpr Enum clampEnum(uint32_t raw, Enum fallback) {
 
 struct GlobalSettings {
 	RecordAction recordAction = RecordAction::RECORD_PLAY_OVERDUB;
-	QuantizeMode quantize = QuantizeMode::SMART;
-	StartFromStopped startFromStopped = StartFromStopped::RESUME_QUANTIZED;
-	PlaybackTiming startTiming = PlaybackTiming::SYNCED;
-	PlaybackTiming stopTiming = PlaybackTiming::SYNCED;
+	ActionTiming startAction{};
+	ActionTiming stopAction{ActionMode::IMMEDIATE};
 	PadColour dimBorderColour = PadColour::BLUE;
 };
 
@@ -172,10 +166,6 @@ struct TrackSettings {
 	uint16_t durationBars = kManualDuration;
 	PadColour progressColour = PadColour::CYAN;
 	PlaybackMode playback = PlaybackMode::LOOP;
-	bool loopSync = true;
-	StartMode startMode = StartMode::IMMEDIATE;
-	StopMode stopMode = StopMode::LOOP_END;
-	uint16_t fadeTimeBars = 1;
 	int16_t transpose = 0;
 	int8_t transposeCents = 0;
 };
@@ -211,12 +201,16 @@ struct Transport {
 	bool arrangement = false;
 	// Gesture time lies after the integer tick (important just after a bar line).
 	bool afterTickBoundary = false;
+	uint32_t metronomeOffset = 0;
+	uint16_t fractionQ16 = 0;
 };
 
 struct ScheduledEvent {
 	PendingAction action = PendingAction::NONE;
 	uint32_t tick = 0;
 	uint32_t requestedTick = 0;
+	uint64_t positionQ16 = 0;
+	[[nodiscard]] uint64_t deadline() const { return positionQ16 ? positionQ16 : (static_cast<uint64_t>(tick) << 16); }
 
 	[[nodiscard]] bool pending() const { return action != PendingAction::NONE; }
 };
@@ -228,18 +222,14 @@ struct TrackRuntime {
 	uint32_t captureStartTick = 0;
 	uint32_t phraseLength = 0;
 	uint32_t playbackStartTick = 0;
-	uint32_t savedStopPhase = 0;
+	uint32_t automaticEndTick = 0;
+	uint64_t automaticEndPositionQ16 = 0;
+	bool stopAfterCapture = false;
 	int32_t playbackGain = 1 << 24;
-	int32_t fadeStartGain = 1 << 24;
-	int32_t fadeEndGain = 1 << 24;
-	uint32_t fadeStartTick = 0;
-	uint32_t fadeEndTick = 0;
-	// For overdub: track the actual overdub region (may be partial phrase).
-	// Zero means not in overdub or overdub not yet started.
+	// Musical origin for diagnostics; overdub duration is sample-domain.
 	uint32_t overdubStartTick = 0;
 	uint32_t overdubEndTick = 0;
-	// Background completion: overdub recorder runs for full phrase,
-	// but UI returns to PLAY when user presses center.
+	// Input is closed; untouched first-pass backing is still being materialized.
 	bool finishingOverdub = false;
 	uint32_t committingLength = 0;
 	uint32_t currentRevision = 0;
@@ -249,8 +239,10 @@ struct TrackRuntime {
 	int32_t historyCursor = -1;
 	bool pendingClear = false;
 	bool committingOverdub = false;
-	// The recorder delegate can yield to SD/audio work before the commit is staged.
+	// Covers startup, finish, publication and rollback across yielding delegates.
 	bool finishingCapture = false;
+	bool handlingFailure = false;
+	bool transportStopPending = false;
 	Error error = Error::NONE;
 	uint32_t lastTapTimeMs = std::numeric_limits<uint32_t>::max();
 };
@@ -265,7 +257,7 @@ struct TrackRuntime {
 
 // Returns true if the overdub recorder should capture physical input (including during background finish).
 [[nodiscard]] constexpr bool shouldRecordPhysicalOverdubInput(TrackRuntime const& runtime) {
-	return runtime.state == TrackState::OVERDUBBING || runtime.finishingOverdub;
+	return runtime.state == TrackState::OVERDUBBING && !runtime.finishingOverdub;
 }
 
 // The first take owns the logical phase-zero for the lifetime of the phrase.
@@ -308,11 +300,15 @@ public:
 	virtual bool preflight(SlotId, bool) { return true; }
 	virtual bool beginCapture(SlotId, bool, uint32_t) { return true; }
 	virtual CaptureFinish finishCapture(SlotId, bool, uint32_t, bool) { return {}; }
+	virtual void endOverdubInput(SlotId) {}
+	virtual bool overdubReady(SlotId) { return true; }
+	virtual bool playbackEnded(SlotId) { return false; }
 	virtual void abortCapture(SlotId, bool) {}
 	virtual void phraseCleared(SlotId) {}
 	// Move exactly one revision. targetHasPhrase reports whether the resulting
 	// cursor points at a WAV or at the undoable empty state.
 	virtual bool navigateHistory(SlotId, bool redo, bool& targetHasPhrase) { return true; }
+	virtual void restartPlayback(SlotId) {}
 	virtual void stateChanged(SlotId, TrackState) {}
 	virtual void playbackGainChanged(SlotId, int32_t) {}
 	virtual uint32_t playbackPhase(SlotId, uint32_t tickPhase) { return tickPhase; }
@@ -340,6 +336,9 @@ public:
 	[[nodiscard]] bool canStartAll() const;
 	[[nodiscard]] bool canStopAll() const;
 	void processTick(Transport const& transport);
+	void serviceAudioCompletion(Transport const& transport);
+	void transportStopped(Transport const& transport);
+	[[nodiscard]] uint64_t nextActionPositionQ16() const;
 	bool requestExit(Transport const& transport);
 	[[nodiscard]] bool exitReady() const;
 	[[nodiscard]] bool anyCapturing() const;
@@ -347,21 +346,19 @@ public:
 	void notifyCommitComplete(SlotId slot, bool success, Error error = Error::NONE, uint32_t completionTick = 0);
 	void notifyFailure(SlotId slot, Error error);
 
-	static uint32_t quantizedStart(QuantizeMode mode, uint32_t tick, uint32_t barLength);
-	static uint32_t smartStop(uint32_t tick, uint32_t barLength, uint32_t eighthNoteLength);
+	[[nodiscard]] static uint64_t actionPositionQ16(Transport const& transport, ActionTiming timing);
+	[[nodiscard]] static uint32_t actionTick(Transport const& transport, ActionTiming timing);
 
 private:
-	void schedule(SlotId slot, PendingAction action, uint32_t atTick, uint32_t requestedTick);
+	void schedule(SlotId slot, PendingAction action, uint32_t atTick, uint32_t requestedTick, uint64_t positionQ16 = 0);
+	void requestAction(SlotId slot, PendingAction action, Transport const& transport, ActionTiming timing);
 	void execute(SlotId slot, PendingAction action, Transport const& transport, uint32_t requestedTick);
 	void beginCapture(SlotId slot, bool overdub, uint32_t tick, Transport const& transport);
 	void finishCapture(SlotId slot, bool overdub, uint32_t tick, uint32_t requestedTick);
 	void stop(SlotId slot, Transport const& transport, bool forceImmediate = false);
-	[[nodiscard]] static uint32_t playbackActionTick(Transport const& transport, PlaybackTiming timing);
-	void beginPlayback(SlotId slot, Transport const& transport, bool fromStart);
+	void beginPlayback(SlotId slot, Transport const& transport);
 	void setPlaybackGain(SlotId slot, int32_t gain, bool forceNotify = false);
-	void updateFade(SlotId slot, uint32_t tick);
 	void completeCapture(SlotId slot, bool overdub, uint32_t length, uint32_t completionTick = 0);
-	void setOverdubEnd(TrackRuntime& runtime, uint32_t tick);
 	void transition(SlotId slot, TrackState state);
 	void fail(SlotId slot, Error error);
 	bool navigateHistory(SlotId slot, bool redo);
