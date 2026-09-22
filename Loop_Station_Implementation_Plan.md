@@ -6,17 +6,20 @@ Implementation: 2026-09-08. Canonical behavior is in
 ## Settings and migration
 
 Replace Record Quantize, Start/Stop Timing and Restart Behavior with Start Action
-and Stop Action submenus. Each offers Immediate/Synced and eight intervals:
-bar, half, quarter, eighth, and triplets of each. Retain Record Action. Remove
-track transitions, Fade Time and Loop Sync. Default to synced quarter start and
-immediate stop. Persist four new mode/interval fields; ignore removed legacy
-fields while preserving audio, bindings, history and unrelated settings.
+and Stop Action submenus. Each offers Immediate/Synced and twelve intervals:
+bar, half, quarter, eighth, sixteenth, thirty-second, and triplets of each. Retain
+Record Action. Remove track transitions, Fade Time and Loop Sync. Default both
+Start and Stop to Synced, straight 1/16 bar. Preserve saved action settings:
+interval IDs 0–7 retain their meaning; append straight 1/16 and 1/32 as IDs 8–9
+and their triplets as IDs 10–11. Persist four mode/interval fields; ignore removed
+legacy fields while preserving audio, bindings, history and unrelated settings.
 
 ## Scheduling and gestures
 
 Use one future-pulse calculation for recording, playback and group controls.
 Count four future metronome clicks for bar, two for half, one for quarter, or
-the next half-click for eighth. Triplet pulses have 2/3 spacing. Exact-boundary
+the next half-click for eighth, quarter-click for sixteenth, or eighth-click
+for thirty-second. Triplet pulses have 2/3 spacing. Exact-boundary
 gestures wait for the following pulse. Preserve fractional timing through audio
 window splitting. Pending LEDs clear on execution/cancellation. Keep the
 stopped release-to-start and two-second hold-to-clear gestures.
@@ -56,7 +59,7 @@ SD cards, external clock, rapid tempo changes, short loops, sample progress,
 audio continuity and both OLED/seven-segment menu layouts. Host tests and a
 successful cross-compile do not establish those hardware properties.
 
-## Verification results
+## Verification results (original 2026-09-08 refactor)
 
 - UnitTests, RecorderLifecycleTests and RecorderFinalizationTests: passed.
 - `./dbt build debug`: passed.

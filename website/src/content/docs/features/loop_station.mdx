@@ -84,13 +84,13 @@ Press :key[Select] while in Loop Station. Turn it to choose a setting, press it 
 and turn it to change the value. Use :key[Back] to return. These settings belong to the current song;
 save the song to retain them.
 
-| Setting                 | Choices                                            | Default          | Purpose                                                                |
-| ----------------------- | -------------------------------------------------- | ---------------- | ---------------------------------------------------------------------- |
-| Record Action           | REC > PLAY > DUB; REC > DUB > PLAY                 | REC > PLAY > DUB | Enter playback or overdub immediately when initial recording finishes. |
-| Start Action / Mode     | Immediate; Synced                                  | Synced           | Timing for recording starts and playback starts/retriggers.            |
-| Start Action / Interval | 1 bar; 1/2 bar; 1/4 bar; 1/8 bar; triplet variants | 1/4 bar          | Shown when Synced.                                                     |
-| Stop Action / Mode      | Immediate; Synced                                  | Immediate        | Timing for recording completion and stopping playback.                 |
-| Stop Action / Interval  | Same intervals as Start Action                     | 1/4 bar          | Shown when Synced.                                                     |
+| Setting                 | Choices                                                                | Default          | Purpose                                                                |
+| ----------------------- | ---------------------------------------------------------------------- | ---------------- | ---------------------------------------------------------------------- |
+| Record Action           | REC > PLAY > DUB; REC > DUB > PLAY                                     | REC > PLAY > DUB | Enter playback or overdub immediately when initial recording finishes. |
+| Start Action / Mode     | Immediate; Synced                                                      | Synced           | Timing for recording starts and playback starts/retriggers.            |
+| Start Action / Interval | 1 bar; 1/2 bar; 1/4 bar; 1/8 bar; 1/16 bar; 1/32 bar; triplet variants | 1/16 bar         | Shown when Synced.                                                     |
+| Stop Action / Mode      | Immediate; Synced                                                      | Synced           | Timing for recording completion and stopping playback.                 |
+| Stop Action / Interval  | Same intervals as Start Action                                         | 1/16 bar         | Shown when Synced.                                                     |
 
 The device-wide **Enable Loop Station** switch is separate and defaults to Off.
 Overdub input always starts and stops immediately.
@@ -147,7 +147,7 @@ recording, overdubbing, completing an overdub in the background, or committing r
 
 ### Timing examples
 
-With the default **Start = Synced 1/4 bar**, pressing Record queues recording until the next metronome click. The centre blinks red while waiting. The default **Stop = Immediate** finishes recording at the next centre press and immediately enters Play or Dub.
+Both actions default to **Synced 1/16 bar** (straight). Pressing Record queues recording until the next quarter-click subdivision of the metronome grid. The centre blinks red while waiting. Pressing the centre again queues recording completion at the next quarter-click subdivision, then immediately enters Play or Dub. Select **Immediate** for either action to remove its musical wait.
 
 Set **Stop = Synced 1 bar** to keep recording through four future metronome clicks after the stop gesture. On the fourth click recording ends and Play/Dub begins immediately. A double-tap to stop playback uses the same four-click wait, with a pending-stop LED indication.
 
@@ -185,7 +185,7 @@ discards the redo branch. Revision history is saved with the song and restored w
 
 ## Action timing and playback
 
-**Immediate** has no musical wait. **Synced** counts future metronome pulses: 1 bar waits four clicks, 1/2 bar waits two, 1/4 bar waits for the next click, and 1/8 bar waits for the next half-click subdivision. Triplet variants use pulse spacing of two-thirds the corresponding straight pulse. A gesture exactly on a pulse waits for the following pulse. The audible metronome can be off; its tempo grid still applies. This is a count from the gesture, not a wait for the next global bar line.
+**Immediate** has no musical wait. **Synced** counts future metronome pulses: 1 bar waits four clicks, 1/2 bar waits two, 1/4 bar waits for the next click, 1/8 bar waits for the next half-click subdivision, 1/16 bar for the next quarter-click subdivision, and 1/32 bar for the next eighth-click subdivision. Triplet variants use pulse spacing of two-thirds the corresponding straight pulse. A gesture exactly on a pulse waits for the following pulse. The audible metronome can be off; its tempo grid still applies. This is a count from the gesture, not a wait for the next global bar line.
 
 A further centre tap cancels a pending action. Fixed Record Duration remains a separate automatic limit and is not cancelled with a manual pending stop.
 
@@ -197,7 +197,7 @@ Stopped playback and one-shot retriggers always start at the logical beginning. 
 
 Stopped-track taps dispatch on release to preserve the two-second hold-to-clear gesture. Other track recording/playback gestures dispatch on press. Transport shutdown cancels queued actions, closes captures and stops playback while background file work finishes.
 
-Song saves store the new actions separately. Old recording quantization, restart, transition, fade and Loop Sync settings are ignored when loading; old songs receive the new action defaults while their audio, other settings and history are retained.
+Song saves store the new actions separately. Old recording quantization, restart, transition, fade and Loop Sync settings are ignored when loading; songs without saved Start/Stop Action settings receive the new defaults while their audio, other settings and history are retained. Existing saved action settings, including triplets and Immediate mode, keep their meaning. Missing or invalid action modes use Synced; missing or invalid intervals use straight 1/16 bar.
 
 ## Song and clip data
 

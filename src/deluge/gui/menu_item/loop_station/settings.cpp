@@ -47,8 +47,9 @@ public:
 			return {"Immediate", "Synced"};
 		case GlobalParameter::START_INTERVAL:
 		case GlobalParameter::STOP_INTERVAL:
-			return {"1 bar",         "1/2 bar",         "1/4 bar",         "1/8 bar",
-			        "1 bar triplet", "1/2 bar triplet", "1/4 bar triplet", "1/8 bar triplet"};
+			return {"1 bar",           "1/2 bar",         "1/4 bar",          "1/8 bar",
+			        "1/16 bar",        "1/32 bar",        "1 bar triplet",    "1/2 bar triplet",
+			        "1/4 bar triplet", "1/8 bar triplet", "1/16 bar triplet", "1/32 bar triplet"};
 		case GlobalParameter::DIM_BORDER_COLOUR:
 			return {"Red", "Orange", "Yellow", "Green", "Cyan", "Blue", "Purple", "Magenta", "White"};
 		}

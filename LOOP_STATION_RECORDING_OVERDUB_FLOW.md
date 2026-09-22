@@ -54,8 +54,10 @@ the current overdub:
 ## Musical timing
 
 Actions use ticks with 16 fractional bits. `actionPositionQ16()` includes the
-metronome offset and computes the next strictly future bar, half, quarter, or
-eighth boundary. Triplets retain fractional positions. `finalizeAudioWindow()`
+metronome offset and counts future pulses for bar/half/quarter intervals, or
+selects the next half-click, quarter-click, or eighth-click subdivision for
+1/8, 1/16, or 1/32 bar. Triplets retain fractional positions. Start and Stop
+both default to Synced, straight 1/16 bar. `finalizeAudioWindow()`
 shortens an audio render window so `processTick()` reaches the deadline at the
 first audio sample on or after it.
 

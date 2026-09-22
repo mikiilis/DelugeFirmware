@@ -1409,11 +1409,11 @@ weAreInArrangementEditorOrInClipInstance:
 	writer.writeOpeningTagBeginning("loopStation");
 	writer.writeAttribute("recordAction", util::to_underlying(loopStation.global.recordAction));
 	writer.writeAttribute("startActionMode", util::to_underlying(loopStation.global.startAction.mode));
-	writer.writeAttribute("startActionInterval", static_cast<int32_t>(loopStation.global.startAction.division)
-	                                                 + (loopStation.global.startAction.triplet ? 4 : 0));
+	writer.writeAttribute("startActionInterval",
+	                      deluge::loop_station::encodeActionInterval(loopStation.global.startAction));
 	writer.writeAttribute("stopActionMode", util::to_underlying(loopStation.global.stopAction.mode));
-	writer.writeAttribute("stopActionInterval", static_cast<int32_t>(loopStation.global.stopAction.division)
-	                                                + (loopStation.global.stopAction.triplet ? 4 : 0));
+	writer.writeAttribute("stopActionInterval",
+	                      deluge::loop_station::encodeActionInterval(loopStation.global.stopAction));
 	writer.writeAttribute("dimBorderColour", util::to_underlying(loopStation.global.dimBorderColour));
 	writer.writeOpeningTagEnd();
 	writer.writeArrayStart("tracks");
@@ -1972,7 +1972,16 @@ unknownTag:
 						                 : !strcmp(tagName, "stopActionMode")      ? GlobalParameter::STOP_ACTION
 						                 : !strcmp(tagName, "startActionInterval") ? GlobalParameter::START_INTERVAL
 						                                                           : GlobalParameter::STOP_INTERVAL;
-						writeGlobalParameter(loopStation, parameter, reader.readTagOrAttributeValueInt());
+						auto value = reader.readTagOrAttributeValueInt();
+						if (parameter == GlobalParameter::START_INTERVAL
+						    || parameter == GlobalParameter::STOP_INTERVAL) {
+							auto& timing = parameter == GlobalParameter::START_INTERVAL ? loopStation.global.startAction
+							                                                            : loopStation.global.stopAction;
+							decodeActionInterval(timing, value);
+						}
+						else {
+							writeGlobalParameter(loopStation, parameter, value);
+						}
 						reader.exitTag(tagName);
 					}
 					else if (!strcmp(tagName, "dimBorderColour")) {

@@ -147,9 +147,9 @@ Visible performance state is independent of WAV durability. A completed initial 
 
 ### Start Action and Stop Action
 
-These are the only timing controls and are song-wide. Each offers **Immediate** or **Synced**. Synced reveals an Interval selector with 1 bar, 1/2 bar, 1/4 bar, 1/8 bar and a triplet variant of each.
+These are the only timing controls and are song-wide. Each offers **Immediate** or **Synced**. Synced reveals an Interval selector with 1 bar, 1/2 bar, 1/4 bar, 1/8 bar, 1/16 bar, 1/32 bar and a triplet variant of each.
 
-Defaults: **Start = Synced, 1/4 bar**; **Stop = Immediate**.
+Defaults: **Start = Synced, 1/16 bar**; **Stop = Synced, 1/16 bar** (both straight).
 
 Immediate executes when the gesture dispatches. Synced counts strictly future tempo pulses, not global bar lines:
 
@@ -159,6 +159,8 @@ Immediate executes when the gesture dispatches. Synced counts strictly future te
 | 1/2 bar | Two quarter-note clicks |
 | 1/4 bar | Next quarter-note click |
 | 1/8 bar | Next half-click subdivision |
+| 1/16 bar | Next quarter-click subdivision |
+| 1/32 bar | Next eighth-click subdivision |
 | Triplet | Same pulse count with pulse spacing multiplied by 2/3 |
 
 A gesture exactly on a pulse waits for the following pulse. The clock uses the metronome offset and continues to define timing when the audible metronome is disabled. Fractional subdivisions retain sub-tick precision; audio windows are split at their deadline, rounded up to the next audio sample. Tempo changes affect pending actions but never recorded sample lengths or speed.
@@ -291,13 +293,13 @@ Source Track and Dim Border Colour exist internally but are not exposed in the c
 | --- | --- | --- |
 | Record Action | REC > PLAY > DUB; REC > DUB > PLAY | REC > PLAY > DUB |
 | Start Action / Mode | Immediate; Synced | Synced |
-| Start Action / Interval | 1, 1/2, 1/4, 1/8 bar; triplet variants | 1/4 bar |
-| Stop Action / Mode | Immediate; Synced | Immediate |
-| Stop Action / Interval | 1, 1/2, 1/4, 1/8 bar; triplet variants | 1/4 bar (hidden while Immediate) |
+| Start Action / Interval | 1, 1/2, 1/4, 1/8, 1/16, 1/32 bar; triplet variants | 1/16 bar |
+| Stop Action / Mode | Immediate; Synced | Synced |
+| Stop Action / Interval | 1, 1/2, 1/4, 1/8, 1/16, 1/32 bar; triplet variants | 1/16 bar |
 
 ### Settings Persistence and Migration
 
-The device-wide enable switch remains in `SETTINGS/CommunityFeatures.XML`. Song XML stores `startActionMode`, `startActionInterval`, `stopActionMode`, and `stopActionInterval` inside `loopStation`. Mode is 0 = Immediate, 1 = Synced. Interval is 0–3 = bar/half/quarter/eighth, 4–7 = their triplet variants. Invalid modes use the per-action default; invalid intervals use straight quarter.
+The device-wide enable switch remains in `SETTINGS/CommunityFeatures.XML`. Song XML stores `startActionMode`, `startActionInterval`, `stopActionMode`, and `stopActionInterval` inside `loopStation`. Mode is 0 = Immediate, 1 = Synced. Interval IDs remain 0–3 = bar/half/quarter/eighth and 4–7 = their triplet variants; 8 = 1/16 bar, 9 = 1/32 bar, 10 = 1/16 bar triplet, and 11 = 1/32 bar triplet. These saved IDs are independent of menu order (six straight intervals followed by six triplets). Existing valid action settings, including Immediate mode, are preserved. Missing or invalid modes use Synced; missing or invalid intervals use straight 1/16 bar.
 
 Ignore removed legacy `quantize`, `playbackTiming`, `startTiming`, `stopTiming`, `startFromStopped`, `loopSync`, `startMode`, `stopMode`, and fade fields. They do not override new defaults. Preserve Record Action, audio, bindings, other track settings and revision history. New saves omit obsolete timing fields. Legacy tick-based sample-zero offsets are converted against the saved phrase/sample lengths when frame offsets are absent.
 

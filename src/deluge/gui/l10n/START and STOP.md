@@ -1,3 +1,5 @@
+> Historical request, superseded by [the Loop Station specification](../../../../LOOP_STATION_SPEC.md). Start and Stop now both default to Synced, straight 1/16 bar; available intervals extend through 1/32 bar, including triplets.
+
 We need to simplify and refactor Start and Stop actions. First of all we need to remove Start and Stop transitions from loop track settings. Next in global loops station config, instead of record quintize and start stop timing and restart behaviour we need only 2 option, start and stop action (or another word). In each of these should be 2 options: Immediate or Synced.
 Immediate - means the recording, playback actions starts or stops right when user click the button (loop track button or right panel button).
 Synced - will have a miltiple options to postpone action to the next point in tempo. Option like: 1 bar (means the action wait for 4 clicks of metronome), 1/2 bar, 1/4 bar (1 click of metronome), 1/8 bar (half click of metronome). Also need option for triplet.

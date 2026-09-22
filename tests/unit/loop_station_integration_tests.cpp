@@ -319,6 +319,7 @@ TEST(LoopStationState, PerformanceGesturesActOnFirstPadDown) {
 
 TEST(LoopStationState, RecordOverdubPlayOrder) {
 	SongModel model;
+	model.global.stopAction.mode = ActionMode::IMMEDIATE;
 	model.global.startAction.mode = ActionMode::IMMEDIATE;
 	model.global.recordAction = RecordAction::RECORD_OVERDUB_PLAY;
 	Engine engine(model);
@@ -337,6 +338,7 @@ TEST(LoopStationState, RecordOverdubPlayOrder) {
 
 TEST(LoopStationState, RecordPlayOverdubOrder) {
 	SongModel model;
+	model.global.stopAction.mode = ActionMode::IMMEDIATE;
 	model.global.startAction.mode = ActionMode::IMMEDIATE;
 	model.global.recordAction = RecordAction::RECORD_PLAY_OVERDUB;
 	Engine engine(model);
@@ -391,6 +393,7 @@ TEST(LoopStationState, FixedLengthCompletesAtExactBars) {
 
 TEST(LoopStationState, DoubleTapDuringOverdubStops) {
 	SongModel model;
+	model.global.stopAction.mode = ActionMode::IMMEDIATE;
 	model.global.startAction.mode = ActionMode::IMMEDIATE;
 	model.global.recordAction = RecordAction::RECORD_PLAY_OVERDUB;
 
@@ -434,6 +437,7 @@ TEST(LoopStationState, DoubleTapFinishesEstablishedOverdubBeforeStopping) {
 
 TEST(LoopStationState, QuickSkipOfAutomaticOverdubPreservesInitialRecording) {
 	SongModel model;
+	model.global.stopAction.mode = ActionMode::IMMEDIATE;
 	model.global.startAction.mode = ActionMode::IMMEDIATE;
 	model.global.recordAction = RecordAction::RECORD_OVERDUB_PLAY;
 	Delegate delegate;
@@ -459,6 +463,7 @@ TEST(LoopStationState, QuickSkipOfAutomaticOverdubPreservesInitialRecording) {
 
 TEST(LoopStationState, UndoRedoIsIndependentPerTrack) {
 	SongModel model;
+	model.global.stopAction.mode = ActionMode::IMMEDIATE;
 	model.global.startAction.mode = ActionMode::IMMEDIATE;
 	model.global.recordAction = RecordAction::RECORD_PLAY_OVERDUB;
 	Engine engine(model);
@@ -479,6 +484,7 @@ TEST(LoopStationState, UndoRedoIsIndependentPerTrack) {
 
 TEST(LoopStationState, FailedBackingSnapshotSwapLeavesUndoStateUntouched) {
 	SongModel model;
+	model.global.stopAction.mode = ActionMode::IMMEDIATE;
 	model.global.startAction.mode = ActionMode::IMMEDIATE;
 	model.global.recordAction = RecordAction::RECORD_PLAY_OVERDUB;
 	Delegate delegate;
@@ -499,6 +505,7 @@ TEST(LoopStationState, FailedBackingSnapshotSwapLeavesUndoStateUntouched) {
 
 TEST(LoopStationState, InitialTakeAndLatestOverdubCanBothBeUndoneAndRedone) {
 	SongModel model;
+	model.global.stopAction.mode = ActionMode::IMMEDIATE;
 	model.global.startAction.mode = ActionMode::IMMEDIATE;
 	model.global.recordAction = RecordAction::RECORD_PLAY_OVERDUB;
 	Delegate delegate;
@@ -577,6 +584,7 @@ TEST(LoopStationState, EightEventsCompleteIndependently) {
 
 TEST(LoopStationState, ExitWaitsForAsynchronousCommit) {
 	SongModel model;
+	model.global.stopAction.mode = ActionMode::IMMEDIATE;
 	model.global.startAction.mode = ActionMode::IMMEDIATE;
 	model.global.recordAction = RecordAction::RECORD_PLAY_OVERDUB;
 	Delegate delegate;
@@ -593,6 +601,7 @@ TEST(LoopStationState, ExitWaitsForAsynchronousCommit) {
 
 TEST(LoopStationState, DependentOverdubStartsAfterAsyncCommitCompletes) {
 	SongModel model;
+	model.global.stopAction.mode = ActionMode::IMMEDIATE;
 	model.global.startAction.mode = ActionMode::IMMEDIATE;
 	model.global.recordAction = RecordAction::RECORD_OVERDUB_PLAY;
 	Delegate delegate;
@@ -611,6 +620,7 @@ TEST(LoopStationState, DependentOverdubStartsAfterAsyncCommitCompletes) {
 
 TEST(LoopStationState, ExitFromFirstTakeDoesNotEnterConfiguredOverdub) {
 	SongModel model;
+	model.global.stopAction.mode = ActionMode::IMMEDIATE;
 	model.global.startAction.mode = ActionMode::IMMEDIATE;
 	Engine engine(model);
 	engine.centrePressed(SlotId::ONE, at(0), 0);
@@ -660,6 +670,7 @@ TEST(LoopStationState, CentrePressAcknowledgesErrorWithoutStartingAnotherAction)
 
 TEST(LoopStationState, NewCompletedTakeInvalidatesRedo) {
 	SongModel model;
+	model.global.stopAction.mode = ActionMode::IMMEDIATE;
 	model.global.startAction.mode = ActionMode::IMMEDIATE;
 	model.global.recordAction = RecordAction::RECORD_PLAY_OVERDUB;
 	Engine engine(model);
@@ -677,6 +688,7 @@ TEST(LoopStationState, NewCompletedTakeInvalidatesRedo) {
 
 TEST(LoopStationState, DelegateMayCorrectCommittedFreshTakeLength) {
 	SongModel model;
+	model.global.stopAction.mode = ActionMode::IMMEDIATE;
 	model.global.startAction.mode = ActionMode::IMMEDIATE;
 	Delegate delegate;
 	delegate.committedLength = 47;
@@ -701,6 +713,7 @@ TEST(LoopStationState, FixedDurationClampsToMaximumSequenceLength) {
 
 TEST(LoopStationState, DelegateReceivesCaptureKindTickAndLength) {
 	SongModel model;
+	model.global.stopAction.mode = ActionMode::IMMEDIATE;
 	model.global.startAction.mode = ActionMode::IMMEDIATE;
 	model.global.recordAction = RecordAction::RECORD_PLAY_OVERDUB;
 	Delegate delegate;
@@ -762,6 +775,7 @@ TEST(LoopStationState, StartAllUsesOneSharedQuantizedBoundary) {
 
 TEST(LoopStationState, HoldClearRestoresOutputGainBeforeNextRecording) {
 	SongModel model;
+	model.global.stopAction.mode = ActionMode::IMMEDIATE;
 	model.global.startAction.mode = ActionMode::IMMEDIATE;
 	Delegate delegate;
 	Engine engine(model, &delegate);
@@ -781,6 +795,7 @@ TEST(LoopStationState, HoldClearRestoresOutputGainBeforeNextRecording) {
 
 TEST(LoopStationState, UndoToEmptyRestoresOutputGainBeforeNextRecording) {
 	SongModel model;
+	model.global.stopAction.mode = ActionMode::IMMEDIATE;
 	model.global.startAction.mode = ActionMode::IMMEDIATE;
 	Delegate delegate;
 	Engine engine(model, &delegate);
@@ -814,6 +829,7 @@ TEST(LoopStationState, UndoFromStoppedMakesEarlierRevisionAudible) {
 
 TEST(LoopStationState, MultipleAsynchronousCommitsBlockExitIndependently) {
 	SongModel model;
+	model.global.stopAction.mode = ActionMode::IMMEDIATE;
 	model.global.startAction.mode = ActionMode::IMMEDIATE;
 	model.global.recordAction = RecordAction::RECORD_PLAY_OVERDUB;
 	Delegate delegate;
@@ -850,6 +866,7 @@ TEST(LoopStationState, FailedCommitPreservesPreviousPhraseRevision) {
 
 TEST(LoopStationState, AsyncCommitPreservesSpecificStorageFailure) {
 	SongModel model;
+	model.global.stopAction.mode = ActionMode::IMMEDIATE;
 	model.global.startAction.mode = ActionMode::IMMEDIATE;
 	Delegate delegate;
 	delegate.asynchronous = true;
@@ -863,6 +880,7 @@ TEST(LoopStationState, AsyncCommitPreservesSpecificStorageFailure) {
 
 TEST(LoopStationState, SubTickTakeRetainsPositiveClipMetadata) {
 	SongModel model;
+	model.global.stopAction.mode = ActionMode::IMMEDIATE;
 	model.global.startAction.mode = ActionMode::IMMEDIATE;
 	Delegate delegate;
 	Engine engine(model, &delegate);
@@ -877,6 +895,7 @@ TEST(LoopStationState, SubTickTakeRetainsPositiveClipMetadata) {
 
 TEST(LoopStationState, OneTickTakeCommitsOnceDespiteRepeatedCompletion) {
 	SongModel model;
+	model.global.stopAction.mode = ActionMode::IMMEDIATE;
 	model.global.startAction.mode = ActionMode::IMMEDIATE;
 	Delegate delegate;
 	delegate.asynchronous = true;
@@ -1389,6 +1408,7 @@ TEST(LoopStationState, StartupRejectsSameSlotGesturesButOtherSlotsRemainUsable) 
 
 TEST(LoopStationState, ExitDuringStartupWaitsAndDrainsNewRecorder) {
 	SongModel model;
+	model.global.stopAction.mode = ActionMode::IMMEDIATE;
 	model.global.startAction.mode = ActionMode::IMMEDIATE;
 	Delegate delegate;
 	delegate.asynchronous = true;

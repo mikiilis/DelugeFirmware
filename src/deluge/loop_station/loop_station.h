@@ -24,12 +24,16 @@ constexpr uint32_t kMaxLoopSequenceLength = 1610612736;
 enum class SlotId : uint8_t { ONE, TWO, THREE, FOUR, FIVE, SIX, SEVEN, EIGHT };
 enum class RecordAction : uint8_t { RECORD_OVERDUB_PLAY, RECORD_PLAY_OVERDUB };
 enum class ActionMode : uint8_t { IMMEDIATE, SYNCED };
-enum class ActionDivision : uint8_t { BAR, HALF, QUARTER, EIGHTH };
+enum class ActionDivision : uint8_t { BAR, HALF, QUARTER, EIGHTH, SIXTEENTH, THIRTY_SECOND };
+constexpr int32_t kActionDivisionCount = 6;
 struct ActionTiming {
 	ActionMode mode = ActionMode::SYNCED;
-	ActionDivision division = ActionDivision::QUARTER;
+	ActionDivision division = ActionDivision::SIXTEENTH;
 	bool triplet = false;
 };
+// Song-file IDs are independent of menu order: IDs 0–7 retain their original meanings.
+[[nodiscard]] int32_t encodeActionInterval(ActionTiming timing);
+void decodeActionInterval(ActionTiming& timing, int32_t value);
 enum class TrackState : uint8_t { EMPTY, RECORDING, OVERDUBBING, PLAYING, STOPPED, ERROR };
 enum class PlaybackMode : uint8_t { LOOP, ONE_SHOT };
 enum class SourceType : uint8_t { LEFT, RIGHT, STEREO, BALANCED, MIX_PRE_FX, MIX_POST_FX, SONG_TRACK };
@@ -140,7 +144,7 @@ constexpr Enum clampEnum(uint32_t raw, Enum fallback) {
 struct GlobalSettings {
 	RecordAction recordAction = RecordAction::RECORD_PLAY_OVERDUB;
 	ActionTiming startAction{};
-	ActionTiming stopAction{ActionMode::IMMEDIATE};
+	ActionTiming stopAction{};
 	PadColour dimBorderColour = PadColour::BLUE;
 };
 

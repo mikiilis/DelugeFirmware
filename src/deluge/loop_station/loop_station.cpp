@@ -49,10 +49,12 @@ void SongModel::sanitize() {
 	global.recordAction = clampEnum<RecordAction, RecordAction::RECORD_PLAY_OVERDUB>(
 	    static_cast<uint32_t>(global.recordAction), RecordAction::RECORD_PLAY_OVERDUB);
 	for (auto* timing : {&global.startAction, &global.stopAction}) {
-		auto fallback = timing == &global.startAction ? ActionMode::SYNCED : ActionMode::IMMEDIATE;
-		timing->mode = clampEnum<ActionMode, ActionMode::SYNCED>(static_cast<uint32_t>(timing->mode), fallback);
-		timing->division = clampEnum<ActionDivision, ActionDivision::EIGHTH>(static_cast<uint32_t>(timing->division),
-		                                                                     ActionDivision::QUARTER);
+		timing->mode =
+		    clampEnum<ActionMode, ActionMode::SYNCED>(static_cast<uint32_t>(timing->mode), ActionMode::SYNCED);
+		if (static_cast<uint32_t>(timing->division) >= kActionDivisionCount) {
+			timing->division = ActionDivision::SIXTEENTH;
+			timing->triplet = false;
+		}
 	}
 	global.dimBorderColour =
 	    clampEnum<PadColour, PadColour::WHITE>(static_cast<uint32_t>(global.dimBorderColour), PadColour::BLUE);
@@ -73,6 +75,28 @@ bool copyTrackConfiguration(SongModel& model, SlotId source, SlotId destination)
 	return true;
 }
 
+int32_t encodeActionInterval(ActionTiming timing) {
+	auto division = static_cast<int32_t>(timing.division);
+	if (division < 4)
+		return division + (timing.triplet ? 4 : 0);
+	return 8 + (division - 4) + (timing.triplet ? 2 : 0);
+}
+
+void decodeActionInterval(ActionTiming& timing, int32_t value) {
+	if (value < 0 || value > 11) {
+		timing.division = ActionDivision::SIXTEENTH;
+		timing.triplet = false;
+	}
+	else if (value < 8) {
+		timing.division = static_cast<ActionDivision>(value % 4);
+		timing.triplet = value >= 4;
+	}
+	else {
+		timing.division = static_cast<ActionDivision>(4 + (value - 8) % 2);
+		timing.triplet = value >= 10;
+	}
+}
+
 int32_t readGlobalParameter(SongModel const& model, GlobalParameter parameter) {
 	if (parameter == GlobalParameter::RECORD_ACTION)
 		return static_cast<int32_t>(model.global.recordAction);
@@ -82,7 +106,7 @@ int32_t readGlobalParameter(SongModel const& model, GlobalParameter parameter) {
 	                         ? model.global.startAction
 	                         : model.global.stopAction;
 	return parameter == GlobalParameter::START_INTERVAL || parameter == GlobalParameter::STOP_INTERVAL
-	           ? static_cast<int32_t>(timing.division) + (timing.triplet ? 4 : 0)
+	           ? static_cast<int32_t>(timing.division) + (timing.triplet ? kActionDivisionCount : 0)
 	           : static_cast<int32_t>(timing.mode);
 }
 
@@ -100,14 +124,13 @@ void writeGlobalParameter(SongModel& model, GlobalParameter parameter, int32_t v
 	bool start = parameter == GlobalParameter::START_ACTION || parameter == GlobalParameter::START_INTERVAL;
 	auto& timing = start ? model.global.startAction : model.global.stopAction;
 	if (parameter == GlobalParameter::START_INTERVAL || parameter == GlobalParameter::STOP_INTERVAL) {
-		if (value < 0 || value > 7)
-			value = 2;
-		timing.division = static_cast<ActionDivision>(value % 4);
-		timing.triplet = value >= 4;
+		if (value < 0 || value >= 2 * kActionDivisionCount)
+			value = static_cast<int32_t>(ActionDivision::SIXTEENTH);
+		timing.division = static_cast<ActionDivision>(value % kActionDivisionCount);
+		timing.triplet = value >= kActionDivisionCount;
 	}
 	else {
-		timing.mode = clampEnum<ActionMode, ActionMode::SYNCED>(static_cast<uint32_t>(value),
-		                                                        start ? ActionMode::SYNCED : ActionMode::IMMEDIATE);
+		timing.mode = clampEnum<ActionMode, ActionMode::SYNCED>(static_cast<uint32_t>(value), ActionMode::SYNCED);
 	}
 }
 
@@ -209,8 +232,9 @@ uint64_t Engine::actionPositionQ16(Transport const& transport, ActionTiming timi
 	uint64_t position = (static_cast<uint64_t>(transport.tick) << 16) | transport.fractionQ16;
 	if (timing.mode == ActionMode::IMMEDIATE || !transport.barLength)
 		return position;
-	// Sixths retain exact half beats and triplets, including odd tick resolutions.
-	uint64_t pulse = std::max<uint32_t>(1, transport.barLength / 4) * (timing.triplet ? 4ull : 6ull);
+	// Twenty-fourths retain exact eighth-beat and triplet subdivisions, even at odd tick resolutions.
+	constexpr uint64_t subdivisions = 24;
+	uint64_t pulse = std::max<uint32_t>(1, transport.barLength / 4) * (timing.triplet ? 16ull : subdivisions);
 	uint32_t count = 1;
 	switch (timing.division) {
 	case ActionDivision::BAR:
@@ -224,10 +248,17 @@ uint64_t Engine::actionPositionQ16(Transport const& transport, ActionTiming timi
 	case ActionDivision::EIGHTH:
 		pulse /= 2;
 		break;
+	case ActionDivision::SIXTEENTH:
+		pulse /= 4;
+		break;
+	case ActionDivision::THIRTY_SECOND:
+		pulse /= 8;
+		break;
 	}
 	uint64_t offset = static_cast<uint64_t>(transport.metronomeOffset) << 16;
-	uint64_t target = (((position + offset) * 6 / (pulse << 16)) + count) * pulse;
-	return std::min<uint64_t>(((target << 16) + 5) / 6 - offset, static_cast<uint64_t>(UINT32_MAX) << 16);
+	uint64_t target = (((position + offset) * subdivisions / (pulse << 16)) + count) * pulse;
+	return std::min<uint64_t>(((target << 16) + subdivisions - 1) / subdivisions - offset,
+	                          static_cast<uint64_t>(UINT32_MAX) << 16);
 }
 
 uint32_t Engine::actionTick(Transport const& transport, ActionTiming timing) {

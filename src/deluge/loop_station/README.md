@@ -7,13 +7,15 @@ The unused parallel `deluge::loop_station::core` implementation was removed.
 
 `LoopStationView` binds the engine to ordinary Audio Clips and delegates capture,
 input gates, playback, errors and durable revision publication. Song XML owns
-settings and history; WAV files hold audio. Menus use the same bounded parameter
-adapters as persistence and host tests.
+settings and history; WAV files hold audio. Menus use bounded parameter adapters
+shared with host tests. Song interval encoding is independent of menu order and
+preserves existing straight/triplet IDs.
 
 Start Action and Stop Action share one deadline calculation for individual and
-group gestures. Sixths-of-a-tick arithmetic retains straight and triplet pulse
-ratios; Q16 positions preserve fractional deadlines. `AudioEngine` splits render
-windows at those deadlines. Display refresh never executes queued actions.
+group gestures. Both default to Synced, straight 1/16 bar. Intervals range from
+1 bar to 1/32 bar, with triplet variants of each. Twenty-fourths-of-a-tick
+arithmetic retains straight and triplet pulse ratios; Q16 positions preserve
+fractional deadlines. `AudioEngine` splits render windows at those deadlines. Display refresh never executes queued actions.
 `scheduler.h` retains the integer scheduler adapter and bounded diagnostic trace
 for host coverage; production action execution uses the audio-window hook.
 

@@ -31,22 +31,25 @@ TEST_GROUP(LoopStationActions){};
 TEST(LoopStationActions, DefaultsAndAllIntervalRoundTrips) {
 	SongModel model;
 	CHECK(model.global.startAction.mode == ActionMode::SYNCED);
-	CHECK(model.global.startAction.division == ActionDivision::QUARTER);
-	CHECK(model.global.stopAction.mode == ActionMode::IMMEDIATE);
+	CHECK(model.global.startAction.division == ActionDivision::SIXTEENTH);
+	CHECK_FALSE(model.global.startAction.triplet);
+	CHECK(model.global.stopAction.division == ActionDivision::SIXTEENTH);
+	CHECK_FALSE(model.global.stopAction.triplet);
+	CHECK(model.global.stopAction.mode == ActionMode::SYNCED);
 	for (auto field : {GlobalParameter::START_INTERVAL, GlobalParameter::STOP_INTERVAL}) {
-		for (int value = 0; value < 8; ++value) {
+		for (int value = 0; value < 12; ++value) {
 			writeGlobalParameter(model, field, value);
 			CHECK_EQUAL(value, readGlobalParameter(model, field));
 		}
-		for (int invalid : {-1, 8, 256, 65538}) {
+		for (int invalid : {-1, 12, 256, 65538}) {
 			writeGlobalParameter(model, field, invalid);
-			CHECK_EQUAL(2, readGlobalParameter(model, field));
+			CHECK_EQUAL(4, readGlobalParameter(model, field));
 		}
 	}
 	writeGlobalParameter(model, GlobalParameter::START_ACTION, 256);
 	writeGlobalParameter(model, GlobalParameter::STOP_ACTION, -1);
 	CHECK(model.global.startAction.mode == ActionMode::SYNCED);
-	CHECK(model.global.stopAction.mode == ActionMode::IMMEDIATE);
+	CHECK(model.global.stopAction.mode == ActionMode::SYNCED);
 }
 
 TEST(LoopStationActions, CountsFutureClicksInsteadOfNextBar) {
@@ -54,18 +57,131 @@ TEST(LoopStationActions, CountsFutureClicksInsteadOfNextBar) {
 	CHECK_EQUAL(96, Engine::actionTick(timeAt(50), {ActionMode::SYNCED, ActionDivision::HALF}));
 	CHECK_EQUAL(72, Engine::actionTick(timeAt(50), {ActionMode::SYNCED, ActionDivision::QUARTER}));
 	CHECK_EQUAL(60, Engine::actionTick(timeAt(50), {ActionMode::SYNCED, ActionDivision::EIGHTH}));
-	CHECK_EQUAL(48, Engine::actionTick(timeAt(24), {}));
-	CHECK_EQUAL(24, Engine::actionTick(timeAt(0), {}));
+	CHECK_EQUAL(48, Engine::actionTick(timeAt(24), {ActionMode::SYNCED, ActionDivision::QUARTER}));
+	CHECK_EQUAL(24, Engine::actionTick(timeAt(0), {ActionMode::SYNCED, ActionDivision::QUARTER}));
 	auto offset = timeAt(20);
 	offset.metronomeOffset = 12;
-	CHECK_EQUAL(36, Engine::actionTick(offset, {}));
+	CHECK_EQUAL(36, Engine::actionTick(offset, {ActionMode::SYNCED, ActionDivision::QUARTER}));
+}
+
+TEST(LoopStationActions, SavedIntervalIdsPreserveLegacyTripletsAndAppendShortDivisions) {
+	constexpr ActionDivision divisions[] = {
+	    ActionDivision::BAR,           ActionDivision::HALF,      ActionDivision::QUARTER,
+	    ActionDivision::EIGHTH,        ActionDivision::BAR,       ActionDivision::HALF,
+	    ActionDivision::QUARTER,       ActionDivision::EIGHTH,    ActionDivision::SIXTEENTH,
+	    ActionDivision::THIRTY_SECOND, ActionDivision::SIXTEENTH, ActionDivision::THIRTY_SECOND};
+	for (int id = 0; id < 12; ++id) {
+		ActionTiming timing{ActionMode::IMMEDIATE};
+		decodeActionInterval(timing, id);
+		CHECK(timing.mode == ActionMode::IMMEDIATE);
+		CHECK(timing.division == divisions[id]);
+		CHECK_EQUAL((id >= 4 && id < 8) || id >= 10, timing.triplet);
+		CHECK_EQUAL(id, encodeActionInterval(timing));
+		SongModel model;
+		model.global.startAction = timing;
+		model.sanitize();
+		CHECK_EQUAL(id, encodeActionInterval(model.global.startAction));
+		writeGlobalParameter(model, GlobalParameter::STOP_INTERVAL,
+		                     readGlobalParameter(model, GlobalParameter::START_INTERVAL));
+		CHECK_EQUAL(id, encodeActionInterval(model.global.stopAction));
+	}
+	for (int invalid : {-1, 12, 256, 65538}) {
+		ActionTiming timing{ActionMode::IMMEDIATE, ActionDivision::BAR, true};
+		decodeActionInterval(timing, invalid);
+		CHECK(timing.mode == ActionMode::IMMEDIATE);
+		CHECK(timing.division == ActionDivision::SIXTEENTH);
+		CHECK_FALSE(timing.triplet);
+	}
+	SongModel model;
+	for (auto* timing : {&model.global.startAction, &model.global.stopAction}) {
+		*timing = {static_cast<ActionMode>(99), static_cast<ActionDivision>(99), true};
+	}
+	model.sanitize();
+	for (auto timing : {model.global.startAction, model.global.stopAction}) {
+		CHECK(timing.mode == ActionMode::SYNCED);
+		CHECK(timing.division == ActionDivision::SIXTEENTH);
+		CHECK_FALSE(timing.triplet);
+	}
+}
+
+TEST(LoopStationActions, ShortIntervalsRetainFractionalDeadlinesAndMetronomeOffset) {
+	for (uint32_t bar : {4u, 20u, 96u, 192u, 384u}) {
+		for (auto division : {ActionDivision::SIXTEENTH, ActionDivision::THIRTY_SECOND}) {
+			for (bool triplet : {false, true}) {
+				ActionTiming timing{ActionMode::SYNCED, division, triplet};
+				uint64_t numerator = static_cast<uint64_t>(bar) * 65536 * (triplet ? 2 : 1);
+				uint64_t denominator = (1u << static_cast<uint32_t>(division)) * (triplet ? 3 : 1);
+				for (uint32_t offset : {0u, 1u, 7u}) {
+					// Start at a later pulse, including pulses between whole song ticks.
+					uint64_t pulseNumber = 256;
+					uint64_t position = (pulseNumber * numerator + denominator - 1) / denominator
+					                    - (static_cast<uint64_t>(offset) << 16);
+					uint64_t expected = ((pulseNumber + 1) * numerator + denominator - 1) / denominator
+					                    - (static_cast<uint64_t>(offset) << 16);
+					auto now = timeAt(position >> 16, bar);
+					now.fractionQ16 = position & 65535;
+					now.metronomeOffset = offset;
+					CHECK_EQUAL(expected, Engine::actionPositionQ16(now, timing));
+					now.tick = (expected - 1) >> 16;
+					now.fractionQ16 = (expected - 1) & 65535;
+					CHECK_EQUAL(expected, Engine::actionPositionQ16(now, timing));
+				}
+			}
+		}
+	}
+}
+
+TEST(LoopStationActions, ShortIntervalsGateCaptureAndGroupActionsAtExactDeadlines) {
+	for (auto division : {ActionDivision::SIXTEENTH, ActionDivision::THIRTY_SECOND}) {
+		for (bool triplet : {false, true}) {
+			SongModel model;
+			model.global.startAction = model.global.stopAction = {ActionMode::SYNCED, division, triplet};
+			ActionDelegate delegate;
+			Engine engine(model, &delegate);
+			auto now = timeAt(0, 20);
+			auto advance = [&](uint64_t position) {
+				now.tick = position >> 16;
+				now.fractionQ16 = position & 65535;
+				engine.processTick(now);
+			};
+			engine.centrePressed(SlotId::ONE, now, 0);
+			auto start = engine.nextActionPositionQ16();
+			advance(start - 1);
+			CHECK_EQUAL(0, delegate.begins);
+			advance(start);
+			CHECK_EQUAL(1, delegate.begins);
+			engine.centrePressed(SlotId::ONE, now, 1000);
+			auto end = engine.nextActionPositionQ16();
+			CHECK(end > start);
+			advance(end - 1);
+			CHECK_EQUAL(0, delegate.ends);
+			advance(end);
+			CHECK_EQUAL(1, delegate.ends);
+			CHECK(engine.track(SlotId::ONE).state == TrackState::PLAYING);
+			for (auto slot : {SlotId::TWO, SlotId::THREE})
+				engine.restoreBoundPhrase(slot, slot == SlotId::TWO ? 48 : 96, false);
+			engine.startAll(now);
+			auto play = engine.nextActionPositionQ16();
+			advance(play - 1);
+			for (auto slot : {SlotId::TWO, SlotId::THREE})
+				CHECK(engine.track(slot).state == TrackState::STOPPED);
+			advance(play);
+			engine.stopAll(now);
+			auto stop = engine.nextActionPositionQ16();
+			advance(stop - 1);
+			for (auto slot : {SlotId::ONE, SlotId::TWO, SlotId::THREE})
+				CHECK(engine.track(slot).state == TrackState::PLAYING);
+			advance(stop);
+			for (auto slot : {SlotId::ONE, SlotId::TWO, SlotId::THREE})
+				CHECK(engine.track(slot).state == TrackState::STOPPED);
+		}
+	}
 }
 
 TEST(LoopStationActions, TripletsAndModesAcrossClockResolutions) {
 	for (uint32_t bar : {96u, 192u, 384u}) {
-		uint32_t q = bar / 4;
 		for (bool triplet : {false, true}) {
-			for (uint32_t division = 0; division < 4; ++division) {
+			for (uint32_t division = 0; division < 6; ++division) {
 				ActionTiming timing{ActionMode::SYNCED, static_cast<ActionDivision>(division), triplet};
 				uint32_t interval = bar / (1u << division);
 				if (triplet)
@@ -81,6 +197,7 @@ TEST(LoopStationActions, TripletsAndModesAcrossClockResolutions) {
 
 TEST(LoopStationActions, RequestedRecordPlayAndDoubleStopSequence) {
 	SongModel model;
+	model.global.startAction.division = ActionDivision::QUARTER;
 	model.global.stopAction = {ActionMode::SYNCED, ActionDivision::BAR};
 	ActionDelegate delegate;
 	Engine engine(model, &delegate);
@@ -144,6 +261,7 @@ TEST(LoopStationActions, ContinuousOverdubHasNoMusicalEndAndStopsInputImmediatel
 
 TEST(LoopStationActions, CommitDoesNotDelayDependentOverdubOrResetItsPosition) {
 	SongModel model;
+	model.global.stopAction.mode = ActionMode::IMMEDIATE;
 	model.global.startAction.mode = ActionMode::IMMEDIATE;
 	model.global.recordAction = RecordAction::RECORD_OVERDUB_PLAY;
 	ActionDelegate delegate;
@@ -163,6 +281,7 @@ TEST(LoopStationActions, CommitDoesNotDelayDependentOverdubOrResetItsPosition) {
 
 TEST(LoopStationActions, StopAllIncludesRecordingOverdubAndPendingStarts) {
 	SongModel model;
+	model.global.stopAction.mode = ActionMode::IMMEDIATE;
 	model.global.startAction.mode = ActionMode::IMMEDIATE;
 	ActionDelegate delegate;
 	Engine engine(model, &delegate);
@@ -269,6 +388,7 @@ TEST(LoopStationActions, PendingCommitStillUsesConfiguredStopAction) {
 
 TEST(LoopStationActions, AutomaticOverdubRejectionPreservesFirstTakePublication) {
 	SongModel model;
+	model.global.stopAction.mode = ActionMode::IMMEDIATE;
 	model.global.startAction.mode = ActionMode::IMMEDIATE;
 	model.global.recordAction = RecordAction::RECORD_OVERDUB_PLAY;
 	ActionDelegate delegate;
