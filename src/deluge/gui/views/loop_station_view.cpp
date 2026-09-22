@@ -171,7 +171,7 @@ void LoopStationView::updateUndoLed() {
 	if (engine_ && selectedSlot_) {
 		auto const& runtime = engine_->track(*selectedSlot_);
 		bool busy = runtime.state == TrackState::RECORDING || runtime.state == TrackState::OVERDUBBING
-		            || runtime.finishingOverdub || runtime.state == TrackState::COMMITTING;
+		            || runtime.finishingOverdub;
 		available = !busy && (runtime.undoAvailable || runtime.redoAvailable);
 	}
 	indicator_leds::setLedState(IndicatorLED::BACK, available);
@@ -198,6 +198,16 @@ void LoopStationView::restoreBoundPhrases() {
 		auto* audioClip = static_cast<AudioClip*>(clip);
 		if (audioClip->loopStationSlotId >= 1 && audioClip->loopStationSlotId <= kTrackCount) {
 			auto slot = static_cast<SlotId>(audioClip->loopStationSlotId - 1);
+			auto& binding = currentSong->loopStation.tracks[static_cast<size_t>(slot)];
+			if (!binding.transposePresent && (audioClip->sampleHolder.transpose || audioClip->sampleHolder.cents)) {
+				writeTrackParameter(currentSong->loopStation, slot, TrackParameter::TRANSPOSE,
+				                    audioClip->sampleHolder.transpose * 100 + audioClip->sampleHolder.cents);
+			}
+			// Loop Station transpose is a track setting. Sample metadata must stay
+			// neutral so another overdub never bakes or reapplies the setting.
+			audioClip->sampleHolder.transpose = 0;
+			audioClip->sampleHolder.cents = 0;
+			audioClip->sampleHolder.recalculateNeutralPhaseIncrement();
 			auto& history = currentSong->loopStationRevisionHistory[static_cast<size_t>(slot)];
 			history.seedFromClip(*audioClip);
 			if (audioClip->isEmpty(false) && history.revisions.empty()) {
@@ -272,38 +282,49 @@ AudioClip* LoopStationView::ensureBackingClip(SlotId slot) {
 	return result;
 }
 
-bool LoopStationView::preflight(SlotId slot, bool overdub) {
+deluge::loop_station::Error LoopStationView::preflight(SlotId slot, bool overdub) {
 	AudioClip* clip = ensureBackingClip(slot);
-	if (!clip || clip->recorder || overdub == clip->isEmpty(false)) {
-		return false;
-	}
+	if (!clip)
+		return deluge::loop_station::Error::ALLOCATION;
+	if (clip->recorder)
+		return deluge::loop_station::Error::RESOURCE_LIMIT;
+	if (overdub == clip->isEmpty(false))
+		return overdub ? deluge::loop_station::Error::BACKING_UNAVAILABLE : deluge::loop_station::Error::INTERNAL;
 	auto* output = static_cast<AudioOutput*>(clip->output);
 	bool sourceValid =
 	    output->inputChannel > AudioInputChannel::NONE
 	    && (output->inputChannel != AudioInputChannel::SPECIFIC_OUTPUT || output->getOutputRecordingFrom());
 	if (!sourceValid)
-		return false;
+		return deluge::loop_station::Error::SOURCE_REMOVED;
 	auto source = currentSong->loopStation.tracks[static_cast<size_t>(slot)].settings.source;
-	return AudioEngine::hasRecorderChannelCapacity(recorderChannelCount(source, overdub));
+	if (!AudioEngine::hasRecorderChannelCapacity(recorderChannelCount(source, overdub)))
+		return deluge::loop_station::Error::RESOURCE_LIMIT;
+	return output->prepareLoopStationPitchShifter() == ::Error::NONE ? deluge::loop_station::Error::NONE
+	                                                                 : deluge::loop_station::Error::ALLOCATION;
 }
 
-bool LoopStationView::beginCapture(SlotId slot, bool overdub, uint32_t tick) {
+deluge::loop_station::Error LoopStationView::beginCapture(SlotId slot, bool overdub, uint32_t tick) {
 	AudioClip* clip = backingClip(slot);
 	OwnershipScope ownership({reinterpret_cast<uintptr_t>(currentSong), reinterpret_cast<uintptr_t>(clip),
 	                          reinterpret_cast<uintptr_t>(clip ? clip->recorder : nullptr),
 	                          reinterpret_cast<uintptr_t>(pendingCommitRecorders_[static_cast<size_t>(slot)]),
 	                          static_cast<uint32_t>(slot), 1});
 	if (!clip || clip->recorder) {
-		return false;
+		return clip ? deluge::loop_station::Error::RESOURCE_LIMIT : deluge::loop_station::Error::BACKING_UNAVAILABLE;
 	}
 
 	size_t index = static_cast<size_t>(slot);
+	bool reservedHere = pendingCommitRecorders_[index] == nullptr;
+	auto reject = [&](deluge::loop_station::Error error) {
+		if (reservedHere)
+			currentSong->loopStationRevisionHistory[index].discardStaged();
+		return error;
+	};
 	// Reserve the append before creating the recorder, and retain the active
 	// revision before an overdub. Allocation or SD failure can therefore never
 	// strand the clip after its old Sample has been released.
-	if (!pendingCommitRecorders_[index]
-	    && !currentSong->loopStationRevisionHistory[index].prepareAppend(*clip, overdub)) {
-		return false;
+	if (reservedHere && !currentSong->loopStationRevisionHistory[index].prepareAppend(*clip, overdub)) {
+		return reject(deluge::loop_station::Error::ALLOCATION);
 	}
 	char modelStackMemory[MODEL_STACK_MAX_SIZE];
 	auto* modelStack = setupModelStackWithTimelineCounter(modelStackMemory, currentSong, clip);
@@ -314,7 +335,7 @@ bool LoopStationView::beginCapture(SlotId slot, bool overdub, uint32_t tick) {
 		if (!clip->voiceSample)
 			clip->resumePlayback(modelStack, true);
 		if (!clip->voiceSample)
-			return false;
+			return reject(deluge::loop_station::Error::BACKING_UNAVAILABLE);
 		auto* sample = static_cast<Sample*>(clip->sampleHolder.audioFile);
 		uint32_t frames = clip->sampleHolder.getDurationInSamples(true);
 		int64_t frame = clip->voiceSample->getPlaySample(sample, &clip->guide) - clip->sampleHolder.startPos;
@@ -325,7 +346,9 @@ bool LoopStationView::beginCapture(SlotId slot, bool overdub, uint32_t tick) {
 	playbackHandler.recording = RecordingMode::NORMAL;
 	::Error error = clip->beginLinearRecording(modelStack, 0);
 	if (error != ::Error::NONE) {
-		return false;
+		if (clip->recorder)
+			clip->abortRecording();
+		return reject(recorderError(error));
 	}
 	// Every Loop Station WAV is a fixed-gain dry revision. Explicitly disable
 	// normalization and file alteration for first takes as well as overdubs.
@@ -348,11 +371,11 @@ bool LoopStationView::beginCapture(SlotId slot, bool overdub, uint32_t tick) {
 		                                               clip->sampleHolder.startPos, sourceFrame);
 		if (result != ::Error::NONE) {
 			clip->abortRecording();
-			return false;
+			return reject(recorderError(result));
 		}
 	}
 	refreshMonitoring();
-	return true;
+	return deluge::loop_station::Error::NONE;
 }
 
 CaptureFinish LoopStationView::finishCapture(SlotId slot, bool overdub, uint32_t length, bool crop) {
@@ -435,13 +458,9 @@ CaptureFinish LoopStationView::finishCapture(SlotId slot, bool overdub, uint32_t
 		clip->loopStationSampleZeroFrames = overdub ? overdubStartFrames_[static_cast<size_t>(slot)] : 0;
 		clip->loopStationSampleZeroTicks = 0;
 
-		// Apply Loop Station track transpose to the recorded clip
-		auto const& settings = currentSong->loopStation.tracks[static_cast<size_t>(slot)].settings;
-		if (settings.transpose != 0 || settings.transposeCents != 0) {
-			clip->sampleHolder.transpose = settings.transpose;
-			clip->sampleHolder.cents = settings.transposeCents;
-			clip->sampleHolder.recalculateNeutralPhaseIncrement();
-		}
+		clip->sampleHolder.transpose = 0;
+		clip->sampleHolder.cents = 0;
+		clip->sampleHolder.recalculateNeutralPhaseIncrement();
 
 		size_t index = static_cast<size_t>(slot);
 		auto& history = currentSong->loopStationRevisionHistory[index];
@@ -577,7 +596,7 @@ void LoopStationView::processPendingCommits() {
 		return;
 	}
 	for (size_t i = 0; i < pendingCommitRecorders_.size(); ++i) {
-		// finishCapture may yield after staging but before the engine enters COMMITTING.
+		// finishCapture may yield after staging but before committingLength becomes visible.
 		if (engine_->track(static_cast<SlotId>(i)).finishingCapture) {
 			continue;
 		}
@@ -647,7 +666,7 @@ void LoopStationView::processPendingCommits() {
 			    }
 			    if (!published && !engine_->track(slot).stopAfterCapture)
 				    resumeCommittedClip(slot);
-			    engine_->notifyCommitComplete(slot, published, failure, transport().tick);
+			    engine_->notifyCommitComplete(slot, published, failure);
 			    if (published && clip && clip->recorder && !history.prepareAppend(*clip, true))
 				    engine_->notifyFailure(slot, deluge::loop_station::Error::ALLOCATION);
 		    });
@@ -695,6 +714,8 @@ void LoopStationView::stateChanged(SlotId slot, TrackState state) {
 			display->displayError(::Error::WRITE_PROTECTED);
 			break;
 		case deluge::loop_station::Error::RESOURCE_LIMIT:
+			display->displayPopup(l10n::get(l10n::String::STRING_FOR_LOOP_STATION_RECORDER_LIMIT));
+			break;
 		case deluge::loop_station::Error::ALLOCATION:
 			display->displayError(::Error::INSUFFICIENT_RAM);
 			break;
@@ -797,7 +818,7 @@ bool LoopStationView::copyTrackConfiguration(SlotId source, SlotId destination) 
 	}
 	auto const& runtime = engine_->track(destination);
 	if (runtime.finishingCapture || runtime.state == TrackState::RECORDING || runtime.state == TrackState::OVERDUBBING
-	    || runtime.committingLength || runtime.state == TrackState::COMMITTING || runtime.finishingOverdub) {
+	    || runtime.committingLength || runtime.finishingOverdub) {
 		return false;
 	}
 	if (!deluge::loop_station::copyTrackConfiguration(currentSong->loopStation, source, destination)) {
@@ -817,8 +838,6 @@ void LoopStationView::refreshMonitoring() {
 			if (clip->type == ClipType::AUDIO && static_cast<AudioClip*>(clip)->loopStationSlotId == slotIndex + 1) {
 				auto* audioClip = static_cast<AudioClip*>(clip);
 				outputs[slotIndex] = static_cast<AudioOutput*>(audioClip->output);
-				outputs[slotIndex]->setLoopStationMonitoring(false);
-				auto const& settings = currentSong->loopStation.tracks[slotIndex].settings;
 				auto const& runtime = engine_->track(static_cast<SlotId>(slotIndex));
 				if (audioClip->recorder && audioClip->recorder->captureOutputPreFX) {
 					// Recorder captures physical input during active overdub AND during background finish
@@ -831,6 +850,7 @@ void LoopStationView::refreshMonitoring() {
 
 	monitoringCaptureMask_ = capturingMask();
 	std::array<bool, 4> physicalSourceClaimed{};
+	std::array<bool, kTrackCount> enabledOutputs{};
 	// Capturing tracks get first claim on a physical source. The selected track
 	// then supplies an idle return when it is not already capturing.
 	for (uint8_t pass = 0; pass < 2; ++pass) {
@@ -852,8 +872,17 @@ void LoopStationView::refreshMonitoring() {
 				enabled = !physicalSourceClaimed[sourceIndex];
 				physicalSourceClaimed[sourceIndex] = true;
 			}
-			output->setLoopStationMonitoring(enabled, settings.transpose, settings.transposeCents);
+			enabledOutputs[slotIndex] = enabled;
 		}
+	}
+	for (size_t i = 0; i < kTrackCount; ++i) {
+		if (!outputs[i])
+			continue;
+		auto const& settings = currentSong->loopStation.tracks[i].settings;
+		auto error =
+		    outputs[i]->setLoopStationMonitoring(enabledOutputs[i], settings.transpose, settings.transposeCents);
+		if (error != ::Error::NONE)
+			display->displayError(error);
 	}
 }
 
@@ -1192,10 +1221,6 @@ bool LoopStationView::renderMainPads(uint32_t whichRows, RGB image[][kDisplayWid
 				centre = deluge::gui::colours::green.dim(3);
 				border = trackColour.dim(3);
 				break;
-			case TrackState::COMMITTING:
-				centre = rapidBlink ? deluge::gui::colours::orange : black;
-				border = centre;
-				break;
 			case TrackState::ERROR:
 				centre = rapidBlink ? deluge::gui::colours::red : black;
 				border = deluge::gui::colours::red.dim(3);
@@ -1333,7 +1358,7 @@ void LoopStationView::serviceBackgroundWork() {
 	for (size_t i = 0; i < kTrackCount; ++i) {
 		auto slot = static_cast<SlotId>(i);
 		auto const& runtime = engine_->track(slot);
-		if (runtime.finishingCapture || runtime.state == TrackState::COMMITTING
+		if (runtime.finishingCapture
 		    || (runtime.state != TrackState::RECORDING && runtime.state != TrackState::OVERDUBBING
 		        && !runtime.finishingOverdub)) {
 			continue;
@@ -1375,7 +1400,9 @@ void LoopStationView::serviceBackgroundWork() {
 void LoopStationView::playbackEnded() {
 	if (engine_) {
 		auto now = transport();
-		now.tick = std::max<uint32_t>(now.tick, lastAudioPositionQ16_ >> 16);
+		auto position = std::max((uint64_t(now.tick) << 16) | now.fractionQ16, lastAudioPositionQ16_);
+		now.tick = position >> 16;
+		now.fractionQ16 = position & 0xFFFF;
 		engine_->transportStopped(now);
 		updateRecordingMode();
 	}

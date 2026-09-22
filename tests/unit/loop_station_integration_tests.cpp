@@ -43,20 +43,20 @@ struct Delegate final : EngineDelegate {
 	std::function<void()> duringFinish;
 	std::function<void()> duringAbort;
 
-	bool preflight(SlotId slot, bool) override {
+	Error preflight(SlotId slot, bool) override {
 		preflights[static_cast<size_t>(slot)]++;
 		if (duringPreflight)
 			duringPreflight();
-		return !reject;
+		return reject ? (rejectError == Error::NONE ? Error::RESOURCE_LIMIT : rejectError) : Error::NONE;
 	}
-	bool beginCapture(SlotId slot, bool overdub, uint32_t tick) override {
+	Error beginCapture(SlotId slot, bool overdub, uint32_t tick) override {
 		auto index = static_cast<size_t>(slot);
 		begins[index]++;
 		beginOverdubs[index] = overdub;
 		beginTicks[index] = tick;
 		if (duringBegin)
 			duringBegin();
-		return !rejectBegin;
+		return rejectBegin ? (rejectError == Error::NONE ? Error::ALLOCATION : rejectError) : Error::NONE;
 	}
 	CaptureFinish finishCapture(SlotId slot, bool overdub, uint32_t length, bool crop) override {
 		auto index = static_cast<size_t>(slot);
@@ -213,6 +213,11 @@ TEST(OperationalLoopStationModel, TrackMenuParametersAreScopedAndClamped) {
 	CHECK_EQUAL(std::numeric_limits<uint16_t>::max(), readTrackParameter(model, slot, TrackParameter::DURATION_BARS));
 	CHECK_EQUAL(static_cast<int32_t>(SourceType::LEFT), readTrackParameter(model, slot, TrackParameter::SOURCE));
 	CHECK_EQUAL(-2450, readTrackParameter(model, slot, TrackParameter::TRANSPOSE));
+	for (int32_t cents : {-2450, -1275, -1250, -1, 0, 1, 1250, 1275, 2450}) {
+		writeTrackParameter(model, slot, TrackParameter::TRANSPOSE, cents);
+		model.sanitize();
+		CHECK_EQUAL(cents, readTrackParameter(model, slot, TrackParameter::TRANSPOSE));
+	}
 }
 
 TEST_GROUP(LoopStationGeometry){};
@@ -408,6 +413,25 @@ TEST(LoopStationState, DoubleTapDuringOverdubStops) {
 	CHECK_EQUAL(1, delegate.aborts[0]);
 }
 
+TEST(LoopStationState, DoubleTapFinishesEstablishedOverdubBeforeStopping) {
+	SongModel model;
+	model.global.startAction.mode = ActionMode::IMMEDIATE;
+	model.global.stopAction.mode = ActionMode::IMMEDIATE;
+	Delegate delegate;
+	Engine engine(model, &delegate);
+	engine.restoreBoundPhrase(SlotId::ONE, 96, true);
+
+	engine.centrePressed(SlotId::ONE, at(10), 1000);
+	CHECK(engine.track(SlotId::ONE).state == TrackState::OVERDUBBING);
+	engine.centrePressed(SlotId::ONE, at(30), 2000);
+	CHECK(engine.track(SlotId::ONE).state == TrackState::PLAYING);
+	engine.centrePressed(SlotId::ONE, at(31), 2100);
+	CHECK(engine.track(SlotId::ONE).state == TrackState::STOPPED);
+	CHECK_EQUAL(0, delegate.aborts[0]);
+	CHECK_EQUAL(1, delegate.finishes[0]);
+	CHECK_EQUAL(2, engine.track(SlotId::ONE).historySize);
+}
+
 TEST(LoopStationState, QuickSkipOfAutomaticOverdubPreservesInitialRecording) {
 	SongModel model;
 	model.global.startAction.mode = ActionMode::IMMEDIATE;
@@ -578,7 +602,7 @@ TEST(LoopStationState, DependentOverdubStartsAfterAsyncCommitCompletes) {
 	engine.centrePressed(SlotId::ONE, at(48), 1000);
 	CHECK(engine.track(SlotId::ONE).committingLength != 0);
 
-	engine.notifyCommitComplete(SlotId::ONE, true, Error::NONE, 60);
+	engine.notifyCommitComplete(SlotId::ONE, true, Error::NONE);
 	CHECK(engine.track(SlotId::ONE).state == TrackState::OVERDUBBING);
 	CHECK_EQUAL(2, delegate.begins[0]);
 	CHECK_EQUAL(48, delegate.beginTicks[0]);
@@ -1154,14 +1178,15 @@ TEST(LoopStationState, FractionalBarBoundaryUsesFollowingBarForStartAndStop) {
 	}
 }
 
-TEST(LoopStationState, SchedulerIgnoresCommittingDeadlinesAndDoesNotSpin) {
+TEST(LoopStationState, PendingCommitDoesNotHidePlaybackStopDeadline) {
 	SongModel model;
 	model.global.startAction.mode = ActionMode::IMMEDIATE;
 	Engine engine(model);
 	engine.restoreBoundPhrase(SlotId::ONE, 144, true);
-	engine.track(SlotId::ONE).state = TrackState::COMMITTING;
+	engine.track(SlotId::ONE).committingLength = 144;
 	engine.track(SlotId::ONE).event = {.action = PendingAction::STOP, .tick = 20};
 	CHECK_EQUAL(INT32_MAX, serviceSchedulerTick(engine, at(40), 24, INT32_MAX));
+	CHECK(engine.track(SlotId::ONE).state == TrackState::STOPPED);
 }
 
 TEST(LoopStationState, SchedulerTimingCombinationsAcrossBarResolutions) {
@@ -1322,6 +1347,18 @@ TEST(LoopStationState, ActiveFailureCannotReenterAndRetryNeedsNoRestart) {
 	engine.centrePressed(SlotId::ONE, at(13), 4000);
 	CHECK(engine.track(SlotId::ONE).state == TrackState::OVERDUBBING);
 	CHECK_EQUAL(2, delegate.begins[0]);
+}
+
+TEST(LoopStationState, CaptureStartupPreservesTypedFailure) {
+	SongModel model;
+	model.global.startAction.mode = ActionMode::IMMEDIATE;
+	Delegate delegate;
+	delegate.reject = true;
+	delegate.rejectError = Error::SOURCE_REMOVED;
+	Engine engine(model, &delegate);
+	engine.centrePressed(SlotId::ONE, at(0), 0);
+	CHECK(engine.track(SlotId::ONE).state == TrackState::ERROR);
+	CHECK(engine.track(SlotId::ONE).error == Error::SOURCE_REMOVED);
 }
 
 TEST(LoopStationState, StartupRejectsSameSlotGesturesButOtherSlotsRemainUsable) {

@@ -20,6 +20,7 @@
 #include "definitions_cxx.hpp"
 #include "dsp/stereo_sample.h"
 #include "gui/views/view.h"
+#include "loop_station/audio_pipeline.h"
 #include "loop_station/loop_station.h"
 #include "memory/general_memory_allocator.h"
 #include "model/clip/audio_clip.h"
@@ -30,7 +31,7 @@
 #include "playback/mode/playback_mode.h"
 #include "playback/playback_handler.h"
 #include "processing/engines/audio_engine.h"
-#include "processing/live/live_pitch_shifter.h"
+#include "processing/live/buffer_pitch_shifter.h"
 #include "storage/audio/audio_file.h"
 #include "storage/storage_manager.h"
 #include "util/functions.h"
@@ -114,11 +115,6 @@ void addPhysicalInput(std::span<StereoSample> output, AudioInputChannel requeste
 	}
 }
 
-constexpr float semitonesToRatio(int16_t semitones, int8_t cents) {
-	float totalSemitones = static_cast<float>(semitones) + static_cast<float>(cents) / 100.0f;
-	return std::pow(2.0f, totalSemitones / 12.0f);
-}
-
 // Convert Loop Station transpose (semitones * 100 + cents) to phaseIncrement for LivePitchShifter
 // PhaseIncrement format: kMaxSampleValue = 1.0 (unity), > kMaxSampleValue = pitch up, < kMaxSampleValue = pitch down
 // The adjustment parameter for getExp uses 26 bits per octave, so 1 semitone = (1<<26)/12
@@ -133,165 +129,16 @@ int32_t transposeToPhaseIncrement(int16_t semitones, int8_t cents) {
 	return getExp(kMaxSampleValue, adjustment);
 }
 
-OscType audioInputChannelToOscType(AudioInputChannel channel) {
-	switch (channel) {
-	case AudioInputChannel::LEFT:
-		return OscType::INPUT_L;
-	case AudioInputChannel::RIGHT:
-		return OscType::INPUT_R;
-	case AudioInputChannel::STEREO:
-		return OscType::INPUT_STEREO;
-	case AudioInputChannel::BALANCED:
-	case AudioInputChannel::NONE:
-		return OscType::INPUT_L; // Mix to mono left
-	default:
-		return OscType::INPUT_L;
-	}
-}
 } // namespace
 
-void AudioOutput::updateLoopStationPitchShifter() {
-	// Determine if we need a pitch shifter
-	bool needPitchShifter = loopStationMonitoring && (loopStationTranspose != 0 || loopStationTransposeCents != 0);
-
-	// Calculate required pitch ratio
-	int32_t newPhaseIncrement = kMaxSampleValue;
-	OscType newInputType = OscType::INPUT_L;
-
-	if (needPitchShifter) {
-		newPhaseIncrement = transposeToPhaseIncrement(loopStationTranspose, loopStationTransposeCents);
-		newInputType = audioInputChannelToOscType(inputChannel);
-
-		// Handle stereo fallback like voice.cpp does
-		if (newInputType == OscType::INPUT_STEREO && !AudioEngine::lineInPluggedIn && !AudioEngine::micPluggedIn) {
-			newInputType = OscType::INPUT_L;
-		}
-	}
-
-	// Check if we need to recreate the pitch shifter
-	bool recreate = false;
-	if (needPitchShifter) {
-		if (!loopStationPitchShifter) {
-			recreate = true; // Create new
-		}
-		else if (loopStationPitchPhaseIncrement != newPhaseIncrement || loopStationPitchInputType != newInputType) {
-			recreate = true; // Settings changed
-		}
-	}
-	else {
-		recreate = false; // Will destroy if exists
-	}
-
-	if (recreate) {
-		// Destroy old one if exists
-		if (loopStationPitchShifter) {
-			loopStationPitchShifter->~LivePitchShifter();
-			delugeDealloc(loopStationPitchShifter);
-			loopStationPitchShifter = nullptr;
-		}
-
-		// Create new one
-		if (needPitchShifter) {
-			// Ensure LiveInputBuffer exists before creating pitch shifter (like voice.cpp does)
-			AudioEngine::getOrCreateLiveInputBuffer(newInputType, true);
-
-			void* memory = GeneralMemoryAllocator::get().allocMaxSpeed(sizeof(LivePitchShifter));
-			if (memory) {
-				loopStationPitchShifter = new (memory) LivePitchShifter(newInputType, newPhaseIncrement);
-				loopStationPitchPhaseIncrement = newPhaseIncrement;
-				loopStationPitchInputType = newInputType;
-			}
-		}
-	}
-	else if (!needPitchShifter && loopStationPitchShifter) {
-		// No longer needed - destroy
-		loopStationPitchShifter->~LivePitchShifter();
-		delugeDealloc(loopStationPitchShifter);
-		loopStationPitchShifter = nullptr;
-	}
-}
-
-void AudioOutput::addPhysicalInputWithPitchShift(std::span<StereoSample> output, AudioInputChannel requestedChannel,
-                                                 int32_t amplitudeAtStart, int32_t amplitudeAtEnd, uint8_t gainShift,
-                                                 bool saturate, float pitchRatio) {
-	// If no pitch shifting needed, use normal path
-	if (pitchRatio == 1.0f || !loopStationPitchShifter) {
-		addPhysicalInput(output, requestedChannel, amplitudeAtStart, amplitudeAtEnd, gainShift, saturate);
-		return;
-	}
-
-	// Use LivePitchShifter for real-time pitch shifting
-	// The LivePitchShifter internally manages the input buffer and renders pitch-shifted output
-	// We need to render to a temporary buffer then mix into output with proper channel mapping
-
-	int32_t numChannels = loopStationPitchShifter->numChannels;
-	int32_t numSamples = static_cast<int32_t>(output.size());
-
-	// Allocate temporary buffer for pitch-shifted output
-	// Size: numSamples * numChannels (interleaved)
-	alignas(CACHE_LINE_SIZE) std::array<int32_t, SSI_TX_BUFFER_NUM_SAMPLES * 2> tempBuffer;
-	std::span<int32_t> tempSpan{tempBuffer.data(),
-	                            static_cast<uint32_t>(numSamples) * static_cast<uint32_t>(numChannels)};
-
-	// Clear temp buffer to avoid artifacts from partial fills (pitch shifter may not fill all samples)
-	std::ranges::fill(tempSpan, 0);
-
-	// Get interpolation buffer size for this pitch ratio
-	// For live input, use a reasonable default (similar to voice.cpp)
-	int32_t interpolationBufferSize = 0; // Use default
-
-	// Calculate amplitude increment per sample
-	// Pass amplitude directly without gainShift - pitch shifter handles its own scaling internally
-	int32_t amplitudeIncrement =
-	    static_cast<int32_t>(static_cast<double>(amplitudeAtEnd - amplitudeAtStart) / static_cast<double>(numSamples));
-
-	// Scale amplitude to match what LivePitchShifter expects
-	// In voice.cpp, sourceAmplitude max is ~134217727 (0x7FFFFFF)
-	// Our envelope outputs ~1073741824 to 2147483647, which is ~8x larger
-	// Pitch shifter then applies << 5 internally
-	// Scale down by 8 (>> 3) to match voice.cpp amplitude range
-	int32_t scaledAmplitudeStart = amplitudeAtStart >> 3;
-	int32_t scaledAmplitudeIncrement = amplitudeIncrement >> 3;
-
-	// Render pitch-shifted audio to temp buffer
-	// The LivePitchShifter expects interleaved output with numChannels channels
-	loopStationPitchShifter->render(tempSpan.data(), numSamples, loopStationPitchPhaseIncrement,
-	                                scaledAmplitudeStart, // Scaled down to match voice.cpp amplitude range
-	                                scaledAmplitudeIncrement, interpolationBufferSize);
-
-	// Now mix the pitch-shifted audio into the output buffer with proper channel handling
-	if (numChannels == 1) {
-		// Mono input - expand to stereo
-		for (int32_t i = 0; i < numSamples; ++i) {
-			int32_t sample = tempSpan[i];
-			StereoSample& outputSample = output[i];
-			if (saturate) {
-				outputSample.l = deluge::loop_station::saturatingAdd(outputSample.l, sample);
-				outputSample.r = deluge::loop_station::saturatingAdd(outputSample.r, sample);
-			}
-			else {
-				outputSample.l += sample;
-				outputSample.r += sample;
-			}
-		}
-	}
-	else {
-		// Stereo input - interleaved L,R,L,R...
-		for (int32_t i = 0; i < numSamples; ++i) {
-			StereoSample pitchShiftedSample;
-			pitchShiftedSample.l = tempSpan[i * 2];
-			pitchShiftedSample.r = tempSpan[i * 2 + 1];
-
-			StereoSample& outputSample = output[i];
-			if (saturate) {
-				outputSample.l = deluge::loop_station::saturatingAdd(outputSample.l, pitchShiftedSample.l);
-				outputSample.r = deluge::loop_station::saturatingAdd(outputSample.r, pitchShiftedSample.r);
-			}
-			else {
-				outputSample += pitchShiftedSample;
-			}
-		}
-	}
+Error AudioOutput::prepareLoopStationPitchShifter() {
+	if (loopStationPitchShifter)
+		return Error::NONE;
+	void* memory = GeneralMemoryAllocator::get().allocMaxSpeed(sizeof(BufferPitchShifter));
+	if (!memory)
+		return Error::INSUFFICIENT_RAM;
+	loopStationPitchShifter = new (memory) BufferPitchShifter();
+	return Error::NONE;
 }
 
 AudioOutput::AudioOutput() : Output(OutputType::AUDIO) {
@@ -304,23 +151,23 @@ AudioOutput::~AudioOutput() {
 	releaseMonitoringClaim();
 	// Clean up pitch shifter
 	if (loopStationPitchShifter) {
-		loopStationPitchShifter->~LivePitchShifter();
+		loopStationPitchShifter->~BufferPitchShifter();
 		delugeDealloc(loopStationPitchShifter);
 		loopStationPitchShifter = nullptr;
 	}
 }
 
-void AudioOutput::setLoopStationMonitoring(bool enabled, int16_t transpose, int8_t transposeCents) {
-	// Reset pitch shifter when enabling or when transpose changes
-	if (enabled
-	    && (!loopStationMonitoring || loopStationTranspose != transpose
-	        || loopStationTransposeCents != transposeCents)) {
-		// Will be recreated in updateLoopStationPitchShifter
-	}
+Error AudioOutput::setLoopStationMonitoring(bool enabled, int16_t transpose, int8_t transposeCents) {
 	loopStationMonitoring = enabled;
 	loopStationTranspose = transpose;
 	loopStationTransposeCents = transposeCents;
-	updateLoopStationPitchShifter();
+	// Buffer ownership is independent of monitoring, selection and transpose.
+	// This method runs during setup/UI service, never in the render callback.
+	return prepareLoopStationPitchShifter();
+}
+
+int32_t AudioOutput::loopStationTransposePhaseIncrement() const {
+	return transposeToPhaseIncrement(loopStationTranspose, loopStationTransposeCents);
 }
 
 void AudioOutput::scrollAudioOutputMode(int offset) {
@@ -440,6 +287,8 @@ bool AudioOutput::renderGlobalEffectableForClip(ModelStackWithTimelineCounter* m
 	bool capturingPreFXOverdub = recorder && recorder->captureOutputPreFX
 	                             && recorder->status < RecorderStatus::FINISHED_CAPTURING_BUT_STILL_WRITING;
 	bool backingRenderedForCapture = false;
+	bool loopStation = activeClip && static_cast<AudioClip*>(activeClip)->loopStationSlotId != 0;
+	int32_t loopAmplitudeStart = 0, loopAmplitudeEnd = 0;
 	// Audio outputs can have an activeClip while being muted. A Loop Station
 	// overdub must still render that backing clip into its private capture pass;
 	// activity bookkeeping must never turn an Add overdub into input-only Replace.
@@ -482,8 +331,11 @@ renderEnvelope:
 				                         / static_cast<double>(render.size()));
 
 				std::span render_mono{reinterpret_cast<q31_t*>(render.data()), render.size()};
-				backingRenderedForCapture = activeAudioClip.render(modelStack, render_mono, amplitudeEffectiveStart,
-				                                                   amplitudeIncrementEffective, pitchAdjust);
+				loopAmplitudeStart = amplitudeEffectiveStart;
+				loopAmplitudeEnd = amplitudeEffectiveEnd;
+				backingRenderedForCapture =
+				    activeAudioClip.render(modelStack, render_mono, loopStation ? 1 << 26 : amplitudeEffectiveStart,
+				                           loopStation ? 0 : amplitudeIncrementEffective, pitchAdjust);
 				rendered = isClipActive;
 				amplitudeLastTime = amplitudeLocal;
 
@@ -508,6 +360,33 @@ renderEnvelope:
 	std::span<StereoSample> output = (bufferToTransferTo != nullptr)
 	                                     ? std::span{reinterpret_cast<StereoSample*>(bufferToTransferTo), render.size()}
 	                                     : render;
+	if (loopStation) {
+		bool monitor = loopStationMonitoring && isPhysicalInput(inputChannel)
+		               && modelStack->song->isOutputActiveInArrangement(this);
+		alignas(CACHE_LINE_SIZE) std::array<StereoSample, SSI_TX_BUFFER_NUM_SAMPLES> inputMemory{};
+		std::span<StereoSample> input{inputMemory.data(), output.size()};
+		if ((monitor || capturingPreFXOverdub) && isPhysicalInput(inputChannel)) {
+			addPhysicalInput(input, inputChannel, amplitudeAtStart, amplitudeAtEnd,
+			                 deluge::loop_station::kPhysicalInputPreMixGainShift, true);
+			for (auto& frame : input) {
+				frame.l = deluge::loop_station::restoreCaptureGain(frame.l);
+				frame.r = deluge::loop_station::restoreCaptureGain(frame.r);
+			}
+		}
+		auto* loopRecorder = capturingPreFXOverdub && recorder->isLoopOverdub() ? recorder : nullptr;
+		if (loopRecorder && !backingRenderedForCapture && loopRecorder->captureOutputInputActive)
+			loopRecorder->captureOutputBackingMissing = true;
+		deluge::loop_station::renderAudio(
+		    output, input, loopRecorder, loopAmplitudeStart, loopAmplitudeEnd,
+		    isClipActive ? loopStationPlaybackGain : 0, monitor, [&](std::span<StereoSample> audio) {
+			    if (loopStationPitchShifter) {
+				    int32_t phase = std::min<uint64_t>(
+				        INT32_MAX, (uint64_t(loopStationTransposePhaseIncrement()) * pitchAdjust) >> 24);
+				    loopStationPitchShifter->render(audio, phase, AudioEngine::audioSampleTimer);
+			    }
+		    });
+		return rendered || monitor;
+	}
 
 	// A Loop Station overdub records a dry cumulative pass. Copy the old
 	// loop before audible monitoring and track FX, then add the physical input
@@ -565,11 +444,7 @@ renderEnvelope:
 	    && inputChannel != AudioInputChannel::SPECIFIC_OUTPUT) {
 		rendered = true;
 		// The audible monitor path retains its normal 6dB of mix headroom.
-		float pitchRatio = 1.0f;
-		if (loopStationMonitoring && (loopStationTranspose != 0 || loopStationTransposeCents != 0)) {
-			pitchRatio = semitonesToRatio(loopStationTranspose, loopStationTransposeCents);
-		}
-		addPhysicalInputWithPitchShift(output, inputChannel, amplitudeAtStart, amplitudeAtEnd, 2, false, pitchRatio);
+		addPhysicalInput(output, inputChannel, amplitudeAtStart, amplitudeAtEnd, 2);
 	}
 	// Only render the record-source if it has an active clip: Output::renderOutput is documented to be called only
 	// when there's an activeClip, but this branch bypasses the inValidState guard in Song::renderAudio.

@@ -28,6 +28,27 @@ extern "C" {
 LiveInputBuffer::LiveInputBuffer() {
 	upToTime = 0;
 	numRawSamplesProcessed = 0;
+	resetAnalysis();
+}
+
+void LiveInputBuffer::resetAnalysis() {
+	lastSampleRead = lastAngle = 0;
+	memset(angleLPFMem, 0, sizeof(angleLPFMem));
+}
+
+void LiveInputBuffer::giveInput(std::span<const StereoSample> input, uint32_t currentTime) {
+	if (upToTime != currentTime) {
+		numRawSamplesProcessed = 0;
+		resetAnalysis();
+	}
+	for (auto const& frame : input) {
+		auto index = (numRawSamplesProcessed & (kInputRawBufferSize - 1)) * 2;
+		rawBuffer[index] = frame.l;
+		rawBuffer[index + 1] = frame.r;
+		updatePercussiveness((frame.l >> 2) + (frame.r >> 2));
+		++numRawSamplesProcessed;
+	}
+	upToTime = currentTime + input.size();
 }
 
 void LiveInputBuffer::giveInput(int32_t numSamples, uint32_t currentTime, OscType inputType) {
@@ -39,9 +60,7 @@ void LiveInputBuffer::giveInput(int32_t numSamples, uint32_t currentTime, OscTyp
 	// Or if we need to reset everything cos we missed some
 	if (upToTime != currentTime) {
 		numRawSamplesProcessed = 0;
-		lastSampleRead = 0;
-		lastAngle = 0;
-		memset(angleLPFMem, 0, sizeof(angleLPFMem));
+		resetAnalysis();
 	}
 
 	int32_t const* __restrict__ inputReadPos = (int32_t const*)AudioEngine::i2sRXBufferPos;
@@ -66,34 +85,7 @@ void LiveInputBuffer::giveInput(int32_t numSamples, uint32_t currentTime, OscTyp
 			rawBuffer[(numRawSamplesProcessed & (kInputRawBufferSize - 1)) * 2 + 1] = inputReadPos[1];
 		}
 
-		int32_t angle = thisSampleRead - lastSampleRead;
-		lastSampleRead = thisSampleRead;
-		if (angle < 0) {
-			angle = -angle;
-		}
-
-		for (int32_t p = 0; p < kDifferenceLPFPoles; p++) {
-			int32_t distanceToGo = angle - angleLPFMem[p];
-			angleLPFMem[p] += multiply_32x32_rshift32_rounded(distanceToGo, 1 << 23); // distanceToGo >> 9;
-
-			angle = angleLPFMem[p];
-		}
-
-		if ((numRawSamplesProcessed & (kPercBufferReductionSize - 1)) == 0) {
-
-			int32_t difference = angle - lastAngle;
-			if (difference < 0) {
-				difference = -difference;
-			}
-
-			int32_t percussiveness = ((uint64_t)difference * 262144 / angle) >> 1;
-
-			percussiveness = getTanH<23>(percussiveness);
-
-			percBuffer[(numRawSamplesProcessed >> kPercBufferReductionMagnitude) & (kInputPercBufferSize - 1)] =
-			    percussiveness;
-		}
-		lastAngle = angle;
+		updatePercussiveness(thisSampleRead);
 
 		inputReadPos += NUM_MONO_INPUT_CHANNELS;
 		if (inputReadPos >= getRxBufferEnd()) {
@@ -104,6 +96,37 @@ void LiveInputBuffer::giveInput(int32_t numSamples, uint32_t currentTime, OscTyp
 	} while (numRawSamplesProcessed != endNumRawSamplesProcessed);
 
 	upToTime = currentTime + numSamples;
+}
+
+void LiveInputBuffer::updatePercussiveness(int32_t thisSampleRead) {
+	int32_t angle = thisSampleRead - lastSampleRead;
+	lastSampleRead = thisSampleRead;
+	if (angle < 0) {
+		angle = -angle;
+	}
+
+	for (int32_t p = 0; p < kDifferenceLPFPoles; p++) {
+		int32_t distanceToGo = angle - angleLPFMem[p];
+		angleLPFMem[p] += multiply_32x32_rshift32_rounded(distanceToGo, 1 << 23); // distanceToGo >> 9;
+
+		angle = angleLPFMem[p];
+	}
+
+	if ((numRawSamplesProcessed & (kPercBufferReductionSize - 1)) == 0) {
+
+		int32_t difference = angle - lastAngle;
+		if (difference < 0) {
+			difference = -difference;
+		}
+
+		int32_t percussiveness = angle ? ((uint64_t)difference * 262144 / angle) >> 1 : 0;
+
+		percussiveness = getTanH<23>(percussiveness);
+
+		percBuffer[(numRawSamplesProcessed >> kPercBufferReductionMagnitude) & (kInputPercBufferSize - 1)] =
+		    percussiveness;
+	}
+	lastAngle = angle;
 }
 
 bool LiveInputBuffer::getAveragesForCrossfade(int32_t* totals, int32_t startPos, int32_t lengthToAverageEach,

@@ -64,8 +64,8 @@ private:
 	void resumeCommittedClip(deluge::loop_station::SlotId slot);
 	RGB palette(deluge::loop_station::PadColour colour) const;
 	RGB destinationColour(deluge::loop_station::PendingAction action) const;
-	bool preflight(deluge::loop_station::SlotId slot, bool overdub) override;
-	bool beginCapture(deluge::loop_station::SlotId slot, bool overdub, uint32_t tick) override;
+	deluge::loop_station::Error preflight(deluge::loop_station::SlotId slot, bool overdub) override;
+	deluge::loop_station::Error beginCapture(deluge::loop_station::SlotId slot, bool overdub, uint32_t tick) override;
 	deluge::loop_station::CaptureFinish finishCapture(deluge::loop_station::SlotId slot, bool overdub, uint32_t length,
 	                                                  bool crop) override;
 	void endOverdubInput(deluge::loop_station::SlotId slot) override;

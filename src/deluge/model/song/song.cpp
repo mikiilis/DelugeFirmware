@@ -1429,6 +1429,8 @@ weAreInArrangementEditorOrInClipInstance:
 		writer.writeAttribute("durationBars", settings.durationBars);
 		writer.writeAttribute("progressColour", util::to_underlying(settings.progressColour));
 		writer.writeAttribute("playback", util::to_underlying(settings.playback));
+		writer.writeAttribute("transpose", settings.transpose);
+		writer.writeAttribute("transposeCents", settings.transposeCents);
 		auto const& history = loopStationRevisionHistory[i];
 		writer.writeAttribute("historyCursor", history.cursor);
 		if (history.revisions.empty()) {
@@ -2048,6 +2050,14 @@ unknownTag:
 									parsed.settings.progressColour = static_cast<PadColour>(value);
 								else if (!strcmp(tagName, "playback"))
 									parsed.settings.playback = static_cast<deluge::loop_station::PlaybackMode>(value);
+								else if (!strcmp(tagName, "transpose")) {
+									parsed.settings.transpose = value;
+									parsed.transposePresent = true;
+								}
+								else if (!strcmp(tagName, "transposeCents")) {
+									parsed.settings.transposeCents = value;
+									parsed.transposePresent = true;
+								}
 								else if (!strcmp(tagName, "historyCursor"))
 									historyCursor = value;
 								reader.exitTag(tagName);
@@ -2364,9 +2374,24 @@ loadOutput:
 				continue;
 			}
 			slotSeen[slot] = true;
-			loopStation.tracks[slot].clipSlotId = audioClip->loopStationSlotId;
+			auto& binding = loopStation.tracks[slot];
+			binding.clipSlotId = audioClip->loopStationSlotId;
+			if (!binding.transposePresent && (audioClip->sampleHolder.transpose || audioClip->sampleHolder.cents)) {
+				deluge::loop_station::writeTrackParameter(loopStation, static_cast<deluge::loop_station::SlotId>(slot),
+				                                          deluge::loop_station::TrackParameter::TRANSPOSE,
+				                                          audioClip->sampleHolder.transpose * 100
+				                                              + audioClip->sampleHolder.cents);
+			}
+			audioClip->sampleHolder.transpose = 0;
+			audioClip->sampleHolder.cents = 0;
+			audioClip->sampleHolder.recalculateNeutralPhaseIncrement();
 			if (audioClip->output->type == OutputType::AUDIO) {
-				static_cast<AudioOutput*>(audioClip->output)->mode = AudioOutputMode::player;
+				auto* output = static_cast<AudioOutput*>(audioClip->output);
+				output->mode = AudioOutputMode::player;
+				auto error = output->setLoopStationMonitoring(false, binding.settings.transpose,
+				                                              binding.settings.transposeCents);
+				if (error != Error::NONE)
+					return error;
 			}
 		}
 	}

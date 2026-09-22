@@ -30,7 +30,7 @@ struct ActionTiming {
 	ActionDivision division = ActionDivision::QUARTER;
 	bool triplet = false;
 };
-enum class TrackState : uint8_t { EMPTY, RECORDING, OVERDUBBING, PLAYING, STOPPED, COMMITTING, ERROR };
+enum class TrackState : uint8_t { EMPTY, RECORDING, OVERDUBBING, PLAYING, STOPPED, ERROR };
 enum class PlaybackMode : uint8_t { LOOP, ONE_SHOT };
 enum class SourceType : uint8_t { LEFT, RIGHT, STEREO, BALANCED, MIX_PRE_FX, MIX_POST_FX, SONG_TRACK };
 // Keep the original values stable for song-file compatibility. New progress
@@ -174,6 +174,9 @@ struct TrackBinding {
 	// Stable ID persisted on the backing Audio Clip. Zero means unbound.
 	uint32_t clipSlotId = kInvalidSlotBinding;
 	TrackSettings settings{};
+	// Runtime load marker used to migrate older songs whose Loop Station
+	// transpose lived only on the backing AudioClip.
+	bool transposePresent = false;
 };
 
 struct SongModel {
@@ -220,6 +223,7 @@ struct TrackRuntime {
 	TrackState stateBeforeCommit = TrackState::EMPTY;
 	ScheduledEvent event{};
 	uint32_t captureStartTick = 0;
+	uint64_t captureStartPositionQ16 = 0;
 	uint32_t phraseLength = 0;
 	uint32_t playbackStartTick = 0;
 	uint32_t automaticEndTick = 0;
@@ -238,13 +242,16 @@ struct TrackRuntime {
 	uint32_t historySize = 0;
 	int32_t historyCursor = -1;
 	bool pendingClear = false;
-	bool committingOverdub = false;
 	// Covers startup, finish, publication and rollback across yielding delegates.
 	bool finishingCapture = false;
 	bool handlingFailure = false;
 	bool transportStopPending = false;
+	uint64_t transportStopPositionQ16 = 0;
 	Error error = Error::NONE;
 	uint32_t lastTapTimeMs = std::numeric_limits<uint32_t>::max();
+	// True only when the preceding tap began the currently active overdub. It
+	// distinguishes "tap to overdub, tap to stop" from finishing an established dub.
+	bool overdubStartedByLastTap = false;
 };
 
 // Audible monitoring is deliberately not part of this decision. A disabled
@@ -297,8 +304,8 @@ struct CaptureFinish {
 class EngineDelegate {
 public:
 	virtual ~EngineDelegate() = default;
-	virtual bool preflight(SlotId, bool) { return true; }
-	virtual bool beginCapture(SlotId, bool, uint32_t) { return true; }
+	virtual Error preflight(SlotId, bool) { return Error::NONE; }
+	virtual Error beginCapture(SlotId, bool, uint32_t) { return Error::NONE; }
 	virtual CaptureFinish finishCapture(SlotId, bool, uint32_t, bool) { return {}; }
 	virtual void endOverdubInput(SlotId) {}
 	virtual bool overdubReady(SlotId) { return true; }
@@ -343,7 +350,7 @@ public:
 	[[nodiscard]] bool exitReady() const;
 	[[nodiscard]] bool anyCapturing() const;
 	[[nodiscard]] uint32_t ticksUntilNextEvent(uint32_t currentTick) const;
-	void notifyCommitComplete(SlotId slot, bool success, Error error = Error::NONE, uint32_t completionTick = 0);
+	void notifyCommitComplete(SlotId slot, bool success, Error error = Error::NONE);
 	void notifyFailure(SlotId slot, Error error);
 
 	[[nodiscard]] static uint64_t actionPositionQ16(Transport const& transport, ActionTiming timing);
@@ -352,13 +359,15 @@ public:
 private:
 	void schedule(SlotId slot, PendingAction action, uint32_t atTick, uint32_t requestedTick, uint64_t positionQ16 = 0);
 	void requestAction(SlotId slot, PendingAction action, Transport const& transport, ActionTiming timing);
-	void execute(SlotId slot, PendingAction action, Transport const& transport, uint32_t requestedTick);
+	void execute(SlotId slot, PendingAction action, Transport const& transport, uint32_t requestedTick,
+	             uint64_t requestedPositionQ16 = 0);
 	void beginCapture(SlotId slot, bool overdub, uint32_t tick, Transport const& transport);
-	void finishCapture(SlotId slot, bool overdub, uint32_t tick, uint32_t requestedTick);
+	void finishCapture(SlotId slot, bool overdub, uint32_t tick, uint32_t requestedTick,
+	                   uint64_t requestedPositionQ16 = 0);
 	void stop(SlotId slot, Transport const& transport, bool forceImmediate = false);
 	void beginPlayback(SlotId slot, Transport const& transport);
 	void setPlaybackGain(SlotId slot, int32_t gain, bool forceNotify = false);
-	void completeCapture(SlotId slot, bool overdub, uint32_t length, uint32_t completionTick = 0);
+	void completeCapture(SlotId slot, bool overdub, uint32_t length);
 	void transition(SlotId slot, TrackState state);
 	void fail(SlotId slot, Error error);
 	bool navigateHistory(SlotId slot, bool redo);

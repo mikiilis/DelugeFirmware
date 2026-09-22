@@ -18,13 +18,17 @@
 #pragma once
 
 #include "definitions_cxx.hpp"
+#include "dsp/stereo_sample.h"
 #include <cstdint>
+#include <span>
 
 class LiveInputBuffer {
 public:
 	LiveInputBuffer();
 	~LiveInputBuffer() = default;
 	void giveInput(int32_t numSamples, uint32_t currentTime, OscType inputType);
+	// Caller owns a stereo-sized buffer; never reads physical input or allocates.
+	void giveInput(std::span<const StereoSample> input, uint32_t currentTime);
 	bool getAveragesForCrossfade(int32_t* totals, int32_t startPos, int32_t lengthToAverageEach, int32_t numChannels);
 
 	uint32_t upToTime;
@@ -40,5 +44,9 @@ public:
 	uint8_t percBuffer[kInputPercBufferSize] = {};
 
 	// Must be last!!! Cos we're gonna allocate and access it double-length for stereo
-	int32_t rawBuffer[kInputRawBufferSize];
+	int32_t rawBuffer[kInputRawBufferSize]{};
+
+private:
+	void resetAnalysis();
+	void updatePercussiveness(int32_t sample);
 };

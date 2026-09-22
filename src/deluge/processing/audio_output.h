@@ -24,7 +24,7 @@
 #include "modulation/envelope.h"
 #include "util/container/enum_to_string_map.hpp"
 
-class LivePitchShifter;
+class BufferPitchShifter;
 class ModelStackWithTimelineCounter;
 
 /// Player: plays back a file or samples from input without monitoring
@@ -108,16 +108,15 @@ public:
 	bool loopStationMonitoring{false};
 	int16_t loopStationTranspose{0};
 	int8_t loopStationTransposeCents{0};
-	// Live pitch shifter for real-time transpose during monitoring
-	LivePitchShifter* loopStationPitchShifter{nullptr};
-	OscType loopStationPitchInputType{OscType::INPUT_L};
-	int32_t loopStationPitchPhaseIncrement{kMaxSampleValue};
+	// Shared pitch processing for neutral playback and the optional live monitor.
+	BufferPitchShifter* loopStationPitchShifter{nullptr};
 	int32_t loopStationPlaybackGain{kMaxSampleValue};
-	void setLoopStationMonitoring(bool enabled, int16_t transpose = 0, int8_t transposeCents = 0);
+	Error setLoopStationMonitoring(bool enabled, int16_t transpose = 0, int8_t transposeCents = 0);
+	[[nodiscard]] int32_t loopStationTransposePhaseIncrement() const;
 	void setLoopStationPlaybackGain(int32_t gain) {
 		loopStationPlaybackGain = std::clamp<int32_t>(gain, 0, kMaxSampleValue);
 	}
-	void updateLoopStationPitchShifter();
+	Error prepareLoopStationPitchShifter();
 
 	Output* getOutputRecordingFrom() override { return outputRecordingFrom; }
 	void clearRecordingFrom() override { setOutputRecordingFrom(nullptr); }
@@ -168,10 +167,6 @@ protected:
 	/// Returns true for loopers, samplers without a file, and a physical-input
 	/// Loop Station monitor explicitly enabled by the active view.
 	bool modeAllowsMonitoring() const;
-	/// Add physical input with real-time pitch shifting for Loop Station monitoring
-	void addPhysicalInputWithPitchShift(std::span<StereoSample> output, AudioInputChannel requestedChannel,
-	                                    int32_t amplitudeAtStart, int32_t amplitudeAtEnd, uint8_t gainShift,
-	                                    bool saturate, float pitchRatio);
 	/// Which output to record from. Only valid when inputChannel is AudioInputChannel::SPECIFIC_OUTPUT.
 	Output* outputRecordingFrom{nullptr};
 };

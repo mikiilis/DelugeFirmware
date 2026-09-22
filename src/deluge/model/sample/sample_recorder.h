@@ -218,6 +218,11 @@ private:
 		bool writing = false;
 	};
 	std::array<LoopCacheEntry, 8> loopCache_{};
+	struct LoopSourceCacheEntry {
+		Cluster* cluster = nullptr;
+		uint32_t index = 0;
+	};
+	std::array<LoopSourceCacheEntry, 4> loopSourceCache_{};
 	Sample* loopSource_ = nullptr;
 	uint32_t loopSourceStart_ = 0;
 	uint32_t loopSourceFrame_ = 0;
@@ -229,7 +234,9 @@ private:
 	bool loopPreparing_ = false;
 	void* loopWriteSnapshot_ = nullptr;
 	Error prepareLoopClusters();
+	Error prepareLoopSourceClusters();
 	Error copyLoopRemainder();
+	Error readLoopSourceFrame(uint32_t frame, StereoSample& destination);
 	Error serviceLoopWrites();
 	void releaseLoopClusters();
 	LoopCacheEntry* loopCacheAt(uint32_t index);

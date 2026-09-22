@@ -28,7 +28,7 @@ public:
 	~LivePitchShifter();
 	void giveInput(int32_t numSamples, int32_t inputType, int32_t phaseIncrement);
 	void render(int32_t* outputBuffer, int32_t numSamplesThisFunctionCall, int32_t phaseIncrement, int32_t amplitude,
-	            int32_t amplitudeIncrement, int32_t interpolationBufferSize);
+	            int32_t amplitudeIncrement, int32_t interpolationBufferSize, LiveInputBuffer* preparedInput = nullptr);
 
 	bool mayBeRemovedWithoutClick();
 

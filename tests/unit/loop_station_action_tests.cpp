@@ -10,14 +10,15 @@ Transport timeAt(uint32_t tick, uint32_t bar = 96) {
 struct ActionDelegate : EngineDelegate {
 	int begins = 0, ends = 0, gates = 0;
 	bool ready = false, async = false, ended = false, rejectDub = false;
-	uint32_t lastBegin = 0;
-	bool beginCapture(SlotId, bool overdub, uint32_t tick) override {
+	uint32_t lastBegin = 0, lastLength = 0;
+	Error beginCapture(SlotId, bool overdub, uint32_t tick) override {
 		++begins;
 		lastBegin = tick;
-		return !overdub || !rejectDub;
+		return overdub && rejectDub ? Error::ALLOCATION : Error::NONE;
 	}
-	CaptureFinish finishCapture(SlotId, bool, uint32_t, bool) override {
+	CaptureFinish finishCapture(SlotId, bool, uint32_t length, bool) override {
 		++ends;
+		lastLength = length;
 		return {.asynchronous = async};
 	}
 	void endOverdubInput(SlotId) override { ++gates; }
@@ -154,7 +155,7 @@ TEST(LoopStationActions, CommitDoesNotDelayDependentOverdubOrResetItsPosition) {
 	CHECK_EQUAL(2, delegate.begins);
 	CHECK_EQUAL(48, delegate.lastBegin);
 	CHECK_EQUAL(0, engine.track(SlotId::ONE).historySize);
-	engine.notifyCommitComplete(SlotId::ONE, true, Error::NONE, 70);
+	engine.notifyCommitComplete(SlotId::ONE, true, Error::NONE);
 	CHECK(engine.track(SlotId::ONE).state == TrackState::OVERDUBBING);
 	CHECK_EQUAL(48, engine.track(SlotId::ONE).overdubStartTick);
 	CHECK_EQUAL(1, engine.track(SlotId::ONE).historySize);
@@ -252,6 +253,20 @@ TEST(LoopStationActions, CompletingOverdubPreservesPendingPlaybackStop) {
 	CHECK(engine.track(SlotId::ONE).state == TrackState::STOPPED);
 }
 
+TEST(LoopStationActions, PendingCommitStillUsesConfiguredStopAction) {
+	SongModel model;
+	model.global.stopAction = {ActionMode::SYNCED, ActionDivision::BAR};
+	Engine engine(model);
+	engine.restoreBoundPhrase(SlotId::ONE, 96, true);
+	engine.track(SlotId::ONE).committingLength = 96;
+	engine.stopAll(timeAt(20));
+	CHECK(engine.track(SlotId::ONE).state == TrackState::PLAYING);
+	CHECK(engine.track(SlotId::ONE).event.action == PendingAction::STOP);
+	CHECK_EQUAL(96, engine.track(SlotId::ONE).event.tick);
+	engine.processTick(timeAt(96));
+	CHECK(engine.track(SlotId::ONE).state == TrackState::STOPPED);
+}
+
 TEST(LoopStationActions, AutomaticOverdubRejectionPreservesFirstTakePublication) {
 	SongModel model;
 	model.global.startAction.mode = ActionMode::IMMEDIATE;
@@ -263,7 +278,7 @@ TEST(LoopStationActions, AutomaticOverdubRejectionPreservesFirstTakePublication)
 	engine.centrePressed(SlotId::ONE, timeAt(0), 0);
 	engine.centrePressed(SlotId::ONE, timeAt(48), 1000);
 	CHECK(engine.track(SlotId::ONE).state == TrackState::ERROR);
-	CHECK(engine.track(SlotId::ONE).error == Error::RESOURCE_LIMIT);
+	CHECK(engine.track(SlotId::ONE).error == Error::ALLOCATION);
 	CHECK_EQUAL(48, engine.track(SlotId::ONE).committingLength);
 	engine.notifyCommitComplete(SlotId::ONE, true);
 	CHECK_EQUAL(1, engine.track(SlotId::ONE).historySize);
@@ -288,4 +303,29 @@ TEST(LoopStationActions, FixedDurationRetainsFractionalRecordingStart) {
 	now.fractionQ16 = 32768;
 	engine.processTick(now);
 	CHECK_EQUAL(1, delegate.ends);
+	CHECK_EQUAL(20, delegate.lastLength);
+}
+
+TEST(LoopStationActions, TransportStopPreservesFractionalEndIncludingDeferredStop) {
+	for (bool deferred : {false, true}) {
+		SongModel model;
+		model.global.startAction.mode = ActionMode::IMMEDIATE;
+		ActionDelegate delegate;
+		Engine engine(model, &delegate);
+		auto now = timeAt(2);
+		now.fractionQ16 = 49152;
+		engine.centrePressed(SlotId::ONE, now, 1000);
+		now.tick = 22;
+		engine.track(SlotId::ONE).finishingCapture = deferred;
+		engine.transportStopped(now);
+		if (deferred) {
+			CHECK_EQUAL(0, delegate.ends);
+			engine.track(SlotId::ONE).finishingCapture = false;
+			// Service can happen after the transport position has reset to zero.
+			engine.serviceAudioCompletion(Transport{});
+		}
+		CHECK_EQUAL(1, delegate.ends);
+		CHECK_EQUAL(20, delegate.lastLength);
+		CHECK(engine.track(SlotId::ONE).state == TrackState::STOPPED);
+	}
 }

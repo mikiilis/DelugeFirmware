@@ -70,14 +70,16 @@ LivePitchShifter::~LivePitchShifter() {
 
 void LivePitchShifter::render(int32_t* __restrict__ outputBuffer, int32_t numSamplesThisFunctionCall,
                               int32_t phaseIncrement, int32_t amplitude, int32_t amplitudeIncrement,
-                              int32_t interpolationBufferSize) {
+                              int32_t interpolationBufferSize, LiveInputBuffer* preparedInput) {
 
-	LiveInputBuffer* liveInputBuffer = AudioEngine::getOrCreateLiveInputBuffer(inputType, false);
+	LiveInputBuffer* liveInputBuffer =
+	    preparedInput ? preparedInput : AudioEngine::getOrCreateLiveInputBuffer(inputType, false);
 	if (ALPHA_OR_BETA_VERSION && !liveInputBuffer) {
 		FREEZE_WITH_ERROR("E165");
 	}
 
-	liveInputBuffer->giveInput(numSamplesThisFunctionCall, AudioEngine::audioSampleTimer, inputType);
+	if (!preparedInput)
+		liveInputBuffer->giveInput(numSamplesThisFunctionCall, AudioEngine::audioSampleTimer, inputType);
 
 	int32_t whichKernel = getWhichKernel(phaseIncrement);
 

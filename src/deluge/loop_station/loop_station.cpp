@@ -32,8 +32,9 @@ void sanitizeTrackSettings(TrackSettings& settings, SlotId slot) {
 	}
 	settings.playback =
 	    clampEnum<PlaybackMode, PlaybackMode::ONE_SHOT>(static_cast<uint32_t>(settings.playback), PlaybackMode::LOOP);
-	settings.transpose = std::clamp<int16_t>(settings.transpose, -24, 24);
-	settings.transposeCents = std::clamp<int8_t>(settings.transposeCents, -50, 50);
+	int32_t totalCents = std::clamp<int32_t>(settings.transpose * 100 + settings.transposeCents, -2450, 2450);
+	settings.transpose = static_cast<int16_t>((totalCents + (totalCents > 0 ? 49 : totalCents < 0 ? -49 : 0)) / 100);
+	settings.transposeCents = static_cast<int8_t>(totalCents - settings.transpose * 100);
 }
 
 } // namespace
@@ -159,8 +160,13 @@ void writeTrackParameter(SongModel& model, SlotId slot, TrackParameter parameter
 		break;
 	case TrackParameter::TRANSPOSE: {
 		int32_t valueInCents = std::clamp<int32_t>(value, -2450, 2450);
-		settings.transpose = static_cast<int16_t>(valueInCents / 100);
-		settings.transposeCents = static_cast<int8_t>(valueInCents % 100);
+		settings.transpose = static_cast<int16_t>((valueInCents
+		                                           + (valueInCents > 0   ? 49
+		                                              : valueInCents < 0 ? -49
+		                                                                 : 0))
+		                                          / 100);
+		settings.transposeCents = static_cast<int8_t>(valueInCents - settings.transpose * 100);
+		model.tracks[indexOf(slot)].transposePresent = true;
 	} break;
 	}
 }
@@ -231,7 +237,8 @@ uint32_t Engine::actionTick(Transport const& transport, ActionTiming timing) {
 void Engine::requestAction(SlotId slot, PendingAction action, Transport const& transport, ActionTiming timing) {
 	uint64_t target = actionPositionQ16(transport, timing);
 	if (timing.mode == ActionMode::IMMEDIATE || !transport.barLength)
-		execute(slot, action, transport, transport.tick);
+		execute(slot, action, transport, transport.tick,
+		        (static_cast<uint64_t>(transport.tick) << 16) | transport.fractionQ16);
 	else
 		schedule(slot, action, static_cast<uint32_t>((target + 65535) >> 16),
 		         static_cast<uint32_t>((target + 65535) >> 16), target);
@@ -254,9 +261,6 @@ void Engine::centrePressed(SlotId slot, Transport const& transport, uint32_t ges
 		transition(slot, runtime.stateBeforeCommit);
 		return;
 	}
-	if (runtime.state == TrackState::COMMITTING) {
-		return;
-	}
 	// A second gesture cancels a user intention, never the automatic record limit.
 	if (runtime.event.pending()) {
 		runtime.event = {};
@@ -265,11 +269,12 @@ void Engine::centrePressed(SlotId slot, Transport const& transport, uint32_t ges
 		return;
 	}
 	bool doubleTap = isDoubleTap(runtime, gestureTimeMs);
-	if (doubleTap && runtime.state == TrackState::OVERDUBBING) {
+	if (doubleTap && runtime.state == TrackState::OVERDUBBING && runtime.overdubStartedByLastTap) {
 		if (delegate_)
 			delegate_->abortCapture(slot, true);
 		runtime.finishingOverdub = false;
 		runtime.overdubEndTick = 0;
+		runtime.overdubStartedByLastTap = false;
 		transition(slot, TrackState::PLAYING);
 		stop(slot, transport);
 		return;
@@ -280,6 +285,9 @@ void Engine::centrePressed(SlotId slot, Transport const& transport, uint32_t ges
 		requestAction(slot, PendingAction::START_RECORDING, transport, model_.global.startAction);
 		break;
 	case TrackState::RECORDING:
+		// RECORD→OVERDUB may create a dub as a direct consequence of this tap.
+		// Preserve that origin across synchronous or asynchronous first-take commit.
+		runtime.overdubStartedByLastTap = true;
 		requestAction(slot, PendingAction::FINISH_RECORDING, transport, model_.global.stopAction);
 		break;
 	case TrackState::PLAYING:
@@ -287,13 +295,17 @@ void Engine::centrePressed(SlotId slot, Transport const& transport, uint32_t ges
 			stop(slot, transport);
 		else if (model_.tracks[indexOf(slot)].settings.playback == PlaybackMode::ONE_SHOT)
 			requestAction(slot, PendingAction::RETRIGGER, transport, model_.global.startAction);
-		else if (!runtime.finishingOverdub)
-			execute(slot, PendingAction::START_OVERDUB, transport, transport.tick);
+		else if (!runtime.finishingOverdub) {
+			runtime.overdubStartedByLastTap = true;
+			execute(slot, PendingAction::START_OVERDUB, transport, transport.tick,
+			        (static_cast<uint64_t>(transport.tick) << 16) | transport.fractionQ16);
+		}
 		break;
 	case TrackState::OVERDUBBING:
 		// The input gate closes now; materialization of untouched audio may finish
 		// in the background, independently of the visible playback state.
 		runtime.finishingOverdub = true;
+		runtime.overdubStartedByLastTap = false;
 		if (delegate_)
 			delegate_->endOverdubInput(slot);
 		transition(slot, TrackState::PLAYING);
@@ -304,7 +316,6 @@ void Engine::centrePressed(SlotId slot, Transport const& transport, uint32_t ges
 			break;
 		requestAction(slot, PendingAction::RETRIGGER, transport, model_.global.startAction);
 		break;
-	case TrackState::COMMITTING:
 	case TrackState::ERROR:
 		break;
 	}
@@ -315,19 +326,20 @@ void Engine::schedule(SlotId slot, PendingAction action, uint32_t atTick, uint32
 	track(slot).event = {.action = action, .tick = atTick, .requestedTick = requestedTick, .positionQ16 = positionQ16};
 }
 
-void Engine::execute(SlotId slot, PendingAction action, Transport const& transport, uint32_t requestedTick) {
+void Engine::execute(SlotId slot, PendingAction action, Transport const& transport, uint32_t requestedTick,
+                     uint64_t requestedPositionQ16) {
 	switch (action) {
 	case PendingAction::START_RECORDING:
 		beginCapture(slot, false, transport.tick, transport);
 		break;
 	case PendingAction::FINISH_RECORDING:
-		finishCapture(slot, false, transport.tick, requestedTick);
+		finishCapture(slot, false, transport.tick, requestedTick, requestedPositionQ16);
 		break;
 	case PendingAction::START_OVERDUB:
 		beginCapture(slot, true, transport.tick, transport);
 		break;
 	case PendingAction::FINISH_OVERDUB:
-		finishCapture(slot, true, transport.tick, requestedTick);
+		finishCapture(slot, true, transport.tick, requestedTick, requestedPositionQ16);
 		break;
 	case PendingAction::STOP:
 		stop(slot, transport, true);
@@ -364,12 +376,6 @@ void Engine::stopAll(Transport const& transport) {
 		    || runtime.event.action == PendingAction::RETRIGGER) {
 			runtime.event = {};
 		}
-		if (runtime.state == TrackState::COMMITTING) {
-			runtime.stopAfterCapture = true;
-			runtime.stateBeforeCommit = TrackState::STOPPED;
-			setPlaybackGain(slot, 0, true);
-			continue;
-		}
 		if (runtime.state == TrackState::RECORDING) {
 			runtime.stopAfterCapture = true;
 			if (!runtime.event.pending()) {
@@ -398,7 +404,7 @@ bool Engine::canStartAll() const {
 bool Engine::canStopAll() const {
 	return std::any_of(runtime_.begin(), runtime_.end(), [](TrackRuntime const& r) {
 		return r.state == TrackState::PLAYING || r.state == TrackState::RECORDING || r.state == TrackState::OVERDUBBING
-		       || r.state == TrackState::COMMITTING || r.event.pending();
+		       || r.event.pending();
 	});
 }
 
@@ -411,8 +417,11 @@ void Engine::beginCapture(SlotId slot, bool overdub, uint32_t tick, Transport co
 	runtime.stopAfterCapture = false;
 	{
 		CaptureFinishGuard guard(runtime.finishingCapture);
-		if (delegate_ && (!delegate_->preflight(slot, overdub) || !delegate_->beginCapture(slot, overdub, tick))) {
-			fail(slot, Error::RESOURCE_LIMIT);
+		Error setupError = delegate_ ? delegate_->preflight(slot, overdub) : Error::NONE;
+		if (setupError == Error::NONE && delegate_)
+			setupError = delegate_->beginCapture(slot, overdub, tick);
+		if (setupError != Error::NONE) {
+			fail(slot, setupError);
 			return;
 		}
 		// EMPTY may have been reached from a stopped phrase whose persistent
@@ -421,13 +430,13 @@ void Engine::beginCapture(SlotId slot, bool overdub, uint32_t tick, Transport co
 			setPlaybackGain(slot, 1 << 24, true);
 		}
 		runtime.captureStartTick = tick;
+		runtime.captureStartPositionQ16 = (static_cast<uint64_t>(transport.tick) << 16) | transport.fractionQ16;
 		runtime.automaticEndTick = 0;
 		runtime.automaticEndPositionQ16 = 0;
 		auto bars = model_.tracks[indexOf(slot)].settings.durationBars;
 		if (!overdub && bars != kManualDuration && transport.barLength) {
 			runtime.automaticEndPositionQ16 = std::min<uint64_t>(
-			    ((static_cast<uint64_t>(tick) + static_cast<uint64_t>(bars) * transport.barLength) << 16)
-			        + transport.fractionQ16,
+			    runtime.captureStartPositionQ16 + (static_cast<uint64_t>(bars) * transport.barLength << 16),
 			    static_cast<uint64_t>(kMaxLoopSequenceLength) << 16);
 			runtime.automaticEndTick = (runtime.automaticEndPositionQ16 + 65535) >> 16;
 		}
@@ -450,27 +459,33 @@ void Engine::beginCapture(SlotId slot, bool overdub, uint32_t tick, Transport co
 			stop(slot, transport, true);
 		}
 		else
-			finishCapture(slot, false, tick, tick);
+			finishCapture(slot, false, runtime.transportStopPositionQ16 >> 16, runtime.transportStopPositionQ16 >> 16,
+			              runtime.transportStopPositionQ16);
 	}
 	if (exiting_)
 		requestExit(transport);
 }
 
-void Engine::finishCapture(SlotId slot, bool overdub, uint32_t tick, uint32_t requestedTick) {
+void Engine::finishCapture(SlotId slot, bool overdub, uint32_t tick, uint32_t requestedTick,
+                           uint64_t requestedPositionQ16) {
 	auto& runtime = track(slot);
-	if (runtime.finishingCapture || runtime.state == TrackState::COMMITTING) {
+	if (runtime.finishingCapture) {
 		return;
 	}
 	CaptureFinishGuard guard(runtime.finishingCapture);
 	runtime.overdubEndTick = 0;
 	runtime.automaticEndTick = 0;
 	runtime.automaticEndPositionQ16 = 0;
-	uint32_t endTick = requestedTick;
-	if (endTick <= runtime.captureStartTick) {
-		endTick = tick;
-	}
+	uint64_t endPositionQ16 = requestedPositionQ16;
+	if (!endPositionQ16)
+		endPositionQ16 = static_cast<uint64_t>(requestedTick) << 16;
+	if (endPositionQ16 <= runtime.captureStartPositionQ16)
+		endPositionQ16 = static_cast<uint64_t>(tick) << 16;
+	uint64_t durationQ16 =
+	    endPositionQ16 > runtime.captureStartPositionQ16 ? endPositionQ16 - runtime.captureStartPositionQ16 : 0;
 	uint32_t length =
-	    overdub ? runtime.phraseLength : (endTick > runtime.captureStartTick ? endTick - runtime.captureStartTick : 1);
+	    overdub ? runtime.phraseLength
+	            : std::max<uint32_t>(1, std::min<uint64_t>(kMaxLoopSequenceLength, (durationQ16 + 32768) >> 16));
 	if (length == 0) {
 		if (delegate_) {
 			delegate_->abortCapture(slot, overdub);
@@ -494,7 +509,6 @@ void Engine::finishCapture(SlotId slot, bool overdub, uint32_t tick, uint32_t re
 		runtime.event = {};
 	if (finish.asynchronous) {
 		runtime.committingLength = committedLength;
-		runtime.committingOverdub = overdub;
 		runtime.finishingOverdub = false;
 		if (!overdub) {
 			runtime.phraseLength = committedLength;
@@ -508,12 +522,16 @@ void Engine::finishCapture(SlotId slot, bool overdub, uint32_t tick, uint32_t re
 		if (!overdub && !runtime.stopAfterCapture && !exiting_
 		    && model_.global.recordAction == RecordAction::RECORD_OVERDUB_PLAY
 		    && model_.tracks[indexOf(slot)].settings.playback == PlaybackMode::LOOP) {
-			if (delegate_ && delegate_->preflight(slot, true) && delegate_->beginCapture(slot, true, tick)) {
+			Error setupError = delegate_ ? delegate_->preflight(slot, true) : Error::NONE;
+			if (setupError == Error::NONE && delegate_)
+				setupError = delegate_->beginCapture(slot, true, tick);
+			if (setupError == Error::NONE) {
 				runtime.captureStartTick = runtime.overdubStartTick = tick;
+				runtime.captureStartPositionQ16 = endPositionQ16;
 				transition(slot, TrackState::OVERDUBBING);
 			}
 			else {
-				fail(slot, Error::RESOURCE_LIMIT);
+				fail(slot, setupError);
 			}
 		}
 	}
@@ -522,7 +540,7 @@ void Engine::finishCapture(SlotId slot, bool overdub, uint32_t tick, uint32_t re
 	}
 }
 
-void Engine::completeCapture(SlotId slot, bool overdub, uint32_t length, uint32_t completionTick) {
+void Engine::completeCapture(SlotId slot, bool overdub, uint32_t length) {
 	auto& runtime = track(slot);
 	if (overdub) {
 		runtime.currentRevision = nextRevision_++;
@@ -552,10 +570,13 @@ void Engine::completeCapture(SlotId slot, bool overdub, uint32_t length, uint32_
 		// REC→DUB starts continuous overdub at the fresh phrase boundary.
 		destination = TrackState::OVERDUBBING;
 		// Synchronous delegates enter the next performance state at this boundary.
-		runtime.captureStartTick = completionTick ? completionTick : runtime.captureStartTick + length;
-		if (delegate_
-		    && (!delegate_->preflight(slot, true) || !delegate_->beginCapture(slot, true, runtime.captureStartTick))) {
-			fail(slot, Error::RESOURCE_LIMIT);
+		runtime.captureStartPositionQ16 += static_cast<uint64_t>(length) << 16;
+		runtime.captureStartTick = static_cast<uint32_t>((runtime.captureStartPositionQ16 + 65535) >> 16);
+		Error setupError = delegate_ ? delegate_->preflight(slot, true) : Error::NONE;
+		if (setupError == Error::NONE && delegate_)
+			setupError = delegate_->beginCapture(slot, true, runtime.captureStartTick);
+		if (setupError != Error::NONE) {
+			fail(slot, setupError);
 			return;
 		}
 		else {
@@ -605,21 +626,21 @@ void Engine::processTick(Transport const& transport) {
 	for (size_t i = 0; i < runtime_.size(); ++i) {
 		auto slot = static_cast<SlotId>(i);
 		auto& runtime = runtime_[i];
-		if (runtime.finishingCapture || runtime.state == TrackState::COMMITTING) {
+		if (runtime.finishingCapture) {
 			continue;
 		}
 		if (runtime.event.pending()
 		    && ((static_cast<uint64_t>(transport.tick) << 16) | transport.fractionQ16) >= runtime.event.deadline()) {
 			auto event = runtime.event;
 			runtime.event = {};
-			execute(slot, event.action, transport, event.requestedTick);
+			execute(slot, event.action, transport, event.requestedTick, event.deadline());
 		}
 
 		if (runtime.state == TrackState::RECORDING && runtime.automaticEndTick
 		    && ((static_cast<uint64_t>(transport.tick) << 16) | transport.fractionQ16)
 		           >= runtime.automaticEndPositionQ16) {
 			auto end = runtime.automaticEndTick;
-			finishCapture(slot, false, end, end);
+			finishCapture(slot, false, end, end, runtime.automaticEndPositionQ16);
 		}
 	}
 }
@@ -635,7 +656,8 @@ void Engine::serviceAudioCompletion(Transport const& transport) {
 		if (r.transportStopPending) {
 			r.transportStopPending = false;
 			if (r.state == TrackState::RECORDING)
-				finishCapture(slot, false, transport.tick, transport.tick);
+				finishCapture(slot, false, r.transportStopPositionQ16 >> 16, r.transportStopPositionQ16 >> 16,
+				              r.transportStopPositionQ16);
 			else if (r.state == TrackState::OVERDUBBING) {
 				CaptureFinishGuard guard(r.finishingCapture);
 				r.finishingOverdub = true;
@@ -660,7 +682,7 @@ bool Engine::requestExit(Transport const& transport) {
 	for (size_t i = 0; i < runtime_.size(); ++i) {
 		auto slot = static_cast<SlotId>(i);
 		auto& runtime = runtime_[i];
-		if (runtime.finishingCapture || runtime.state == TrackState::COMMITTING)
+		if (runtime.finishingCapture)
 			continue;
 		if (runtime.state == TrackState::RECORDING && !runtime.event.pending()) {
 			requestAction(slot, PendingAction::FINISH_RECORDING, transport, model_.global.stopAction);
@@ -685,8 +707,7 @@ bool Engine::exitReady() const {
 	for (auto const& runtime : runtime_) {
 		if (runtime.finishingCapture || runtime.handlingFailure || runtime.transportStopPending
 		    || runtime.state == TrackState::RECORDING || runtime.state == TrackState::OVERDUBBING
-		    || runtime.finishingOverdub || runtime.committingLength || runtime.state == TrackState::COMMITTING
-		    || runtime.event.pending()) {
+		    || runtime.finishingOverdub || runtime.committingLength || runtime.event.pending()) {
 			return false;
 		}
 	}
@@ -697,14 +718,14 @@ bool Engine::anyCapturing() const {
 	return std::any_of(runtime_.begin(), runtime_.end(), [](TrackRuntime const& runtime) {
 		return runtime.finishingCapture || runtime.handlingFailure || runtime.transportStopPending
 		       || runtime.state == TrackState::RECORDING || runtime.state == TrackState::OVERDUBBING
-		       || runtime.finishingOverdub || runtime.committingLength || runtime.state == TrackState::COMMITTING;
+		       || runtime.finishingOverdub || runtime.committingLength;
 	});
 }
 
 uint64_t Engine::nextActionPositionQ16() const {
 	uint64_t result = UINT64_MAX;
 	for (auto const& r : runtime_) {
-		if (r.finishingCapture || r.state == TrackState::COMMITTING)
+		if (r.finishingCapture)
 			continue;
 		if (r.event.pending())
 			result = std::min(result, r.event.deadline());
@@ -720,12 +741,14 @@ void Engine::transportStopped(Transport const& transport) {
 		auto& r = runtime_[i];
 		r.event = {};
 		r.stopAfterCapture = true;
+		r.transportStopPositionQ16 = (uint64_t(transport.tick) << 16) | transport.fractionQ16;
 		if (r.finishingCapture) {
 			r.transportStopPending = true;
 			continue;
 		}
 		if (r.state == TrackState::RECORDING)
-			finishCapture(slot, false, transport.tick, transport.tick);
+			finishCapture(slot, false, transport.tick, transport.tick,
+			              (uint64_t(transport.tick) << 16) | transport.fractionQ16);
 		else if (r.state == TrackState::OVERDUBBING) {
 			r.finishingOverdub = true;
 			if (delegate_)
@@ -739,7 +762,7 @@ void Engine::transportStopped(Transport const& transport) {
 uint32_t Engine::ticksUntilNextEvent(uint32_t currentTick) const {
 	uint32_t result = UINT32_MAX;
 	for (auto const& r : runtime_) {
-		if (r.finishingCapture || r.state == TrackState::COMMITTING)
+		if (r.finishingCapture)
 			continue;
 		auto consider = [&](uint32_t tick) {
 			if (tick)
@@ -779,7 +802,7 @@ bool Engine::redo(SlotId slot) {
 bool Engine::navigateHistory(SlotId slot, bool redo) {
 	auto& runtime = track(slot);
 	if (runtime.finishingCapture || runtime.state == TrackState::RECORDING || runtime.state == TrackState::OVERDUBBING
-	    || runtime.committingLength || runtime.finishingOverdub || runtime.state == TrackState::COMMITTING
+	    || runtime.committingLength || runtime.finishingOverdub
 	    || (redo ? !runtime.redoAvailable : !runtime.undoAvailable)) {
 		return false;
 	}
@@ -804,7 +827,7 @@ void Engine::refreshHistoryAvailability(SlotId slot) {
 	runtime.redoAvailable = runtime.historyCursor + 1 < static_cast<int32_t>(runtime.historySize);
 }
 
-void Engine::notifyCommitComplete(SlotId slot, bool success, Error error, uint32_t completionTick) {
+void Engine::notifyCommitComplete(SlotId slot, bool success, Error error) {
 	auto& runtime = track(slot);
 	if (!runtime.committingLength)
 		return;

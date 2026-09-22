@@ -1,11 +1,13 @@
 #include "CppUTest/TestHarness.h"
 #include "fixture.h"
+#include "loop_station/audio_pipeline.h"
 #include "memory/general_memory_allocator.h"
 #include "model/sample/sample.h"
 #include "model/sample/sample_recorder.h"
 #include "storage/storage_manager.h"
 #include <bit>
 #include <memory>
+#include <vector>
 
 struct SampleRecorderLifecycleTestAccess {
 	static Error initialize(SampleRecorder& r) { return r.initializeRecordingSample(); }
@@ -159,7 +161,9 @@ TEST(LoopRecorder, BackgroundCopyCompletesRotatedBackingAfterPlaybackStops) {
 	source.processLoopOverdub(dry, silence);
 	SampleRecorder r;
 	initialize(r, 4, source.sample, 2);
-	std::array<StereoSample, 1> current{{{76800, 76800}}}, input{{{2560, 2560}}};
+	// The rendered backing may contain transpose, envelope, or other playback
+	// processing. Storage must use the retained WAV frame instead.
+	std::array<StereoSample, 1> current{{{123, -456}}}, input{{{2560, 2560}}};
 	r.processLoopOverdub(current, input);
 	r.stopLoopOverdubInput();
 	CHECK_FALSE(r.loopOverdubReady());
@@ -175,6 +179,109 @@ TEST(LoopRecorder, BackgroundCopyCompletesRotatedBackingAfterPlaybackStops) {
 			value |= std::to_integer<uint32_t>(FatFS::loopFileBytes[44 + frame * 6 + byte]) << (8 * (byte + 1));
 		CHECK_EQUAL(expected[frame], std::bit_cast<int32_t>(value));
 	}
+}
+
+TEST(LoopRecorder, ProductionPipelineRepeatsAdditionsWithMonitoringOffAndKeepsStorageDry) {
+	SampleRecorder source;
+	initialize(source, 4);
+	std::array<StereoSample, 4> dry;
+	dry.fill({3200, -3200});
+	std::array<StereoSample, 4> silence{};
+	source.processLoopOverdub(dry, silence);
+	SampleRecorder child;
+	initialize(child, 4, source.sample);
+	std::array<StereoSample, 4> input;
+	input.fill({2560, -5120});
+	int pitchCalls = 0;
+	auto pitch = [&](std::span<StereoSample> audio) {
+		++pitchCalls;
+		// Distinct processing makes a reordered or duplicated recorder tap visible.
+		for (auto& frame : audio) {
+			frame.l *= 2;
+			frame.r *= 2;
+		}
+	};
+	// Envelope is half volume. Live monitoring is enabled on the first pass.
+	deluge::loop_station::renderAudio(dry, input, &child, 1 << 25, 1 << 25, 1 << 24, true, pitch);
+	CHECK_EQUAL(3840, dry[0].l);
+	CHECK_EQUAL(-4480, dry[0].r);
+	// An unrelated clip render still supplies the original backing. The recorder
+	// must replace it with the first pass's additions, even with monitoring off.
+	dry.fill({3200, -3200});
+	deluge::loop_station::renderAudio(dry, silence, &child, 1 << 26, 1 << 26, 1 << 23, false, pitch);
+	CHECK_EQUAL(3520, dry[0].l);
+	CHECK_EQUAL(-3840, dry[0].r);
+	child.stopLoopOverdubInput();
+	dry.fill({3200, -3200});
+	auto bypass = [](std::span<StereoSample>) {};
+	deluge::loop_station::renderAudio(dry, input, &child, 1 << 26, 1 << 26, 1 << 24, false, bypass);
+	CHECK_EQUAL(3520, dry[0].l);
+	CHECK_EQUAL(-3840, dry[0].r);
+	CHECK_EQUAL(2, pitchCalls);
+}
+
+TEST(LoopRecorder, SourcePrefetchIncludesSplitFramesAndLoopWrap) {
+	for (uint32_t frames : {uint32_t(Cluster::size / 6), uint32_t(Cluster::size / 3)}) {
+		SampleRecorder source;
+		initialize(source, frames);
+		std::vector<StereoSample> backing(frames, {3200, -3200});
+		std::vector<StereoSample> silence(frames);
+		source.processLoopOverdub(backing, silence);
+		for (uint32_t start : {0u, frames - 12}) {
+			SampleRecorder child;
+			initialize(child, frames, source.sample, start);
+			for (uint32_t cursor = 0; cursor < frames; cursor += 64) {
+				CHECK(SampleRecorderLifecycleTestAccess::prepare(child) == Error::NONE);
+				auto count = std::min<uint32_t>(64, frames - cursor);
+				child.processLoopOverdub(std::span(backing).first(count), std::span(silence).first(count));
+				CHECK_FALSE(child.captureOutputBackingMissing);
+			}
+			CHECK_EQUAL(frames, child.numSamplesCaptured);
+		}
+	}
+}
+
+TEST(LoopRecorder, ProductionPipelineKeepsEarlyOverdubAudibleWhileTailCopies) {
+	SampleRecorder source;
+	initialize(source, 4);
+	std::array<StereoSample, 4> dry;
+	dry.fill({3200, 3200});
+	std::array<StereoSample, 4> silence{};
+	source.processLoopOverdub(dry, silence);
+	SampleRecorder child;
+	initialize(child, 4, source.sample);
+	std::array<StereoSample, 1> addition{{{2560, 2560}}};
+	auto bypass = [](std::span<StereoSample>) {};
+	deluge::loop_station::renderAudio(std::span(dry).first(1), addition, &child, 1 << 26, 1 << 26, 1 << 24, false,
+	                                  bypass);
+	child.stopLoopOverdubInput();
+	CHECK_FALSE(child.loopOverdubReady());
+	dry.fill({3200, 3200});
+	deluge::loop_station::renderAudio(dry, silence, &child, 1 << 26, 1 << 26, 1 << 24, false, bypass);
+	// Audible cursor wraps to the recorded frame before background copying runs.
+	CHECK_EQUAL(3200, dry[0].l);
+	CHECK_EQUAL(3520, dry[3].l);
+	CHECK_FALSE(child.loopOverdubReady());
+	CHECK(SampleRecorderLifecycleTestAccess::copy(child) == Error::NONE);
+	CHECK_TRUE(child.loopOverdubReady());
+}
+
+TEST(LoopRecorder, ProductionPipelineFadesBackingWithoutMutingMonitorOrRecordingFade) {
+	SampleRecorder child;
+	initialize(child, 4);
+	std::array<StereoSample, 4> dry;
+	dry.fill({3200, 3200});
+	std::array<StereoSample, 4> input;
+	input.fill({2560, 2560});
+	auto bypass = [](std::span<StereoSample>) {};
+	deluge::loop_station::renderAudio(dry, input, &child, 1 << 26, 0, 1 << 24, true, bypass);
+	CHECK_EQUAL(2720, dry[0].l);
+	CHECK_EQUAL(320, dry[3].l);
+	child.stopLoopOverdubInput();
+	dry.fill({3200, 3200});
+	deluge::loop_station::renderAudio(dry, input, &child, 1 << 26, 1 << 26, 1 << 24, false, bypass);
+	for (auto frame : dry)
+		CHECK_EQUAL(3520, frame.l);
 }
 
 TEST(LoopRecorder, AbortDuringSeekDoesNotWriteOrReleaseSnapshotInFlight) {
@@ -514,6 +621,11 @@ TEST(LoopRecorder, OneHundredSuccessiveOverdubsReleaseParentsAndAccumulateAudio)
 	dry.fill({3200, 3200});
 	std::array<StereoSample, 4> input;
 	input.fill({2560, 2560});
+	std::array<StereoSample, 4> silence{};
+	// Production overdubs always retain an existing populated WAV. Seed the
+	// fixture parent so each child reads its backing from stored PCM.
+	parent->processLoopOverdub(dry, silence);
+	parent->stopLoopOverdubInput();
 	for (int i = 0; i < 100; ++i) {
 		parent->retainForCommit();
 		auto child = std::make_unique<SampleRecorder>();

@@ -62,6 +62,9 @@ Error SampleRecorder::setupLoopOverdub(uint32_t frames, Sample* source, uint32_t
 }
 
 Error SampleRecorder::prepareLoopClusters() {
+	auto sourceError = prepareLoopSourceClusters();
+	if (sourceError != Error::NONE)
+		return sourceError;
 	uint32_t count = sample->clusters.getNumElements();
 	std::array<uint32_t, 6> wanted{};
 	size_t wantedCount = 0;
@@ -120,6 +123,85 @@ Error SampleRecorder::prepareLoopClusters() {
 	return Error::NONE;
 }
 
+Error SampleRecorder::prepareLoopSourceClusters() {
+	if (!loopSource_ || !loopFrames_)
+		return Error::NONE;
+	std::array<uint32_t, 4> wanted{};
+	size_t wantedCount = 0;
+	uint32_t bytesPerFrame = loopSource_->byteDepth * loopSource_->numChannels;
+	if (!bytesPerFrame)
+		return Error::FILE_CORRUPTED;
+	// Walk bytes, including split frames and the wrap back to the source start.
+	// Sampling frame offsets can alias to one position on a short loop and miss
+	// the next cluster even when the very next audio buffer needs it.
+	uint64_t first = loopSource_->audioDataStartPosBytes + uint64_t(loopSourceStart_) * bytesPerFrame;
+	uint64_t end = first + uint64_t(loopFrames_) * bytesPerFrame;
+	uint64_t address = first + uint64_t((loopSourceFrame_ + loopFrameCursor_) % loopFrames_) * bytesPerFrame;
+	uint64_t remaining = end - first;
+	while (remaining && wantedCount < wanted.size()) {
+		uint32_t index = address / Cluster::size;
+		if (std::find(wanted.begin(), wanted.begin() + wantedCount, index) == wanted.begin() + wantedCount)
+			wanted[wantedCount++] = index;
+		uint64_t count = std::min({remaining, end - address, uint64_t(Cluster::size - address % Cluster::size)});
+		remaining -= count;
+		address += count;
+		if (address == end)
+			address = first;
+	}
+	for (auto& entry : loopSourceCache_) {
+		bool needed =
+		    entry.cluster
+		    && std::find(wanted.begin(), wanted.begin() + wantedCount, entry.index) != wanted.begin() + wantedCount;
+		if (entry.cluster && !needed) {
+			audioFileManager.removeReasonFromCluster(*entry.cluster, "LSSX");
+			entry = {};
+		}
+	}
+	for (size_t i = 0; i < wantedCount; ++i) {
+		uint32_t index = wanted[i];
+		if (std::any_of(loopSourceCache_.begin(), loopSourceCache_.end(),
+		                [index](auto const& entry) { return entry.cluster && entry.index == index; }))
+			continue;
+		auto target = std::find_if(loopSourceCache_.begin(), loopSourceCache_.end(),
+		                           [](auto const& entry) { return entry.cluster == nullptr; });
+		if (target == loopSourceCache_.end() || index >= static_cast<uint32_t>(loopSource_->clusters.getNumElements()))
+			return Error::SD_CARD;
+		Cluster* cluster = loopSource_->clusters.getElement(index)->getCluster(loopSource_, index, CLUSTER_ENQUEUE);
+		if (!cluster)
+			return Error::INSUFFICIENT_RAM;
+		*target = {cluster, index};
+	}
+	return Error::NONE;
+}
+
+Error SampleRecorder::readLoopSourceFrame(uint32_t frame, StereoSample& destination) {
+	if (!loopSource_ || !loopSource_->byteDepth || !loopSource_->numChannels)
+		return Error::FILE_CORRUPTED;
+	uint32_t sourceFrame = loopSourceStart_ + (loopSourceFrame_ + frame) % loopFrames_;
+	uint64_t address = loopSource_->audioDataStartPosBytes
+	                   + static_cast<uint64_t>(sourceFrame) * loopSource_->byteDepth * loopSource_->numChannels;
+	destination = {};
+	for (uint32_t channel = 0; channel < loopSource_->numChannels; ++channel) {
+		uint32_t value = 0;
+		for (uint32_t byte = 0; byte < loopSource_->byteDepth; ++byte, ++address) {
+			uint32_t index = address / Cluster::size;
+			auto entry = std::find_if(loopSourceCache_.begin(), loopSourceCache_.end(), [index](auto const& candidate) {
+				return candidate.cluster && candidate.index == index;
+			});
+			if (entry == loopSourceCache_.end() || !entry->cluster->loaded)
+				return Error::SD_CARD;
+			value |= static_cast<uint32_t>(static_cast<uint8_t>(entry->cluster->data[address % Cluster::size]))
+			         << (8 * (4 - loopSource_->byteDepth + byte));
+		}
+		int32_t sampleValue = std::bit_cast<int32_t>(value);
+		if (channel == 0)
+			destination.l = destination.r = sampleValue;
+		else if (channel == 1)
+			destination.r = sampleValue;
+	}
+	return Error::NONE;
+}
+
 void SampleRecorder::processLoopOverdub(std::span<StereoSample> backing, std::span<const StereoSample> input,
                                         bool backgroundCopy) {
 	using deluge::loop_station::kCaptureGainShift;
@@ -173,6 +255,13 @@ void SampleRecorder::processLoopOverdub(std::span<StereoSample> backing, std::sp
 			bytes[byte] = entries[byte]->cluster->data + address % Cluster::size;
 		}
 		StereoSample previous{restoreCaptureGain(backing[frame].l), restoreCaptureGain(backing[frame].r)};
+		if (loopSource_ && numSamplesCaptured < loopFrames_) {
+			auto error = readLoopSourceFrame(loopFrameCursor_, previous);
+			if (error != Error::NONE) {
+				captureOutputBackingMissing = true;
+				return;
+			}
+		}
 		if (numSamplesCaptured >= loopFrames_) {
 			uint32_t left = 0, right = 0;
 			for (uint32_t byte = 0; byte < 3; ++byte) {
@@ -180,8 +269,10 @@ void SampleRecorder::processLoopOverdub(std::span<StereoSample> backing, std::sp
 				right |= static_cast<uint32_t>(static_cast<uint8_t>(*bytes[byte + 3])) << (8 * (byte + 1));
 			}
 			previous = {std::bit_cast<int32_t>(left), std::bit_cast<int32_t>(right)};
-			backing[frame] = {previous.l >> kCaptureGainShift, previous.r >> kCaptureGainShift};
 		}
+		// Always return the current dry backing, including the retained source
+		// on pass one. Audible envelope/pitch are applied by AudioOutput afterwards.
+		backing[frame] = {previous.l >> kCaptureGainShift, previous.r >> kCaptureGainShift};
 		if (!loopOverdubReady()) {
 			StereoSample added = !backgroundCopy && captureOutputInputActive ? input[frame] : StereoSample{};
 			uint32_t left = static_cast<uint32_t>(saturatingAdd(previous.l, added.l));
@@ -326,6 +417,12 @@ Error SampleRecorder::serviceLoopWrites() {
 }
 
 void SampleRecorder::releaseLoopClusters() {
+	for (auto& entry : loopSourceCache_) {
+		if (entry.cluster) {
+			audioFileManager.removeReasonFromCluster(*entry.cluster, "LSSR");
+			entry = {};
+		}
+	}
 	if (loopSource_) {
 		loopSource_->removeReason("LSCB");
 		loopSource_ = nullptr;

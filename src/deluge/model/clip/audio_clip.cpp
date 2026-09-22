@@ -643,9 +643,15 @@ bool AudioClip::render(ModelStackWithTimelineCounter* modelStack, std::span<q31_
 	}
 
 	int32_t timeStretchRatio = kMaxSampleValue;
+	uint32_t nativePhaseIncrement =
+	    static_cast<uint32_t>((static_cast<uint64_t>(kMaxSampleValue) * sample->sampleRate) / kSampleRate);
 	int32_t phaseIncrement = sampleHolder.neutralPhaseIncrement;
-
-	if (pitchAdjust != kMaxSampleValue) {
+	if (loopStationSlotId != 0) {
+		// Render the neutral, native-speed backing. AudioOutput combines the
+		// cumulative recorder playback and monitor before applying pitch once.
+		phaseIncrement = nativePhaseIncrement;
+	}
+	else if (pitchAdjust != kMaxSampleValue) {
 		uint64_t newPhaseIncrement = ((uint64_t)phaseIncrement * (uint64_t)pitchAdjust) >> 24;
 		phaseIncrement = (newPhaseIncrement > 2147483647) ? 2147483647 : newPhaseIncrement;
 	}
@@ -660,16 +666,10 @@ bool AudioClip::render(ModelStackWithTimelineCounter* modelStack, std::span<q31_
 	uint64_t requiredSpeedAdjustment =
 	    (uint64_t)(((double)((uint64_t)sampleLengthInSamples << 24)) / (double)clipLengthInSamples);
 
-	// Loop Station's unsynced mode deliberately ignores the clip's musical tick
-	// duration. The sample therefore keeps its recorded speed after a tempo
-	// change. If transpose is active, compensate only that pitch ratio so pitch
-	// can change without making the loop run faster or slower.
+	// Loop Station follows native sample time. Track pitch is applied to the
+	// combined dry backing and monitor in AudioOutput, after the recorder tap.
 	if (loopStationSlotId != 0) {
-		if (sampleHolder.transpose || sampleHolder.cents) {
-			uint32_t nativePhaseIncrement =
-			    static_cast<uint32_t>((static_cast<uint64_t>(kMaxSampleValue) * sample->sampleRate) / kSampleRate);
-			timeStretchRatio = (static_cast<uint64_t>(nativePhaseIncrement) << 24) / phaseIncrement;
-		}
+		timeStretchRatio = kMaxSampleValue;
 	}
 	// If we're squishing time...
 	else if (sampleControls.pitchAndSpeedAreIndependent) {
