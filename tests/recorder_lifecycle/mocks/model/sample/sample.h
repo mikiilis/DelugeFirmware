@@ -22,6 +22,8 @@ public:
 		std::array<SampleCluster, 16> entries{};
 		int count = 0;
 		Error insertSampleClustersAtEnd(int n) {
+			if (recorder_test::clusterInsertFails)
+				return Error::INSUFFICIENT_RAM;
 			if (count + n > entries.size())
 				return Error::INSUFFICIENT_RAM;
 			count += n;

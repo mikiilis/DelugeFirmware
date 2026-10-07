@@ -5,6 +5,7 @@
  */
 
 #include "definitions.h"
+#include "io/debug/log.h"
 #include "memory/general_memory_allocator.h"
 #include "model/output.h"
 #include "model/sample/sample.h"
@@ -108,6 +109,14 @@ void SampleRecorder::traceLifecycle(LifecycleEvent event, Cluster const* cluster
 	entry.clusterLoading = cluster && cluster == audioFileManager.clusterBeingLoaded;
 	recorderLifecycleTraceSequence = sequence + 1;
 #endif
+}
+
+void SampleRecorder::failCapture(Error error) {
+	D_PRINTLN("couldn't allocate RAM");
+	if (terminalError == Error::NONE) {
+		terminalError = error;
+	}
+	abort();
 }
 
 bool Output::removeRecorder(SampleRecorder* expected) {
@@ -227,6 +236,9 @@ gotError:
 	}
 	currentRecordCluster->numReasonsHeldBySampleRecorder++;
 	currentRecordClusterIndex = 0;
+	if (loopStationLinearCapture_) {
+		loopUnwrittenClusterCount_ = 1;
+	}
 
 	return Error::NONE;
 }

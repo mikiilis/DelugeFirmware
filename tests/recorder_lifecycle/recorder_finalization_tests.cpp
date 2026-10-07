@@ -8,6 +8,12 @@
 
 struct SampleRecorderLifecycleTestAccess {
 	static Error initialize(SampleRecorder& r) { return r.initializeRecordingSample(); }
+	static Error initializeLoopLinear(SampleRecorder& r) {
+		r.loopStationLinearCapture_ = true;
+		return r.initializeRecordingSample();
+	}
+	static Error createNextCluster(SampleRecorder& r) { return r.createNextCluster(); }
+	static void failCapture(SampleRecorder& r, Error error) { r.failCapture(error); }
 	static Error write(SampleRecorder& r) { return r.writeOneCompletedCluster(); }
 	static Error finalize(SampleRecorder& r) { return r.finalizeRecordedFile(); }
 	static Error trim(SampleRecorder& r, uint32_t bytes) { return r.truncateFileDownToSize(bytes); }
@@ -17,9 +23,9 @@ using namespace recorder_test;
 
 TEST_GROUP(RecorderFinalization){void setup() override{failure = Failure::NONE;
 createError = writeError = finalizeError = Error::NONE;
-seekFails = truncateFails = closeFails = headerFails = clusterLoadFails = false;
+seekFails = truncateFails = closeFails = headerFails = clusterLoadFails = clusterInsertFails = false;
 recycleReleasedClusters = false;
-onSeek = onTruncate = onClose = onCreate = {};
+onSeek = onTruncate = onClose = onCreate = onWrite = {};
 seeks = truncations = headerWrites = destroyedClusters = clusterReleases = 0;
 fileCloses = unlinks = 0;
 audioFileManager.clusterBeingLoaded = nullptr;
@@ -31,7 +37,7 @@ void teardown() override {
 	LONGS_EQUAL(0, liveAllocations);
 	LONGS_EQUAL(0, liveClusters);
 	CHECK_FALSE(fileOpen);
-	onSeek = onTruncate = onClose = onCreate = {};
+	onSeek = onTruncate = onClose = onCreate = onWrite = {};
 }
 // Capture past a cluster boundary, then Smart-crop back before it. The
 // startup reasons are acquired by the REAL completed/final-cluster writers.
@@ -75,8 +81,155 @@ void cleanup(SampleRecorder& r) {
 	CHECK(r.cardRoutine() == Error::NONE);
 	POINTERS_EQUAL(nullptr, r.sample);
 }
+void prepareLoopLinear(SampleRecorder& r, int channels = 1) {
+	CHECK(SampleRecorderLifecycleTestAccess::initializeLoopLinear(r) == Error::NONE);
+	r.sample->numChannels = channels;
+	r.recordingNumChannels = channels;
+	r.folderID = AudioRecordingFolder::CLIPS;
+	r.mode = AudioInputChannel::LEFT;
+	r.writePos = r.currentRecordCluster->data + Cluster::size;
+	r.clusterEndPos = r.currentRecordCluster->data + Cluster::size;
+}
+void allocateLoopClustersThrough(SampleRecorder& r, int totalClusters) {
+	for (int i = 1; i < totalClusters; ++i) {
+		r.writePos = r.clusterEndPos;
+		CHECK(SampleRecorderLifecycleTestAccess::createNextCluster(r) == Error::NONE);
+	}
+}
 }
 ;
+
+TEST(RecorderFinalization, LoopInitialCaptureAllowsEightUnwrittenClusters) {
+	SampleRecorder r;
+	prepareLoopLinear(r);
+	allocateLoopClustersThrough(r, 8);
+	LONGS_EQUAL(8, r.sample->clusters.getNumElements());
+	LONGS_EQUAL(7, r.currentRecordClusterIndex);
+	cleanup(r);
+}
+
+TEST(RecorderFinalization, OrdinaryLinearRecordingIsNotLimitedToEightClusters) {
+	SampleRecorder r;
+	CHECK(SampleRecorderLifecycleTestAccess::initialize(r) == Error::NONE);
+	r.writePos = r.currentRecordCluster->data + Cluster::size;
+	r.clusterEndPos = r.currentRecordCluster->data + Cluster::size;
+	allocateLoopClustersThrough(r, 10);
+	LONGS_EQUAL(10, r.sample->clusters.getNumElements());
+	cleanup(r);
+}
+
+TEST(RecorderFinalization, MonoAndStereoFramesCanCrossClusterBoundaries) {
+	for (int channels : {1, 2}) {
+		SampleRecorder r;
+		prepareLoopLinear(r, channels);
+		allocateLoopClustersThrough(r, 7);
+		auto* oldCluster = r.currentRecordCluster;
+		int const overshoot = channels == 1 ? 2 : 5;
+		for (int i = 0; i < 5; ++i) {
+			oldCluster->data[Cluster::size + i] = static_cast<char>(0x40 + i);
+		}
+		r.writePos = r.clusterEndPos + overshoot;
+		CHECK(SampleRecorderLifecycleTestAccess::createNextCluster(r) == Error::NONE);
+		LONGS_EQUAL(8, r.sample->clusters.getNumElements());
+		LONGS_EQUAL(overshoot, r.writePos - r.currentRecordCluster->data);
+		for (int i = 0; i < 5; ++i) {
+			LONGS_EQUAL(0x40 + i, r.currentRecordCluster->data[i]);
+		}
+		cleanup(r);
+	}
+}
+
+TEST(RecorderFinalization, LoopInitialCaptureRejectsNinthClusterBeforeChangingOwnership) {
+	SampleRecorder r;
+	prepareLoopLinear(r);
+	allocateLoopClustersThrough(r, 8);
+	auto* current = r.currentRecordCluster;
+	int const liveBefore = liveClusters;
+	r.writePos = r.clusterEndPos;
+	CHECK(SampleRecorderLifecycleTestAccess::createNextCluster(r) == Error::INSUFFICIENT_RAM);
+	LONGS_EQUAL(8, r.sample->clusters.getNumElements());
+	LONGS_EQUAL(7, r.currentRecordClusterIndex);
+	POINTERS_EQUAL(current, r.currentRecordCluster);
+	LONGS_EQUAL(liveBefore, liveClusters);
+	CHECK_FALSE(r.hadCardError);
+	cleanup(r);
+}
+
+TEST(RecorderFinalization, SuccessfulLoopClusterWriteRecoversOneBacklogSlot) {
+	SampleRecorder r;
+	prepareLoopLinear(r);
+	allocateLoopClustersThrough(r, 8);
+	CHECK(SampleRecorderLifecycleTestAccess::write(r) == Error::NONE);
+	r.writePos = r.clusterEndPos;
+	CHECK(SampleRecorderLifecycleTestAccess::createNextCluster(r) == Error::NONE);
+	LONGS_EQUAL(9, r.sample->clusters.getNumElements());
+	cleanup(r);
+}
+
+TEST(RecorderFinalization, FailedLoopClusterWriteDoesNotRecoverBacklogCapacity) {
+	SampleRecorder r;
+	prepareLoopLinear(r);
+	allocateLoopClustersThrough(r, 8);
+	writeError = Error::SD_CARD;
+	CHECK(SampleRecorderLifecycleTestAccess::write(r) == Error::SD_CARD);
+	r.writePos = r.clusterEndPos;
+	CHECK(SampleRecorderLifecycleTestAccess::createNextCluster(r) == Error::INSUFFICIENT_RAM);
+	LONGS_EQUAL(8, r.sample->clusters.getNumElements());
+	CHECK_FALSE(r.hadCardError);
+	writeError = Error::NONE;
+	cleanup(r);
+}
+
+TEST(RecorderFinalization, LoopWriteRemainsChargedDuringReentrantClusterAllocation) {
+	SampleRecorder r;
+	prepareLoopLinear(r);
+	allocateLoopClustersThrough(r, 8);
+	Error allocationDuringWrite = Error::NONE;
+	int const clusterCountBefore = r.sample->clusters.getNumElements();
+	auto* const currentBefore = r.currentRecordCluster;
+	int const currentIndexBefore = r.currentRecordClusterIndex;
+	onWrite = [&] {
+		r.writePos = r.clusterEndPos;
+		allocationDuringWrite = SampleRecorderLifecycleTestAccess::createNextCluster(r);
+		LONGS_EQUAL(clusterCountBefore, r.sample->clusters.getNumElements());
+		POINTERS_EQUAL(currentBefore, r.currentRecordCluster);
+		LONGS_EQUAL(currentIndexBefore, r.currentRecordClusterIndex);
+	};
+	CHECK(SampleRecorderLifecycleTestAccess::write(r) == Error::NONE);
+	CHECK(allocationDuringWrite == Error::INSUFFICIENT_RAM);
+	CHECK_FALSE(r.hadCardError);
+	onWrite = {};
+	cleanup(r);
+}
+
+TEST(RecorderFinalization, MonoStereoBoundaryAndLateCaptureFailureRollBackWithoutCardError) {
+	for (int channels : {1, 2}) {
+		SampleRecorder r;
+		prepareLoopLinear(r, channels);
+		allocateLoopClustersThrough(r, 8);
+		auto* const current = r.currentRecordCluster;
+		int const currentIndex = r.currentRecordClusterIndex;
+		int const overshoot = channels == 1 ? 2 : 5;
+		for (int i = 0; i < 5; ++i) {
+			current->data[Cluster::size + i] = static_cast<char>(0x20 + i);
+		}
+		r.writePos = r.clusterEndPos + overshoot;
+		CHECK(SampleRecorderLifecycleTestAccess::createNextCluster(r) == Error::INSUFFICIENT_RAM);
+		POINTERS_EQUAL(current, r.currentRecordCluster);
+		LONGS_EQUAL(currentIndex, r.currentRecordClusterIndex);
+		LONGS_EQUAL(8, r.sample->clusters.getNumElements());
+		CHECK_FALSE(r.hadCardError);
+
+		SampleRecorderLifecycleTestAccess::failCapture(r, Error::INSUFFICIENT_RAM);
+		CHECK(r.status == RecorderStatus::ABORTED);
+		CHECK(r.terminalError == Error::INSUFFICIENT_RAM);
+		CHECK_FALSE(r.hadCardError);
+		CHECK(r.cardRoutine() == Error::NONE);
+		POINTERS_EQUAL(nullptr, r.sample);
+		LONGS_EQUAL(0, liveClusters);
+		LONGS_EQUAL(0, liveAllocations);
+	}
+}
 
 TEST(RecorderFinalization, SmartTrimReleasesRetainedSecondClusterBeforeDestroyingIt) {
 	SampleRecorder r;
@@ -232,8 +385,10 @@ TEST(RecorderFinalization, FailedFinalClusterWriteAndOverhangAllocationReleaseEv
 		SampleRecorder r;
 		prepare(r);
 		r.retainForCommit();
-		if (overhang)
+		if (overhang) {
 			r.writePos = r.clusterEndPos + 3;
+			clusterInsertFails = true;
+		}
 		else
 			writeError = Error::SD_CARD;
 		Error expected = overhang ? Error::INSUFFICIENT_RAM : Error::SD_CARD;
@@ -241,6 +396,7 @@ TEST(RecorderFinalization, FailedFinalClusterWriteAndOverhangAllocationReleaseEv
 		CHECK(r.terminalError == expected);
 		cleanup(r);
 		writeError = Error::NONE;
+		clusterInsertFails = false;
 	}
 }
 

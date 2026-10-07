@@ -50,14 +50,14 @@ extern "C" void routineForSD(void);
 
 extern uint8_t currentlyAccessingCard;
 
-#define MAX_FILE_SIZE_MAGNITUDE 32
-
 // config stuff
 Error SampleRecorder::setup(int32_t newNumChannels, AudioInputChannel newMode, bool newKeepingReasons,
                             bool shouldRecordExtraMargins, AudioRecordingFolder newFolderID, int32_t buttonPressLatency,
                             Output* outputRecordingFrom_, RecorderConfig config) {
 
 	outputRecordingFrom = outputRecordingFrom_;
+	loopStationLinearCapture_ = config.loopStation;
+	loopUnwrittenClusterCount_ = 0;
 	keepingReasonsForFirstClusters = newKeepingReasons;
 	recordingExtraMargins = shouldRecordExtraMargins;
 	folderID = newFolderID;
@@ -282,69 +282,6 @@ Error SampleRecorder::writeCluster(int32_t clusterIndex, size_t numBytes) {
 	return Error::NONE;
 }
 
-Error SampleRecorder::createNextCluster() {
-
-	Cluster* oldRecordCluster = currentRecordCluster; // Cos we're gonna set that to NULL just below here, but still
-	                                                  // want to be able to access the old one a bit further down
-
-	currentRecordClusterIndex++; // Mark record-cluster we were on as finished
-
-	currentRecordCluster = nullptr; // Note that we haven't yet created our next record-cluster - we'll do that below
-	                                // if no error first; and if there is an error and we don't create one, this has to
-	                                // remain NULL to indicate that we never created one
-
-	// If this new cluster would actually put us past the 4GB limit...
-	if (currentRecordClusterIndex >= (1 << (MAX_FILE_SIZE_MAGNITUDE - Cluster::size_magnitude))) {
-
-		// See if we actually already had any bytes to write into that new cluster we can't have...
-		int32_t bytesTilClusterEnd = (uint32_t)clusterEndPos - (uint32_t)writePos;
-		if (bytesTilClusterEnd < 0) {
-			numSamplesCaptured--;
-			writePos -= (int32_t)recordingNumChannels * 3;
-		}
-
-		totalSampleLengthNowKnown(numSamplesCaptured, numSamplesCaptured);
-
-		reachedMaxFileSize = true;
-		return Error::MAX_FILE_SIZE_REACHED;
-	}
-
-	// We need to allocate our next Cluster
-	Error error = sample->clusters.insertSampleClustersAtEnd(1);
-	if (error != Error::NONE) {
-		return error;
-	}
-
-	currentRecordCluster = sample->clusters.getElement(currentRecordClusterIndex)
-	                           ->getCluster(sample, currentRecordClusterIndex, CLUSTER_DONT_LOAD);
-
-	// If couldn't allocate cluster (would normally only happen if no SD card present so recording only to RAM)
-	if (!currentRecordCluster) {
-		D_PRINTLN("SampleRecorder::createNextCluster() fail");
-		return Error::INSUFFICIENT_RAM;
-	}
-
-	// Bug hunting - newly gotten Cluster
-	if (currentRecordCluster->numReasonsHeldBySampleRecorder) {
-		FREEZE_WITH_ERROR("E362");
-	}
-	currentRecordCluster->numReasonsHeldBySampleRecorder++;
-
-	// Copy those extra bytes from the end of the old record cluster to the start of the new cluster
-	memcpy(currentRecordCluster->data, &oldRecordCluster->data[Cluster::size],
-	       5); // 5 is the max number of bytes we could have overshot
-
-	int32_t bytesOvershot = (uint32_t)writePos - (uint32_t)clusterEndPos;
-
-	currentRecordCluster->loaded =
-	    true; // I think this is ok - mark it as loaded even though we're yet to record into it
-
-	writePos = (char*)&currentRecordCluster->data[bytesOvershot];
-	clusterEndPos = (char*)&currentRecordCluster->data[Cluster::size];
-
-	return Error::NONE;
-}
-
 // Gets called when we've captured all the samples of audio that we wanted - either as a direct result of user
 // action, or after being fed a few more samples to make up for latency.
 void SampleRecorder::finishCapturing() {
@@ -405,11 +342,7 @@ doFinishCapturing:
 					goto doFinishCapturing;
 				}
 				else if (error != Error::NONE) { // RAM error
-					D_PRINTLN("couldn't allocate RAM");
-					if (terminalError == Error::NONE) {
-						terminalError = error;
-					}
-					abort();
+					failCapture(error);
 					return;
 				}
 

@@ -32,6 +32,7 @@ add_executable(RecorderFinalizationTests
     ../../src/deluge/model/sample/sample_recorder_card.cpp
     ../../src/deluge/model/sample/sample_recorder_loop.cpp
     ../../src/deluge/model/sample/sample_recorder_finalization.cpp
+    ../../src/deluge/model/sample/sample_recorder_cluster_creation.cpp
     ../../src/deluge/model/sample/sample_cluster_lifecycle.cpp
 )
 target_include_directories(RecorderFinalizationTests PRIVATE mocks . ../../src ../../src/deluge)

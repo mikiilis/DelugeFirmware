@@ -53,6 +53,9 @@ Error SampleRecorder::writeOneCompletedCluster() {
 	}
 
 	Error error = writeCluster(writingClusterIndex, Cluster::size);
+	if (loopStationLinearCapture_ && error == Error::NONE && loopUnwrittenClusterCount_) {
+		loopUnwrittenClusterCount_--;
+	}
 
 	// We no longer have a reason to require this Cluster to be kept in memory
 	if (!keepingReasonsForFirstClusters || writingClusterIndex >= kNumClustersLoadedAhead) {
@@ -112,6 +115,9 @@ Error SampleRecorder::finalizeRecordedFile() {
 			Error error = writeCluster(currentRecordClusterIndex, bytesToWrite);
 			if (error != Error::NONE) {
 				return error;
+			}
+			if (loopStationLinearCapture_ && loopUnwrittenClusterCount_) {
+				loopUnwrittenClusterCount_--;
 			}
 		}
 

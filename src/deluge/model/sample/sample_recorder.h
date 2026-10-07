@@ -57,6 +57,7 @@ struct RecorderConfig {
 
 class SampleRecorder {
 public:
+	static constexpr uint8_t kMaxLoopUnwrittenClusters = 8;
 	SampleRecorder() = default;
 	~SampleRecorder();
 	void setRecorderBudgetLease(deluge::RecorderBudget::Lease&& lease) { recorderBudgetLease_ = std::move(lease); }
@@ -236,6 +237,8 @@ public:
 
 private:
 	deluge::RecorderBudget::Lease recorderBudgetLease_;
+	bool loopStationLinearCapture_ = false;
+	uint8_t loopUnwrittenClusterCount_ = 0;
 #ifdef IN_UNIT_TESTS
 	friend struct SampleRecorderLifecycleTestAccess;
 #endif
@@ -320,6 +323,7 @@ private:
 	Error createNextCluster();
 	Error writeAnyCompletedClusters();
 	void finishCapturing();
+	void failCapture(Error error);
 	void updateDataLengthInFirstCluster(Cluster* cluster);
 	void totalSampleLengthNowKnown(uint32_t totalLength, uint32_t loopEndPointSamples = 0);
 	void detachSample();

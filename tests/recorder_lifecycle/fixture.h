@@ -26,9 +26,11 @@ inline bool truncateFails = false;
 inline bool closeFails = false;
 inline bool headerFails = false;
 inline bool clusterLoadFails = false;
+inline bool clusterInsertFails = false;
 inline bool recycleReleasedClusters = false;
 inline std::function<void()> onSeek;
 inline std::function<void()> onTruncate;
+inline std::function<void()> onWrite;
 inline uint32_t fileSize = 0;
 inline uint32_t filePosition = 0;
 } // namespace recorder_test

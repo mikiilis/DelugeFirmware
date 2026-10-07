@@ -58,11 +58,10 @@ Error SampleRecorder::finalizeRecordedFile() {
 }
 #else
 Error SampleRecorder::writeCluster(int32_t index, size_t) {
+	if (recorder_test::onWrite)
+		recorder_test::onWrite();
 	sample->clusters.getElement(index)->sdAddress = 32 + index * 64;
 	return recorder_test::writeError;
-}
-Error SampleRecorder::createNextCluster() {
-	return Error::INSUFFICIENT_RAM;
 }
 Error SampleRecorder::alterFile(MonitoringAction, int32_t, uint32_t, uint64_t) {
 	throw std::runtime_error("File alteration is disabled for Loop Station");
