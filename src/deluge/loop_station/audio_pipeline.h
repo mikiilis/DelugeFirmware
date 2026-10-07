@@ -5,6 +5,7 @@
 
 #include "loop_station/loop_station.h"
 #include "model/sample/sample_recorder.h"
+#include <limits>
 
 namespace deluge::loop_station {
 // The production Loop Station render boundary. Both spans have one stereo frame
@@ -13,9 +14,12 @@ namespace deluge::loop_station {
 template <typename Pitch>
 void renderAudio(std::span<StereoSample> backing, std::span<const StereoSample> input, SampleRecorder* recorder,
                  int32_t amplitudeStart, int32_t amplitudeEnd, int32_t playbackGain, bool monitor, Pitch&& pitch,
-                 bool backingRendered = true) {
-	if (!backingRendered)
-		std::fill(backing.begin(), backing.end(), StereoSample{});
+                 bool backingRendered = true, size_t renderedBackingFrames = std::numeric_limits<size_t>::max()) {
+	size_t framesToKeep = backingRendered ? backing.size() : 0;
+	if (renderedBackingFrames != std::numeric_limits<size_t>::max())
+		framesToKeep = std::min(renderedBackingFrames, backing.size());
+	if (framesToKeep < backing.size())
+		std::fill(backing.begin() + framesToKeep, backing.end(), StereoSample{});
 	if (recorder) {
 		// A retained raw source owns capture readiness independently of the
 		// playback voice. Only legacy callers need a rendered backing buffer.

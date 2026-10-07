@@ -287,6 +287,7 @@ bool AudioOutput::renderGlobalEffectableForClip(ModelStackWithTimelineCounter* m
 	bool capturingPreFXOverdub = recorder && recorder->captureOutputPreFX
 	                             && recorder->status < RecorderStatus::FINISHED_CAPTURING_BUT_STILL_WRITING;
 	bool backingRenderedForCapture = false;
+	size_t backingRenderedFramesForCapture = 0;
 	bool loopStation = activeClip && static_cast<AudioClip*>(activeClip)->loopStationSlotId != 0;
 	// Give a durable sample voice first chance to take over before selecting the
 	// retained recorder provider for this audio window.
@@ -338,10 +339,12 @@ renderEnvelope:
 				std::span render_mono{reinterpret_cast<q31_t*>(render.data()), render.size()};
 				loopAmplitudeStart = amplitudeEffectiveStart;
 				loopAmplitudeEnd = amplitudeEffectiveEnd;
-				backingRenderedForCapture =
+				bool voiceContinues =
 				    !liveLoop
 				    && activeAudioClip.render(modelStack, render_mono, loopStation ? 1 << 26 : amplitudeEffectiveStart,
-				                              loopStation ? 0 : amplitudeIncrementEffective, pitchAdjust);
+				                              loopStation ? 0 : amplitudeIncrementEffective, pitchAdjust,
+				                              &backingRenderedFramesForCapture);
+				backingRenderedForCapture = voiceContinues || backingRenderedFramesForCapture != 0;
 				rendered = isClipActive;
 				amplitudeLastTime = amplitudeLocal;
 
@@ -392,7 +395,7 @@ renderEnvelope:
 				    loopStationPitchShifter->render(audio, phase, AudioEngine::audioSampleTimer);
 			    }
 		    },
-		    backingRenderedForCapture);
+		    backingRenderedForCapture, backingRenderedFramesForCapture);
 		return rendered || monitor;
 	}
 

@@ -668,7 +668,9 @@ int64_t AudioClip::getNumSamplesTilLoop(ModelStackWithTimelineCounter* modelStac
 }
 
 bool AudioClip::render(ModelStackWithTimelineCounter* modelStack, std::span<q31_t> outputBuffer, int32_t amplitude,
-                       int32_t amplitudeIncrement, int32_t pitchAdjust) {
+                       int32_t amplitudeIncrement, int32_t pitchAdjust, size_t* renderedFrameCount) {
+	if (renderedFrameCount)
+		*renderedFrameCount = 0;
 
 	if (!voiceSample) {
 		return false;
@@ -920,6 +922,8 @@ justDontTimeStretch:
 		                                  loopingType, phaseIncrement, timeStretchRatio, amplitude, amplitudeIncrement,
 		                                  sampleControls.getInterpolationBufferSize(phaseIncrement),
 		                                  sampleControls.interpolationMode, 1);
+		if (renderedFrameCount)
+			*renderedFrameCount = outputBuffer.size();
 	}
 
 	if (!stillActive || oneShotEnds) {

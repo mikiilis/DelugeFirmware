@@ -808,6 +808,35 @@ TEST(LoopRecorder, ProductionPipelineRepeatsAdditionsWithMonitoringOffAndKeepsSt
 	CHECK_EQUAL(2, pitchCalls);
 }
 
+TEST(LoopRecorder, OneShotPartialFinalBufferKeepsRenderedPrefix) {
+	std::array<StereoSample, 4> backing;
+	backing.fill({3200, -1600});
+	std::array<StereoSample, 4> silence{};
+	deluge::loop_station::renderAudio(
+	    backing, silence, nullptr, 1 << 26, 1 << 26, 1 << 24, false, [](std::span<StereoSample>) {}, true, 3);
+	for (size_t i = 0; i < 3; ++i) {
+		CHECK_EQUAL(3200, backing[i].l);
+		CHECK_EQUAL(-1600, backing[i].r);
+	}
+	CHECK_EQUAL(0, backing[3].l);
+	CHECK_EQUAL(0, backing[3].r);
+}
+
+TEST(LoopRecorder, OneShotShorterThanAudioBufferKeepsItsRenderedSamples) {
+	std::array<StereoSample, SSI_TX_BUFFER_NUM_SAMPLES> backing;
+	backing.fill({3200, -1600});
+	std::array<StereoSample, SSI_TX_BUFFER_NUM_SAMPLES> silence{};
+	// The voice has ended, but it rendered the first two frames of this buffer.
+	deluge::loop_station::renderAudio(
+	    backing, silence, nullptr, 1 << 26, 1 << 26, 1 << 24, false, [](std::span<StereoSample>) {}, false, 2);
+	CHECK_EQUAL(3200, backing[0].l);
+	CHECK_EQUAL(-1600, backing[1].r);
+	for (size_t i = 2; i < backing.size(); ++i) {
+		CHECK_EQUAL(0, backing[i].l);
+		CHECK_EQUAL(0, backing[i].r);
+	}
+}
+
 TEST(LoopRecorder, SourcePrefetchIncludesSplitFramesAndLoopWrap) {
 	for (uint32_t frames : {uint32_t(Cluster::size / 6), uint32_t(Cluster::size / 3)}) {
 		SampleRecorder source;
@@ -868,6 +897,40 @@ TEST(LoopRecorder, SourcePrefetchPrioritizesAudibleFrameAheadOfWriterCursor) {
 	CHECK_FALSE(child.captureOutputBackingMissing);
 	CHECK_EQUAL(3200, audible[0].l);
 	CHECK(SampleRecorderLifecycleTestAccess::sourceCacheSize(child) <= 4);
+}
+
+TEST(LoopRecorder, SourcePrefetchCoversAudibleBufferAcrossEvictedClusterBoundary) {
+	uint32_t constexpr loopFrames = 28000;
+	uint32_t constexpr boundaryFrame = (5 * Cluster::size - 44) / 6;
+	uint32_t constexpr playbackStart = boundaryFrame - 6;
+	SampleRecorder source;
+	initialize(source, loopFrames);
+	CHECK_EQUAL(6, source.sample->clusters.getNumElements());
+	source.sample->clusters.getElement(4)->sdAddress = 99;
+	source.sample->clusters.getElement(5)->sdAddress = 199;
+
+	SampleRecorder child;
+	initialize(child, loopFrames, source.sample);
+	SampleRecorderLifecycleTestAccess::positions(child, 0, playbackStart);
+	asyncClusterLoads = true;
+	CHECK(SampleRecorderLifecycleTestAccess::prepare(child) == Error::NONE);
+	CHECK(SampleRecorderLifecycleTestAccess::sourceCached(child, source.sample, 4));
+	CHECK(SampleRecorderLifecycleTestAccess::sourceCached(child, source.sample, 5));
+
+	for (uint32_t index : {4u, 5u}) {
+		auto* cluster = source.sample->clusters.getElement(index)->cluster;
+		CHECK(cluster != nullptr);
+		if (cluster) {
+			cluster->loaded = true; // The async loader completed before the audio callback.
+			std::fill_n(cluster->data, Cluster::size, 0);
+		}
+	}
+	std::array<StereoSample, SSI_TX_BUFFER_NUM_SAMPLES> backing{};
+	std::array<StereoSample, SSI_TX_BUFFER_NUM_SAMPLES> silence{};
+	deluge::loop_station::renderAudio(backing, silence, &child, 1 << 26, 1 << 26, 1 << 24, false,
+	                                  [](std::span<StereoSample>) {});
+	CHECK_FALSE(child.captureOutputBackingMissing);
+	CHECK_EQUAL(playbackStart + backing.size(), child.loopPlaybackCursor());
 }
 
 TEST(LoopRecorder, DestinationCacheUnpinsOnlyCleanEntriesOutsideRequiredWindows) {

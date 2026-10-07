@@ -42,12 +42,11 @@ public:
 	void processCurrentPos(ModelStackWithTimelineCounter* modelStack, uint32_t ticksSinceLast) override;
 	void expectNoFurtherTicks(Song* song, bool actuallySoundChange = true) override;
 	Error clone(ModelStackWithTimelineCounter* modelStack, bool shouldFlattenReversing = false) const override;
-	// Returns true only when the complete requested buffer was rendered from the
-	// backing Sample. A Loop Station recorder with a retained raw source owns
-	// its capture readiness independently; legacy capture callers require this
-	// result before using the rendered buffer as cumulative backing.
+	// Returns whether the sample voice continues after this buffer. A final
+	// one-shot buffer may still contain rendered samples; report their count so
+	// Loop Station can preserve the valid prefix and clear only the suffix.
 	bool render(ModelStackWithTimelineCounter* modelStack, std::span<q31_t> output, int32_t amplitude,
-	            int32_t amplitudeIncrement, int32_t pitchAdjust);
+	            int32_t amplitudeIncrement, int32_t pitchAdjust, size_t* renderedFrameCount = nullptr);
 	void detachFromOutput(ModelStackWithTimelineCounter* modelStack, bool shouldRememberDrumName,
 	                      bool shouldDeleteEmptyNoteRowsAtEndOfList = false, bool shouldRetainLinksToSounds = false,
 	                      bool keepNoteRowsWithMIDIInput = true, bool shouldGrabMidiCommands = false,

@@ -232,9 +232,10 @@ Error SampleRecorder::prepareLoopSourceClusters() {
 		return Error::NONE;
 	};
 	if (loopSource_) {
-		// An audible read can outrun the writer while the untouched tail copies.
-		// Pin it first, including both clusters when a PCM frame straddles one.
-		auto error = addWindow(loopPlaybackCursor_, 1);
+		// Audio callbacks can consume a full hardware buffer before card service
+		// gets another chance to refresh this window. Pin that audible lookahead
+		// first, including split frames and every crossed source cluster.
+		auto error = addWindow(loopPlaybackCursor_, SSI_TX_BUFFER_NUM_SAMPLES);
 		if (error != Error::NONE)
 			return error;
 		if (!loopOverdubReady()) {

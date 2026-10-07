@@ -338,9 +338,10 @@ phaseIncrement = round(pitchRatio * kMaxSampleValue)
 - Recorder taps branch before this stage, so initial recordings and overdubs always capture dry, untransposed audio
 
 ### State Management
-- **Pitch shifter created** when: (phrase playback is audible OR live monitoring is audible) AND transpose ≠ 0
-- **Pitch shifter reset/recreated** when: transpose or cents change (avoids artifacts)
-- **Pitch shifter destroyed** when: transpose = 0, or neither phrase playback nor live monitoring is audible
+- **Pitch shifter allocated** during Loop Station audio-output setup and retained until that output is destroyed; allocation does not depend on monitoring or transpose
+- **Repitching enabled** when: transpose or cents produce a non-unity phase increment; unity is an exact bypass
+- **Shifter state reset** when repitching resumes after a bypass, or the input sample clock has a discontinuity
+- **Transpose and cents edits** update the phase increment without reallocating or resetting an actively repitching shifter
 - **Crossfade progress** preserved across buffer callbacks for continuity
 
 ### Interpolation
@@ -357,7 +358,7 @@ phaseIncrement = round(pitchRatio * kMaxSampleValue)
 ### Invariants
 1. Transpose never written to WAV (audio always recorded dry)
 2. Monitoring and playback use identical pitch ratio
-3. Pitch shifter state reset on transpose change (no glitches)
+3. Pitch shifter allocation is independent of transpose; entering repitch after bypass resets its state
 4. Zero transpose = bypass shifter entirely (unity pass-through)
 
 ### Signal Chain Position
