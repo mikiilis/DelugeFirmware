@@ -37,7 +37,18 @@ struct SampleRecorderLifecycleTestAccess {
 		return std::count_if(r.loopSourceCache_.begin(), r.loopSourceCache_.end(),
 		                     [](auto const& entry) { return entry.cluster != nullptr; });
 	}
+	static bool destinationCached(SampleRecorder& r, uint32_t index) { return r.loopCacheAt(index) != nullptr; }
+	static bool destinationDirty(SampleRecorder& r, uint32_t index) {
+		auto* entry = r.loopCacheAt(index);
+		return entry && entry->dirty;
+	}
+	static bool destinationWriting(SampleRecorder& r, uint32_t index) {
+		auto* entry = r.loopCacheAt(index);
+		return entry && entry->writing;
+	}
 	static void releaseLoopCache(SampleRecorder& r) { r.releaseLoopClusters(); }
+	static bool captureBufferAllocated(SampleRecorder& r) { return r.loopPendingFrames_ != nullptr; }
+	static bool writeSnapshotAllocated(SampleRecorder& r) { return r.loopWriteSnapshot_ != nullptr; }
 	static void pinFullCache(SampleRecorder& r) {
 		for (uint32_t i = 0; i < 8; ++i) {
 			if (!r.loopCache_[i].cluster) {
@@ -293,6 +304,101 @@ TEST(LoopRecorder, PendingSourceRetainsInputUntilRawAudioIsReady) {
 	for (auto frame : renderedBacking) {
 		CHECK_EQUAL(3520, frame.l);
 		CHECK_EQUAL(-2560, frame.r);
+	}
+}
+
+TEST(LoopRecorder, SealedPendingInputReleasesItsFifoAfterDrain) {
+	SampleRecorder source;
+	initialize(source, 4);
+	std::array<StereoSample, 4> backing;
+	backing.fill({3200, 3200});
+	std::array<StereoSample, 4> silence{};
+	source.processLoopOverdub(backing, silence);
+	SampleRecorder child;
+	initialize(child, 4, source.sample);
+	auto* sourceCluster = source.sample->clusters.getElement(0)->cluster;
+	sourceCluster->loaded = false;
+	std::array<StereoSample, 1> input{{{2560, 0}}};
+	child.processLoopOverdub(std::span(backing).first(1), input);
+	CHECK(SampleRecorderLifecycleTestAccess::captureBufferAllocated(child));
+	CHECK_EQUAL(1, SampleRecorderLifecycleTestAccess::pendingCount(child));
+	child.sealLoopOverdub();
+	sourceCluster->loaded = true;
+	child.file.emplace();
+	child.filePathCreated.set("test.wav");
+	for (int i = 0; i < 8 && child.status != RecorderStatus::COMPLETE; ++i)
+		CHECK(child.cardRoutine() == Error::NONE);
+	CHECK(child.status == RecorderStatus::COMPLETE);
+	CHECK_FALSE(SampleRecorderLifecycleTestAccess::captureBufferAllocated(child));
+	CHECK_FALSE(SampleRecorderLifecycleTestAccess::writeSnapshotAllocated(child));
+}
+
+TEST(LoopRecorder, SuccessfulCloseReleasesWriteSnapshotAfterCloseReturns) {
+	SampleRecorder recorder;
+	initialize(recorder, 1);
+	std::array<StereoSample, 1> backing{{{3200, 3200}}}, silence{};
+	recorder.processLoopOverdub(backing, silence);
+	recorder.sealLoopOverdub();
+	recorder.file.emplace();
+	recorder.filePathCreated.set("test.wav");
+	CHECK(SampleRecorderLifecycleTestAccess::writeSnapshotAllocated(recorder));
+	onClose = [&] { CHECK(SampleRecorderLifecycleTestAccess::writeSnapshotAllocated(recorder)); };
+	for (int i = 0; i < 4 && recorder.status != RecorderStatus::COMPLETE; ++i)
+		CHECK(recorder.cardRoutine() == Error::NONE);
+	onClose = {};
+	CHECK(recorder.status == RecorderStatus::COMPLETE);
+	CHECK_FALSE(SampleRecorderLifecycleTestAccess::writeSnapshotAllocated(recorder));
+}
+
+TEST(LoopRecorder, MaterializedGenerationReleasesAncestryWithDependentReaders) {
+	SampleRecorder source;
+	initialize(source, 4);
+	std::array<StereoSample, 4> backing;
+	backing.fill({3200, 3200});
+	std::array<StereoSample, 4> silence{};
+	source.processLoopOverdub(backing, silence);
+	SampleRecorder child;
+	initialize(child, 4, source.sample, 0, &source);
+	child.processLoopOverdub(backing, silence);
+	SampleRecorder grandchild;
+	initialize(grandchild, 4, child.sample, 0, &child);
+	CHECK(child.hasLoopReaders());
+	child.file.emplace();
+	child.filePathCreated.set("child.wav");
+	CHECK(child.cardRoutine() == Error::NONE);
+	POINTERS_EQUAL(nullptr, child.loopSourceRecorder());
+	CHECK(child.hasLoopSource()); // Persistent raw-source mode survives ancestry release.
+	CHECK(child.hasLoopReaders());
+	CHECK_EQUAL(SampleRecorderLifecycleTestAccess::sourceReady(),
+	            SampleRecorderLifecycleTestAccess::sourceStatus(grandchild, 2));
+}
+
+TEST(LoopRecorder, OneHundredParentChildHandoffsReleaseTemporaryBuffersAtEachMilestone) {
+	std::array<SampleRecorder, 100> generations;
+	std::array<StereoSample, 4> backing;
+	backing.fill({3200, 3200});
+	std::array<StereoSample, 4> silence{};
+	std::array<StereoSample, 4> input;
+	input.fill({2560, -1280});
+	for (size_t i = 0; i < generations.size(); ++i) {
+		auto* sourceRecorder = i ? &generations[i - 1] : nullptr;
+		initialize(generations[i], 4, sourceRecorder ? sourceRecorder->sample : nullptr, 0, sourceRecorder);
+		generations[i].processLoopOverdub(backing, sourceRecorder ? std::span<const StereoSample>(input)
+		                                                          : std::span<const StereoSample>(silence));
+		CHECK_EQUAL(4, generations[i].numSamplesCaptured);
+		generations[i].sealLoopOverdub();
+		generations[i].file.emplace();
+		generations[i].filePathCreated.set("generation.wav");
+		for (int attempt = 0; attempt < 8 && generations[i].status != RecorderStatus::COMPLETE; ++attempt)
+			CHECK(generations[i].cardRoutine() == Error::NONE);
+		CHECK(generations[i].status == RecorderStatus::COMPLETE);
+		CHECK_FALSE(SampleRecorderLifecycleTestAccess::captureBufferAllocated(generations[i]));
+		CHECK_FALSE(SampleRecorderLifecycleTestAccess::writeSnapshotAllocated(generations[i]));
+		if (i) {
+			POINTERS_EQUAL(nullptr, generations[i].loopSourceRecorder());
+			CHECK(generations[i].hasLoopSource());
+		}
+		CHECK_EQUAL(i + 1, liveAllocations); // Only durable Sample allocations remain.
 	}
 }
 
@@ -560,7 +666,10 @@ TEST(LoopRecorder, SdWriteSnapshotRetainsAudioChangesMadeDuringYield) {
 	r.processLoopOverdub(dry, input);
 	r.file.emplace();
 	r.filePathCreated.set("test.wav");
-	onSeek = [&] { r.processLoopOverdub(dry, input); };
+	onSeek = [&] {
+		CHECK(SampleRecorderLifecycleTestAccess::writeSnapshotAllocated(r));
+		r.processLoopOverdub(dry, input);
+	};
 	CHECK(r.cardRoutine() == Error::NONE);
 	onSeek = {};
 	CHECK(r.cardRoutine() == Error::NONE);
@@ -714,6 +823,42 @@ TEST(LoopRecorder, SourcePrefetchPrioritizesAudibleFrameAheadOfWriterCursor) {
 	CHECK_FALSE(child.captureOutputBackingMissing);
 	CHECK_EQUAL(3200, audible[0].l);
 	CHECK(SampleRecorderLifecycleTestAccess::sourceCacheSize(child) <= 4);
+}
+
+TEST(LoopRecorder, DestinationCacheUnpinsOnlyCleanEntriesOutsideRequiredWindows) {
+	uint32_t const targetFrame = (8 * Cluster::size - 44) / 6 + 1;
+	SampleRecorder recorder;
+	initialize(recorder, targetFrame + 16);
+	std::array<StereoSample, 1> backing{{{3200, 3200}}}, silence{};
+	recorder.processLoopOverdub(backing, silence); // cluster zero is now dirty
+	CHECK(SampleRecorderLifecycleTestAccess::destinationDirty(recorder, 0));
+	CHECK(SampleRecorderLifecycleTestAccess::destinationCached(recorder, 2));
+	CHECK(SampleRecorderLifecycleTestAccess::destinationCached(recorder, 3));
+	SampleRecorderLifecycleTestAccess::positions(recorder, targetFrame, 0);
+	CHECK(SampleRecorderLifecycleTestAccess::prepare(recorder) == Error::NONE);
+	CHECK(SampleRecorderLifecycleTestAccess::destinationCached(recorder, 0));
+	CHECK(SampleRecorderLifecycleTestAccess::destinationDirty(recorder, 0));
+	CHECK(SampleRecorderLifecycleTestAccess::destinationCached(recorder, 2)); // The window wraps after cluster eight.
+	CHECK_FALSE(SampleRecorderLifecycleTestAccess::destinationCached(recorder, 3));
+	CHECK(SampleRecorderLifecycleTestAccess::destinationCached(recorder, 8));
+}
+
+TEST(LoopRecorder, InFlightDestinationClusterRemainsPinnedDuringWindowRotation) {
+	uint32_t const targetFrame = (8 * Cluster::size - 44) / 6 + 1;
+	SampleRecorder recorder;
+	initialize(recorder, targetFrame + 16);
+	std::array<StereoSample, 1> backing{{{3200, 3200}}}, input{{{2560, 0}}};
+	recorder.processLoopOverdub(backing, input);
+	recorder.file.emplace();
+	recorder.filePathCreated.set("test.wav");
+	onSeek = [&] {
+		CHECK(SampleRecorderLifecycleTestAccess::destinationWriting(recorder, 0));
+		SampleRecorderLifecycleTestAccess::positions(recorder, targetFrame, 0);
+		CHECK(SampleRecorderLifecycleTestAccess::prepare(recorder) == Error::NONE);
+		CHECK(SampleRecorderLifecycleTestAccess::destinationCached(recorder, 0));
+	};
+	CHECK(recorder.cardRoutine() == Error::NONE);
+	onSeek = {};
 }
 
 TEST(LoopRecorder, ProductionPipelineKeepsEarlyOverdubAudibleWhileTailCopies) {

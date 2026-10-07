@@ -55,6 +55,7 @@ Error SampleRecorder::setupLoopOverdub(uint32_t frames, Sample* source, uint32_t
 	// owned by cache entries, not the linear recorder's unwritten interval.
 	loopSource_ = source;
 	loopSourceRecorder_ = sourceRecorder;
+	loopRawSourcePlayback_ = source != nullptr;
 	if (loopSourceRecorder_) {
 		loopSourceRecorder_->retainLoopReader();
 		++loopSourceRecorder_->loopDependentReaders_;
@@ -94,7 +95,7 @@ Error SampleRecorder::prepareLoopClusters() {
 				wanted[wantedCount++] = index;
 		}
 	};
-	if (loopSource_) {
+	if (loopRawSourcePlayback_) {
 		// Playback continues on the audio clock while untouched backing copies
 		// at card-service speed. Reserve both windows, with audible reads first.
 		addWindow(loopPlaybackCursor_, 4);
@@ -103,6 +104,16 @@ Error SampleRecorder::prepareLoopClusters() {
 	}
 	else
 		addWindow(loopFrameCursor_, 4);
+	for (auto& entry : loopCache_) {
+		bool needed =
+		    entry.cluster
+		    && std::find(wanted.begin(), wanted.begin() + wantedCount, entry.index) != wanted.begin() + wantedCount;
+		if (entry.cluster && !entry.dirty && !entry.writing && !needed) {
+			entry.cluster->numReasonsHeldBySampleRecorder--;
+			audioFileManager.removeReasonFromCluster(*entry.cluster, "LSCW");
+			entry = {};
+		}
+	}
 	// At most six wanted entries leave room for dirty entries to drain within
 	// the existing eight-entry cache. Background copying waits if they cannot.
 	for (size_t i = 0; i < wantedCount; ++i) {
@@ -184,17 +195,8 @@ bool SampleRecorder::loopInputPendingAtFrame(uint32_t frame) const {
 Error SampleRecorder::prepareLoopSourceClusters() {
 	if (!loopSource_ || !loopFrames_)
 		return Error::NONE;
-	if (numSamplesCaptured >= loopFrames_ && !loopDependentReaders_) {
-		for (auto& entry : loopSourceCache_) {
-			if (entry.cluster)
-				audioFileManager.removeReasonFromCluster(*entry.cluster, "LSPF");
-			entry = {};
-		}
-		if (loopSourceRecorder_) {
-			--loopSourceRecorder_->loopDependentReaders_;
-			loopSourceRecorder_->releaseLoopReader();
-			loopSourceRecorder_ = nullptr;
-		}
+	if (numSamplesCaptured >= loopFrames_) {
+		releaseLoopSourceReaders();
 		loopSealedPrefix_ = loopFrames_;
 		return Error::NONE;
 	}
@@ -419,7 +421,7 @@ void SampleRecorder::processLoopOverdub(std::span<StereoSample> backing, std::sp
 	}
 	if (loopPreparing_ || !loopFrames_)
 		return;
-	if (loopSource_ && !backgroundCopy && !loopDrainingInput_) {
+	if (loopRawSourcePlayback_ && !backgroundCopy && !loopDrainingInput_) {
 		drainLoopInput();
 		// Background copying owns the writer cursor after the input gate closes.
 		// Audible playback keeps its own cursor, so new additions do not vanish
@@ -584,6 +586,12 @@ Error SampleRecorder::serviceLoopWrites() {
 	if (error != Error::NONE)
 		return error;
 	drainLoopInput();
+	if (loopEnding_ && !loopPendingCount_)
+		releaseLoopCaptureBuffers();
+	if (loopSource_ && numSamplesCaptured >= loopFrames_) {
+		releaseLoopSourceReaders();
+		loopSealedPrefix_ = loopFrames_;
+	}
 	if (loopEnding_ && loopSource_ && !loopPendingCount_ && !loopOverdubReady()) {
 		error = copyLoopRemainder();
 		if (error != Error::NONE)
@@ -625,32 +633,15 @@ Error SampleRecorder::serviceLoopWrites() {
 		if (!closed)
 			return latchStorageFailure(
 			    {deluge::loop_station::StorageStage::CLOSE, static_cast<int32_t>(closed.error())});
+		releaseLoopWriteSnapshot();
 		status = RecorderStatus::COMPLETE;
 	}
 	return Error::NONE;
 }
 
 void SampleRecorder::releaseLoopClusters() {
-	if (loopPendingFrames_) {
-		delugeDealloc(loopPendingFrames_);
-		loopPendingFrames_ = nullptr;
-	}
-	loopPendingCount_ = loopPendingCapacity_ = 0;
-	for (auto& entry : loopSourceCache_) {
-		if (entry.cluster) {
-			audioFileManager.removeReasonFromCluster(*entry.cluster, "LSSR");
-			entry = {};
-		}
-	}
-	if (loopSourceRecorder_) {
-		--loopSourceRecorder_->loopDependentReaders_;
-		loopSourceRecorder_->releaseLoopReader();
-		loopSourceRecorder_ = nullptr;
-	}
-	if (loopSource_) {
-		loopSource_->removeReason("LSCB");
-		loopSource_ = nullptr;
-	}
+	releaseLoopCaptureBuffers();
+	releaseLoopSourceReaders();
 	for (auto& entry : loopCache_) {
 		if (entry.cluster) {
 			entry.cluster->numReasonsHeldBySampleRecorder--;
@@ -658,6 +649,43 @@ void SampleRecorder::releaseLoopClusters() {
 			entry = {};
 		}
 	}
+	releaseLoopWriteSnapshot();
+}
+
+void SampleRecorder::releaseLoopCaptureBuffers() {
+	if (loopPendingFrames_) {
+		delugeDealloc(loopPendingFrames_);
+		loopPendingFrames_ = nullptr;
+	}
+	loopPendingCount_ = loopPendingCapacity_ = 0;
+	loopPendingHead_ = 0;
+	loopAcceptedFrames_ = loopAppliedFrames_ = 0;
+	loopAcceptedOriginFrame_ = 0;
+	loopAcceptedOriginSet_ = false;
+}
+
+void SampleRecorder::releaseLoopSourceReaders() {
+	Sample* source = loopSource_;
+	SampleRecorder* sourceRecorder = loopSourceRecorder_;
+	loopSource_ = nullptr;
+	loopSourceRecorder_ = nullptr;
+	for (auto& entry : loopSourceCache_) {
+		if (entry.cluster) {
+			audioFileManager.removeReasonFromCluster(*entry.cluster, "LSRR");
+			entry = {};
+		}
+	}
+	if (sourceRecorder) {
+		if (sourceRecorder->loopDependentReaders_)
+			--sourceRecorder->loopDependentReaders_;
+		sourceRecorder->releaseLoopReader();
+	}
+	if (source) {
+		source->removeReason("LSCB");
+	}
+}
+
+void SampleRecorder::releaseLoopWriteSnapshot() {
 	if (loopWriteSnapshot_) {
 		delugeDealloc(loopWriteSnapshot_);
 		loopWriteSnapshot_ = nullptr;

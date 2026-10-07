@@ -100,7 +100,7 @@ public:
 		return loopFrames_ && loopEnding_ && !loopPendingCount_ && numSamplesCaptured >= loopFrames_;
 	}
 	[[nodiscard]] bool isLoopOverdub() const { return loopFrames_ != 0; }
-	[[nodiscard]] bool hasLoopSource() const { return loopSource_ != nullptr; }
+	[[nodiscard]] bool hasLoopSource() const { return loopRawSourcePlayback_; }
 	[[nodiscard]] bool loopFallbackBackingRendered() const { return loopFallbackBackingRendered_; }
 	[[nodiscard]] uint32_t loopFrameCursor() const { return loopFrameCursor_; }
 
@@ -258,6 +258,9 @@ private:
 	std::array<LoopSourceCacheEntry, 4> loopSourceCache_{};
 	Sample* loopSource_ = nullptr;
 	SampleRecorder* loopSourceRecorder_ = nullptr;
+	// Playback remains on the recorder-owned raw PCM path after the ancestry
+	// pointers are released at full materialization.
+	bool loopRawSourcePlayback_ = false;
 	uint16_t loopReaders_ = 0;
 	uint16_t loopDependentReaders_ = 0;
 	bool loopSealed_ = false;
@@ -306,6 +309,9 @@ private:
 	LoopReadResult readLoopSourceFrame(uint32_t frame, StereoSample& destination);
 	Error serviceLoopWrites();
 	void releaseLoopClusters();
+	void releaseLoopCaptureBuffers();
+	void releaseLoopSourceReaders();
+	void releaseLoopWriteSnapshot();
 	LoopCacheEntry* loopCacheAt(uint32_t index);
 	bool commitPending_ = false;
 	// Publication makes the WAV durable. Reader lifetime and playback health
