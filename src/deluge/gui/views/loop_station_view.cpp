@@ -91,9 +91,7 @@ bool LoopStationView::opened() {
 	pendingCommitRecorders_.fill(nullptr);
 	engine_.emplace(currentSong->loopStation, static_cast<EngineDelegate*>(this));
 	exitRequested_ = false;
-	deferredGlobalButton_.reset();
-	deferredGlobalButtonReleased_ = false;
-	deferredGlobalShift_ = false;
+	deferredGlobalGesture_.clear();
 	monitoringActive_ = true;
 	selectedSlot_.reset();
 	monitoringCaptureMask_ = 0;
@@ -1162,14 +1160,14 @@ ActionResult LoopStationView::buttonAction(deluge::hid::Button button, bool on, 
 	// Loading/clearing a Song can destroy clip/history objects. Drain capture
 	// before opening those screens, including when startup yielded to this button.
 	if ((button == LOAD || button == SAVE) && (engine_->anyCapturing() || exitRequested_)) {
+		auto deferredButton = button == LOAD ? DeferredGlobalButton::LOAD : DeferredGlobalButton::SAVE;
 		if (on) {
-			deferredGlobalButton_ = button;
-			deferredGlobalButtonReleased_ = false;
-			deferredGlobalShift_ = Buttons::isShiftButtonPressed();
-			requestExit();
+			if (deferredGlobalGesture_.press(deferredButton, AudioEngine::audioSampleTimer,
+			                                 Buttons::isShiftButtonPressed()))
+				requestExit();
 		}
-		else if (deferredGlobalButton_ == button) {
-			deferredGlobalButtonReleased_ = true;
+		else {
+			(void)deferredGlobalGesture_.release(deferredButton, AudioEngine::audioSampleTimer);
 		}
 		return ActionResult::DEALT_WITH;
 	}
@@ -1192,25 +1190,24 @@ void LoopStationView::requestExit() {
 }
 
 void LoopStationView::completeExit() {
-	auto deferred = deferredGlobalButton_;
-	bool released = deferredGlobalButtonReleased_;
-	bool shifted = deferredGlobalShift_;
-	deferredGlobalButton_.reset();
-	deferredGlobalButtonReleased_ = false;
-	deferredGlobalShift_ = false;
+	auto deferred = deferredGlobalGesture_.take();
 	exitRequested_ = false;
 	disableMonitoring();
 	changeRootUI(&sessionView);
 	if (deferred) {
-		if (shifted) {
-			if (*deferred == deluge::hid::button::LOAD
-			    && deluge::gui::context_menu::clearSong.setupAndCheckAvailability())
-				openUI(&deluge::gui::context_menu::clearSong);
-		}
-		else {
-			view.buttonAction(*deferred, true, false);
-			if (released)
-				view.buttonAction(*deferred, false, false);
+		auto disposition = deferred->classify(kShortPressTime);
+		if (disposition == DeferredGestureKind::IGNORE)
+			return;
+		auto button =
+		    deferred->button == DeferredGlobalButton::LOAD ? deluge::hid::button::LOAD : deluge::hid::button::SAVE;
+		bool shifted = deferred->shiftHeld;
+		view.buttonActionWithShiftState(button, true, false, shifted);
+		view.timeSaveButtonPressed = deferred->pressSample;
+		if (disposition == DeferredGestureKind::SHORT_PRESS || disposition == DeferredGestureKind::LONG_PRESS) {
+			// View's global handler measures from the current audio clock. Move its
+			// origin so the release sees the captured hold duration, including wrap.
+			view.timeSaveButtonPressed = AudioEngine::audioSampleTimer - deferred->heldSamples();
+			view.buttonActionWithShiftState(button, false, false, shifted);
 		}
 	}
 }

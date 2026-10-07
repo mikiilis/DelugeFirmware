@@ -108,3 +108,25 @@ TEST(LoopRevisionOwnership, GeneralExternalStringCanBeClonedOutsideSmallRegion) 
 	original.clear();
 	STRCMP_EQUAL(path.data(), clone.get());
 }
+
+TEST(LoopRevisionOwnership, PublishGenerationOwnsTheFinalSamplePath) {
+	Sample sample;
+	AudioClip clip;
+	LoopStationRevisionHistory history;
+	CHECK(history.prepareAppend(clip, false));
+	CHECK(sample.filePath.set("SAMPLES/CLIPS/TEMP/LOOP_GENERATION.WAV") == Error::NONE);
+
+	LoopStationRevision generation;
+	generation.setSample(&sample);
+	CHECK(generation.filePath.set("stale-pre-finalization-path.wav") == Error::NONE);
+	CHECK(sample.filePath.set("SAMPLES/CLIPS/LOOP_GENERATION.WAV") == Error::NONE);
+	CHECK(history.publishGeneration(std::move(generation)));
+	CHECK_EQUAL(1, sample.reasons);
+	CHECK(generation.sample == nullptr);
+	STRCMP_EQUAL("SAMPLES/CLIPS/LOOP_GENERATION.WAV", history.current()->filePath.get());
+
+	CHECK(sample.filePath.set("SAMPLES/CLIPS/RENAMED_LOOP_GENERATION.WAV") == Error::NONE);
+	STRCMP_EQUAL("SAMPLES/CLIPS/LOOP_GENERATION.WAV", history.current()->filePath.get());
+	history.clear();
+	CHECK_EQUAL(0, sample.reasons);
+}

@@ -97,10 +97,15 @@ Preflight returns a typed error:
 - invalid first-take state → `INTERNAL`
 - recorder or SD setup failure → the mapped allocation/storage error
 
-The recorder pool has 16 channels. Mono physical first takes cost one channel;
-stereo first takes and all overdubs cost two. Sealed/background recorders do not
-consume capture channels. Pending-generation count and retained ancestry are
-bounded separately; exhausting those resources rejects a new take explicitly.
+The shared recorder budget has two limits. At most 16 recorder objects may be
+retained across setup reservations, active captures, sealed writers, and
+recorder-backed playback providers; durable history metadata is excluded. A
+separate 16 channel-unit limit covers active capture: mono physical first takes
+cost one unit, while stereo first takes and overdubs cost two. Loop Station
+capture units release when actual input capture ends, including initial latency
+compensation. Ordinary recorder channel accounting keeps its existing
+destruction-based lifetime. Admission happens before setup can yield, and a
+limit rejects the take as a resource error while preserving prior audio.
 
 ## First take
 
@@ -113,10 +118,14 @@ bounded separately; exhausting those resources rejects a new take explicitly.
 5. Apply input lag compensation and enter `RECORDING`.
 6. If Record Duration is nonzero, arm its exact Q16 end.
 
-The audio callback writes 24-bit PCM from the physical RX buffer. It allocates
-the next RAM cluster when needed. Card service creates the clip WAV and writes
-completed clusters while capture continues. Maximum-size, allocation, or card
-errors latch on the recorder and are polled by the view.
+The audio callback writes 24-bit PCM from the physical RX buffer. Each Loop
+Station initial take allows at most eight unwritten clusters, including its
+current cluster. A cluster under an SD write remains charged until the write
+succeeds. The ninth allocation is rejected before allocation with an
+insufficient-RAM/resource error; no partial take is published. Card service
+creates the clip WAV and writes completed clusters while capture continues.
+Maximum-size, allocation, or card errors latch on the recorder and are polled
+by the view.
 
 ### Finish and provisional playback
 
@@ -155,6 +164,13 @@ error can publish.
    and allocate an eight-entry destination cache plus one cluster-sized SD write
    snapshot and one cluster-sized pending-input buffer.
 5. Rotate source frame zero to the overdub start and enter `OVERDUBBING`.
+
+The pending-input FIFO is freed after sealed input drains. Source ancestry and
+source readers are released once the complete working generation is
+materialized. The SD snapshot is freed after successful close. A recorder-backed
+playback reader is handed off after the normal Audio Clip voice is ready at the
+same sample frame; retained recorder admission remains charged until the
+recorder object itself is released.
 
 ### Per-buffer mixer
 
@@ -230,8 +246,9 @@ retain their Samples until resolution. On completion:
 3. On failure, detach provisional playback, abort dependent capture, discard
    unpublished generations, and restore the last durable revision.
 4. Resume after rollback only if the track should remain audible.
-5. Notify the engine and release the commit hold. Playback and source readers
-   retain separate holds, so publication cannot delete a recorder they still use.
+5. Notify the engine and release the commit hold. Any remaining playback or
+   source readers retain separate holds only while they need that recorder, so
+   publication cannot delete data still in use.
 
 Seek, short write, sync, close, card-full, card-missing, no-filesystem, and
 write-protected errors retain their specific cause. A failed revision is never
@@ -255,8 +272,13 @@ finish guard is active. Tail copying and commit publication continue.
 **Exit** cancels queued starts, closes overdub input, and finishes first takes with
 Stop Action. It suppresses automatic `REC > DUB` and waits until active captures,
 tail copies, scheduled actions, and commits drain.
-Save and Load requests during capture use the same drain, retain the initiating
-button gesture, and open the requested screen once the drain completes. On exit,
+Save and Load requests during capture use the same drain. The first request is
+retained with its original press sample, optional matching release sample, and
+Shift state; later requests do not replace it. Once capture and commits drain,
+the original short/long hold and modifier intent are replayed once. A press
+still held at drain completion is dispatched then, and its later physical
+release completes the same global action. Shift+Load retains its clear-song
+intent even if Shift changes during the drain. On exit,
 the completed live generation hands its phase back to ordinary clip playback
 before releasing its reader hold.
 
@@ -294,5 +316,8 @@ boundaries/wrap, and direct/deferred fractional transport stops. Tests use an
 injected pitch transform; they do not validate the ARM shifter's acoustic quality.
 Additional coverage is in the Loop Station action/integration tests, recorder
 lifecycle/finalization tests, and loop-storage tests. Hardware checks are still
-required for sustained eight-track load, extreme transpose, audible boundaries,
-and slow-card behavior.
+required for eight simultaneous stereo tracks on supported slow SD media, long
+phrases across cache windows, rapid dependent overdubs, both Record Actions,
+tempo changes, monitoring off, transpose extremes, transport stop, Save/Load
+during capture, saved/reloaded undo history, and audible continuity on OLED and
+seven-segment models.

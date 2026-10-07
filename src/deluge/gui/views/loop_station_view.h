@@ -6,6 +6,7 @@
 #pragma once
 
 #include "gui/ui/root_ui.h"
+#include "loop_station/deferred_gesture.h"
 #include "loop_station/loop_station.h"
 #include "loop_station/revision.h"
 #include "model/clip/clip_minder.h"
@@ -114,9 +115,7 @@ private:
 	RecordingMode recordingModeBefore_{};
 	uint64_t lastAudioPositionQ16_ = 0;
 	bool exitRequested_ = false;
-	std::optional<deluge::hid::Button> deferredGlobalButton_;
-	bool deferredGlobalButtonReleased_ = false;
-	bool deferredGlobalShift_ = false;
+	deluge::loop_station::DeferredGlobalGestureQueue deferredGlobalGesture_;
 	bool clipMenuContext_ = false;
 	bool monitoringActive_ = false;
 };

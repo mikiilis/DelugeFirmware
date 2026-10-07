@@ -73,14 +73,12 @@ An overdub starts at the current sample position immediately, repeats continuous
 These guarantees apply to all 8 tracks simultaneously.
 
 ### Recorder Capacity
-- Loop Station capture capacity is **16 channel units**: mono capture costs 1 unit and stereo capture costs 2 units
-- Supported hardware and SD media must accept eight simultaneous stereo Loop Station captures
-- Capacity is enforced by the shared Audio Engine recorder pool before a slot enters a capture state
-- Recorders remain charged while capturing and while their WAV is still being written, finalized, or closed; only a recorder handed back for deletion releases its units
-- Cost follows the actual WAV format: every overdub and internal source is stereo, even when its configured input is mono
-- Non-Loop-Station recorder users participate in the same budget, so rapid gestures cannot overcommit the writer pool
-- When capacity is occupied by finalization, a new capture is rejected as a resource limit and must never be reported as an SD-card failure
-- Recorder insertion is FIFO: new captures join behind existing writers and cannot repeatedly starve older recorders
+- The shared Audio Engine admits at most **16 retained recorder objects**, including setup reservations, active captures, sealed writers, and recorder-backed playback providers. Durable history metadata does not count.
+- A separate **16 channel-unit** limit covers active capture. Mono physical first takes cost 1 unit; stereo first takes and every overdub cost 2, even when the configured physical input is mono.
+- Loop Station channel units are released when actual input capture ends, including initial-take latency-compensation frames. Its retained-object reservation remains until the recorder object is released. Ordinary recorder users keep their existing lifetime channel accounting.
+- Both limits are checked before recorder setup can yield. A full limit rejects the new take as a resource error, preserves the preceding audio, and is never reported as an SD-card failure.
+- Each Loop Station initial take is limited to **8 unwritten clusters**, including the current cluster. A cluster remains charged while its write is in flight and becomes available again only after a successful write. Reaching the limit rejects the take without publishing partial audio.
+- Hardware and SD media must still support eight simultaneous stereo Loop Station captures; the object and cluster bounds do not guarantee SD throughput or audio continuity.
 
 ---
 
@@ -181,9 +179,9 @@ Bound loops play at native recorded speed before and after tempo changes, includ
 
 The first take owns logical phase zero. A cumulative WAV may have physical frame zero at the overdub start position. Store that offset as `sampleZeroFrames`, modulo phrase frames. Translate logical and physical positions using this offset; never recalculate phase from the changed song tempo. The progress ring uses the actual playback sample position. A one-shot ends when audio playback ends, not when the old musical tick length expires.
 
-Overdub captures dry backing plus physical input with saturation, before transpose, FX, level and pan. Silence retains earlier layers. The writer pins a bounded eight-cluster cache and one SD snapshot; dirty or in-flight entries cannot be evicted. Each pass reads its prior cumulative data. SD callbacks may yield to audio without losing newer changes. No allocation or SD write occurs in the per-frame cumulative mixer.
+Overdub captures dry backing plus physical input with saturation, before transpose, FX, level and pan. Silence retains earlier layers. The writer pins a bounded eight-cluster cache and one SD snapshot; dirty or in-flight entries cannot be evicted. Each pass reads its prior cumulative data. SD callbacks may yield to audio without losing newer changes. No allocation or SD write occurs in the per-frame cumulative mixer. The pending-input FIFO is released once sealed input drains, source ancestry and source readers are released when the working generation is fully materialized, and the write snapshot is released after the WAV closes successfully. A recorder-backed playback reader is handed off after the ordinary clip voice is ready at the matching frame.
 
-On overdub input stop, no subsequent input is captured. If untouched audio remains, bounded background copying uses the retained source sample. The source and previous durable revision remain retained until the working WAV is published or rejected.
+On overdub input stop, no subsequent input is captured. If untouched audio remains, bounded background copying uses the retained source sample. Source ancestry and readers can be released as soon as the complete working generation is materialized; the previous durable revision remains available for rollback until publication succeeds or the working generation is rejected.
 
 ## Undo / Redo
 
@@ -239,12 +237,12 @@ Physical only: LEFT, RIGHT, STEREO, BALANCED
 
 ### Async Commit Errors
 - Performance state can be Play, Dub or Stopped while a WAV is pending durability.
-- Recorders remain charged against the shared channel budget until finalized and closed.
+- The 16-object retained-recorder limit includes sealed writers and recorder-backed playback. Loop Station capture-channel units are released when input capture ends; ordinary recorder channel accounting remains charged through recorder destruction.
 - A working revision can be audible before publication; the prior durable revision is retained for rollback.
 - History is appended and redo truncated only after successful finalization.
 - Failure rejects the working revision, preserves prior durable audio and latches an error on that slot.
 - A dependent overdub using the rejected revision closes input immediately and is aborted before rollback. The slot rejects conflicting gestures until rollback and error notification finish; an already requested stop remains stopped after error acknowledgement.
-- Aborted recorders release writer resources once but retain their Sample ownership and channel budget until dependent, playback and history references drain. Temporary-sample cleanup must respect these references; it must not delete or unlink audio still in use.
+- Aborted recorders release writer resources once but retain their Sample ownership and retained-object reservation until dependent, playback and history references drain. Temporary-sample cleanup must respect these references; it must not delete or unlink audio still in use.
 - Cache underruns report backing unavailable, independently of filesystem errors. Dirty overdub cache entries receive round-robin write service.
 - Ending overdub prefetches for audible playback and background copying independently. Background copying waits for missing/loading destination buffers without advancing capture; it must not report a temporary destination shortage as missing backing.
 - Partial-sector overdub writes must reach storage before raw cluster readers can reload them. Successful short seeks/writes are failures, never accepted audio.
@@ -503,13 +501,13 @@ The STOPPED hold displays a non-wrapping clockwise red border sweep. All 12 bord
 7. Dirty/in-flight recorder cache entries retain ownership through yielding SD operations.
 8. Clear, history and copy preserve clip identity, routing rules and other slots' state.
 9. Physical pad numbering remains top-left to bottom-right; all eight tracks are independent.
-10. Recorder capacity is shared globally and charged through finalization.
+10. Recorder admission is globally bounded by 16 retained objects, 16 active capture channel units, and 8 unwritten clusters per Loop Station initial take.
 
 ## Validation
 
 Host coverage includes state transitions, future-click scheduling, straight/triplet intervals, fractional boundaries, pending cancellation, group controls, continuous overdub, input gates, revision publication, resource accounting, routing, geometry and error recovery. Recorder tests exercise production capture lifecycle, cumulative short-loop writes, early-stop preservation, yielding writes and failure cleanup.
 
-Run the UnitTests, RecorderLifecycleTests and RecorderFinalizationTests CTest targets, build debug firmware, and build the website. Hardware acceptance remains required for audio continuity, eight-track SD throughput, external clock, tempo changes, sample-frame progress, OLED and seven-segment menus.
+Run the five host suites (UnitTests, RecorderLifecycleTests, RecorderFinalizationTests, LoopStorageTests, and LoopRevisionPublicationTests) with UBSan, build Debug firmware, and build the website. Hardware acceptance remains required for eight simultaneous stereo tracks on supported slow SD media, long phrases across cache windows, rapid dependent overdubs, both Record Actions, tempo changes, monitoring off, transpose extremes, transport stop, Save/Load during capture, and saved/reloaded undo history. Check audio continuity and sample-frame phase on OLED and seven-segment models, and record queue/buffer high-water marks, write latency, allocations, and audible gaps.
 
 ### Capture transaction lifetime
 

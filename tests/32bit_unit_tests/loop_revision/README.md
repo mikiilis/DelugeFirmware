@@ -15,9 +15,11 @@ hardware-address constructor setup and allows the fixture to install host arenas
 allocation and deallocation still use production code. AudioClip, Sample reason
 counters and unavailable-file loading are boundaries replaced by local mocks.
 
-Coverage: 101 delayed publications, final path rename after staging, vector
-reallocation, rollback retaining redo, branch replacement, copy/move and
-self-assignment, and cloning a String in the general external arena. This target
+Coverage: 101 delayed publications, final path rename after staging, direct
+`publishGeneration()` ownership of the final Sample path through the real
+32-bit String and allocator, vector reallocation, rollback retaining redo,
+branch replacement, copy/move and self-assignment, and cloning a String in the
+general external arena. This target
 requires 32-bit pointers: a native 64-bit String fixture would corrupt its
 four-byte reference-count header and is not a substitute.
 

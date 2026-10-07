@@ -29,10 +29,23 @@ Subsequent passes read the cumulative data; every pass adds dry physical input.
 Dirty/in-flight entries remain pinned. Closing the input gate is immediate;
 untouched first-pass backing can finish copying in card work with playback off.
 
-The shared recorder budget remains charged through finalization. A working WAV
-may be audible before it is durable. History publication is transactional, does
-not restart playback, and retains the previous durable revision for rollback.
-One overdub session produces one revision, regardless of pass count.
+Recorder admission reserves from a shared limit of 16 retained objects. The
+count includes setup reservations, active captures, sealed writers, and
+recorder-backed playback providers, but excludes durable history metadata. A
+separate 16-unit limit applies to active capture; Loop Station capture units
+release when input ends, including initial latency-compensation frames, while
+ordinary recorder channel accounting retains its existing lifetime. Each
+initial Loop Station take also stops at eight unwritten clusters, counting the
+current and in-flight-write clusters. The next cluster is made available only
+after a successful write.
+
+Temporary overdub resources retire at their milestones: the input FIFO after
+sealed input drains, source ancestry and readers after full materialization, the
+write snapshot after successful close, and the playback provider after the
+ordinary clip voice is ready at the matching frame. A working WAV may be audible
+before it is durable. History publication is transactional, does not restart
+playback, and retains the previous durable revision for rollback. One overdub
+session produces one revision, regardless of pass count.
 
 `commit.h` coordinates publication and rollback under the slot's capture guard.
 On failure it gates and aborts the dependent recorder, detaches playback/capture,

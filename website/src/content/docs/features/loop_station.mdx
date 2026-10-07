@@ -223,6 +223,18 @@ playing the captured sample immediately. Clicking an individually stopped loop w
 starts the playback clock, then safely resumes the Audio Clip. Allocation, SD-card, and maximum-file-size failures abort
 only the affected slot.
 
+### Recording resource limits
+
+Loop Station shares a limit of **16 retained recorder objects** across setup, active capture, background writing, and
+playback of a recorder-backed generation. Durable undo/redo history metadata does not count toward that limit. Active
+capture also has a separate **16 channel-unit** limit: a mono first take uses one unit, while stereo capture and
+overdubbing use two. Capture units are released when input capture ends, even if the WAV is still being finalized.
+
+An initial take can hold at most **8 unwritten SD clusters**, including the cluster currently being filled or written.
+If the recorder or storage limits are reached, that take is rejected as a resource error and the previous phrase stays
+available; partial audio is not added to history. These bounds limit memory use but do not guarantee audio continuity
+with every SD card or under every eight-track workload. Hardware checks with supported cards remain necessary.
+
 ## Current limitations
 
 If a slot enters the blinking red Error state, the next centre press acknowledges it; it does not also start a new

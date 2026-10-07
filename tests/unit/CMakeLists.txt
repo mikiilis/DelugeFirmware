@@ -88,6 +88,7 @@ add_executable(UnitTests
         notes_state_tests.cpp
         loop_station_integration_tests.cpp
 		loop_station_action_tests.cpp
+        deferred_gesture_tests.cpp
         recorder_budget_tests.cpp
 )
 add_test(NAME UnitTests

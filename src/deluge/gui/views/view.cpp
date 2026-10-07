@@ -135,6 +135,10 @@ void View::focusRegained() {
 extern GlobalMIDICommand pendingGlobalMIDICommandNumClustersWritten;
 
 ActionResult View::buttonAction(deluge::hid::Button b, bool on, bool inCardRoutine) {
+	return buttonActionWithShiftState(b, on, inCardRoutine, Buttons::isShiftButtonPressed());
+}
+
+ActionResult View::buttonActionWithShiftState(deluge::hid::Button b, bool on, bool inCardRoutine, bool shiftHeld) {
 	using namespace deluge::hid::button;
 
 	GlobalMIDICommand newGlobalMidiCommand;
@@ -234,7 +238,7 @@ doEndMidiLearnPressSession:
 		    && !((getRootUI() == &performanceView) && Buttons::isButtonPressed(deluge::hid::button::KEYBOARD))) {
 			// Press down
 			if (on) {
-				if (currentUIMode == UI_MODE_NONE && !Buttons::isShiftButtonPressed()) {
+				if (currentUIMode == UI_MODE_NONE && !shiftHeld) {
 					currentUIMode = UI_MODE_HOLDING_SAVE_BUTTON;
 					timeSaveButtonPressed = AudioEngine::audioSampleTimer;
 					indicator_leds::setLedState(IndicatorLED::SAVE, true);
@@ -281,7 +285,7 @@ doEndMidiLearnPressSession:
 			if (on) {
 				if (currentUIMode == UI_MODE_NONE) {
 
-					if (Buttons::isShiftButtonPressed()) {
+					if (shiftHeld) {
 						if (inCardRoutine) {
 							return ActionResult::REMIND_ME_OUTSIDE_CARD_ROUTINE;
 						}
