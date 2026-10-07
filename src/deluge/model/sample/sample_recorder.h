@@ -101,6 +101,7 @@ public:
 	}
 	[[nodiscard]] bool isLoopOverdub() const { return loopFrames_ != 0; }
 	[[nodiscard]] bool hasLoopSource() const { return loopSource_ != nullptr; }
+	[[nodiscard]] bool loopFallbackBackingRendered() const { return loopFallbackBackingRendered_; }
 	[[nodiscard]] uint32_t loopFrameCursor() const { return loopFrameCursor_; }
 
 	void endSyncedRecording(int32_t buttonLatencyForTempolessRecording);
@@ -280,14 +281,22 @@ private:
 	uint32_t loopPendingCapacity_ = 0;
 	uint32_t loopPendingHead_ = 0;
 	uint32_t loopPendingCount_ = 0;
+	uint64_t loopAcceptedFrames_ = 0;
+	uint64_t loopAppliedFrames_ = 0;
+	uint32_t loopAcceptedOriginFrame_ = 0;
+	bool loopAcceptedOriginSet_ = false;
 	bool loopDrainingInput_ = false;
+	bool loopFallbackBackingRendered_ = false;
 	bool loopFrameReady();
+	[[nodiscard]] bool loopInputPendingAtFrame(uint32_t frame) const;
 	void drainLoopInput(uint32_t budget = 128);
 	void* loopWriteSnapshot_ = nullptr;
 	Error prepareLoopClusters();
 	Error prepareLoopSourceClusters();
 	Error copyLoopRemainder();
 	enum class LoopReadResult : uint8_t { READY, PENDING, INVALID };
+	LoopReadResult readLoopFallbackFrame(uint32_t frame, StereoSample& destination);
+	void renderLoopFallbackBacking(std::span<StereoSample> backing, size_t firstFrame);
 	struct LoopSourceLocation {
 		Sample* sample = nullptr;
 		uint32_t frame = 0;

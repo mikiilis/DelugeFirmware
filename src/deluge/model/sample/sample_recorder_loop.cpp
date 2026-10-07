@@ -65,6 +65,11 @@ Error SampleRecorder::setupLoopOverdub(uint32_t frames, Sample* source, uint32_t
 	loopSourceStart_ = sourceStart;
 	loopSourceFrame_ = sourceFrame;
 	loopFrames_ = frames;
+	loopFrameCursor_ = 0;
+	loopPlaybackCursor_ = 0;
+	loopAcceptedFrames_ = loopAppliedFrames_ = 0;
+	loopAcceptedOriginFrame_ = 0;
+	loopAcceptedOriginSet_ = false;
 	loopCache_[0] = {currentRecordCluster, 0, true, false};
 	currentRecordCluster = nullptr;
 	currentRecordClusterIndex = firstUnwrittenClusterIndex = 0;
@@ -146,9 +151,9 @@ SampleRecorder::LoopReadResult SampleRecorder::locateLoopSource(uint32_t frame, 
 		contiguous = std::min(contiguous, owner->loopFrames_ - frame);
 		auto* parent = owner->loopSourceRecorder_;
 		uint32_t prefix = parent ? (parent->loopSealed_ ? parent->loopSealedPrefix_ : parent->numSamplesCaptured) : 0;
+		if (parent && parent->loopInputPendingAtFrame(frame))
+			return LoopReadResult::PENDING;
 		if (!parent || frame < prefix) {
-			if (parent && parent->loopPendingCount_)
-				return LoopReadResult::PENDING;
 			location = {
 			    owner->loopSource_, owner->loopSourceStart_ + frame,
 			    std::min(contiguous, (parent ? std::min(owner->loopFrames_, prefix) : owner->loopFrames_) - frame)};
@@ -156,8 +161,6 @@ SampleRecorder::LoopReadResult SampleRecorder::locateLoopSource(uint32_t frame, 
 		}
 		if (parent->status == RecorderStatus::ABORTED || parent->captureOutputBackingMissing)
 			return LoopReadResult::INVALID;
-		if (parent->loopPendingCount_)
-			return LoopReadResult::PENDING;
 		if (!parent->isLoopOverdub())
 			return LoopReadResult::PENDING; // Initial recording latency compensation.
 		// A sealed take owns only its captured prefix. Its untouched tail is
@@ -165,6 +168,17 @@ SampleRecorder::LoopReadResult SampleRecorder::locateLoopSource(uint32_t frame, 
 		owner = parent;
 	}
 	return LoopReadResult::INVALID;
+}
+
+bool SampleRecorder::loopInputPendingAtFrame(uint32_t frame) const {
+	if (!loopFrames_ || !loopAcceptedOriginSet_ || loopAppliedFrames_ >= loopAcceptedFrames_)
+		return false;
+
+	frame %= loopFrames_;
+	uint64_t firstPending = loopAppliedFrames_;
+	uint32_t firstPendingFrame = (loopAcceptedOriginFrame_ + firstPending % loopFrames_) % loopFrames_;
+	uint64_t distance = (uint64_t(frame) + loopFrames_ - firstPendingFrame) % loopFrames_;
+	return firstPending + distance < loopAcceptedFrames_;
 }
 
 Error SampleRecorder::prepareLoopSourceClusters() {
@@ -190,28 +204,47 @@ Error SampleRecorder::prepareLoopSourceClusters() {
 	};
 	std::array<Key, 4> wanted{};
 	size_t wantedCount = 0;
-	uint32_t frame = loopFrameCursor_, remaining = loopFrames_;
-	while (remaining && wantedCount < wanted.size()) {
-		LoopSourceLocation location;
-		auto result = locateLoopSource(frame, location);
-		if (result == LoopReadResult::PENDING)
-			break;
-		if (result == LoopReadResult::INVALID)
-			return Error::FILE_CORRUPTED;
-		uint32_t width = location.sample->byteDepth * location.sample->numChannels;
-		if (!width || !location.count)
-			return Error::FILE_CORRUPTED;
-		uint64_t address = location.sample->audioDataStartPosBytes + uint64_t(location.frame) * width;
-		for (uint32_t index = address / Cluster::size; index <= (address + width - 1) / Cluster::size; ++index) {
-			bool found = std::any_of(wanted.begin(), wanted.begin() + wantedCount,
-			                         [&](auto key) { return key.sample == location.sample && key.index == index; });
-			if (!found && wantedCount < wanted.size())
-				wanted[wantedCount++] = {location.sample, index};
+	auto addWindow = [&](uint32_t frame, uint32_t remaining) -> Error {
+		while (remaining && wantedCount < wanted.size()) {
+			LoopSourceLocation location;
+			auto result = locateLoopSource(frame, location);
+			if (result == LoopReadResult::PENDING)
+				break;
+			if (result == LoopReadResult::INVALID)
+				return Error::FILE_CORRUPTED;
+			uint32_t width = location.sample->byteDepth * location.sample->numChannels;
+			if (!width || !location.count)
+				return Error::FILE_CORRUPTED;
+			uint64_t address = location.sample->audioDataStartPosBytes + uint64_t(location.frame) * width;
+			for (uint32_t index = address / Cluster::size; index <= (address + width - 1) / Cluster::size; ++index) {
+				bool found = std::any_of(wanted.begin(), wanted.begin() + wantedCount,
+				                         [&](auto key) { return key.sample == location.sample && key.index == index; });
+				if (!found && wantedCount < wanted.size())
+					wanted[wantedCount++] = {location.sample, index};
+			}
+			uint32_t count = std::min(
+			    {remaining, location.count, std::max<uint32_t>(1, (Cluster::size - address % Cluster::size) / width)});
+			remaining -= count;
+			frame = (frame + count) % loopFrames_;
 		}
-		uint32_t count = std::min(
-		    {remaining, location.count, std::max<uint32_t>(1, (Cluster::size - address % Cluster::size) / width)});
-		remaining -= count;
-		frame = (frame + count) % loopFrames_;
+		return Error::NONE;
+	};
+	if (loopSource_) {
+		// An audible read can outrun the writer while the untouched tail copies.
+		// Pin it first, including both clusters when a PCM frame straddles one.
+		auto error = addWindow(loopPlaybackCursor_, 1);
+		if (error != Error::NONE)
+			return error;
+		if (!loopOverdubReady()) {
+			error = addWindow(loopFrameCursor_, loopFrames_);
+			if (error != Error::NONE)
+				return error;
+		}
+	}
+	else {
+		auto error = addWindow(loopFrameCursor_, loopFrames_);
+		if (error != Error::NONE)
+			return error;
 	}
 	for (auto& entry : loopSourceCache_) {
 		bool needed = entry.cluster && std::any_of(wanted.begin(), wanted.begin() + wantedCount, [&](auto key) {
@@ -280,6 +313,65 @@ SampleRecorder::LoopReadResult SampleRecorder::readLoopSourceFrame(uint32_t fram
 	return LoopReadResult::READY;
 }
 
+SampleRecorder::LoopReadResult SampleRecorder::readLoopFallbackFrame(uint32_t frame, StereoSample& destination) {
+	SampleRecorder* owner = this;
+	for (uint32_t depth = 0; depth < 18; ++depth) {
+		if (!owner->loopSource_ || !owner->loopFrames_)
+			return LoopReadResult::INVALID;
+		frame = (owner->loopSourceFrame_ + frame) % owner->loopFrames_;
+		auto* parent = owner->loopSourceRecorder_;
+		uint32_t appliedPrefix = parent ? parent->numSamplesCaptured : 0;
+		if (!parent || frame < appliedPrefix) {
+			Sample* source = owner->loopSource_;
+			if (!source->byteDepth || source->byteDepth > 4 || !source->numChannels || source->numChannels > 2)
+				return LoopReadResult::INVALID;
+			uint64_t address = source->audioDataStartPosBytes
+			                   + uint64_t(owner->loopSourceStart_ + frame) * source->byteDepth * source->numChannels;
+			destination = {};
+			for (uint32_t channel = 0; channel < source->numChannels; ++channel) {
+				uint32_t value = 0;
+				for (uint32_t byte = 0; byte < source->byteDepth; ++byte, ++address) {
+					uint32_t index = address / Cluster::size;
+					if (index >= static_cast<uint32_t>(source->clusters.getNumElements()))
+						return LoopReadResult::INVALID;
+					auto* cluster = source->clusters.getElement(index)->cluster;
+					if (!cluster || !cluster->loaded)
+						return LoopReadResult::PENDING;
+					value |= static_cast<uint32_t>(static_cast<uint8_t>(cluster->data[address % Cluster::size]))
+					         << (8 * (4 - source->byteDepth + byte));
+				}
+				int32_t sampleValue = std::bit_cast<int32_t>(value);
+				if (channel == 0)
+					destination.l = destination.r = sampleValue;
+				else
+					destination.r = sampleValue;
+			}
+			return LoopReadResult::READY;
+		}
+		if (!parent->isLoopOverdub())
+			return LoopReadResult::PENDING;
+		owner = parent;
+	}
+	return LoopReadResult::INVALID;
+}
+
+void SampleRecorder::renderLoopFallbackBacking(std::span<StereoSample> backing, size_t firstFrame) {
+	loopFallbackBackingRendered_ = true;
+	for (size_t i = firstFrame; i < backing.size(); ++i) {
+		StereoSample source{};
+		if (readLoopFallbackFrame(loopPlaybackCursor_, source) == LoopReadResult::READY) {
+			backing[i] = {source.l >> deluge::loop_station::kCaptureGainShift,
+			              source.r >> deluge::loop_station::kCaptureGainShift};
+		}
+		else {
+			backing[i] = {};
+		}
+		loopPlaybackCursor_ = (loopPlaybackCursor_ + 1) % loopFrames_;
+		if (loopPlaybackFramesRendered_ != UINT32_MAX)
+			++loopPlaybackFramesRendered_;
+	}
+}
+
 bool SampleRecorder::loopFrameReady() {
 	uint64_t offset = sample->audioDataStartPosBytes + uint64_t(loopFrameCursor_) * 6;
 	for (uint32_t byte = 0; byte < 6; ++byte) {
@@ -318,8 +410,14 @@ void SampleRecorder::processLoopOverdub(std::span<StereoSample> backing, std::sp
 	using deluge::loop_station::kCaptureGainShift;
 	using deluge::loop_station::restoreCaptureGain;
 	using deluge::loop_station::saturatingAdd;
-	if (loopPreparing_ || !loopFrames_ || hadCardError || terminalError != Error::NONE || captureOutputBackingMissing
-	    || status == RecorderStatus::ABORTED || status == RecorderStatus::AWAITING_DELETION)
+	loopFallbackBackingRendered_ = false;
+	if (captureOutputBackingMissing || hadCardError || terminalError != Error::NONE || status == RecorderStatus::ABORTED
+	    || status == RecorderStatus::AWAITING_DELETION) {
+		if (!backgroundCopy && loopSource_ && loopFrames_)
+			renderLoopFallbackBacking(backing, 0);
+		return;
+	}
+	if (loopPreparing_ || !loopFrames_)
 		return;
 	if (loopSource_ && !backgroundCopy && !loopDrainingInput_) {
 		drainLoopInput();
@@ -339,7 +437,7 @@ void SampleRecorder::processLoopOverdub(std::span<StereoSample> backing, std::sp
 						// Never silently substitute it for the current working audio.
 						traceLifecycle(LifecycleEvent::CACHE_UNDERRUN, nullptr, address / Cluster::size);
 						captureOutputBackingMissing = true;
-						std::fill(backing.begin() + i, backing.end(), StereoSample{});
+						renderLoopFallbackBacking(backing, i);
 						return;
 					}
 					values[byte / 3] |=
@@ -356,7 +454,7 @@ void SampleRecorder::processLoopOverdub(std::span<StereoSample> backing, std::sp
 					frame = {previous.l >> kCaptureGainShift, previous.r >> kCaptureGainShift};
 				else if (error != LoopReadResult::PENDING || audibleDeadline) {
 					captureOutputBackingMissing = true;
-					std::fill(backing.begin() + i, backing.end(), StereoSample{});
+					renderLoopFallbackBacking(backing, i);
 					return;
 				}
 			}
@@ -367,6 +465,11 @@ void SampleRecorder::processLoopOverdub(std::span<StereoSample> backing, std::sp
 				}
 				auto tail = (loopPendingHead_ + loopPendingCount_) % loopPendingCapacity_;
 				loopPendingFrames_[tail] = {frame, captureOutputInputActive ? input[i] : StereoSample{}};
+				if (!loopAcceptedOriginSet_) {
+					loopAcceptedOriginFrame_ = loopPlaybackCursor_;
+					loopAcceptedOriginSet_ = true;
+				}
+				++loopAcceptedFrames_;
 				++loopPendingCount_;
 				drainLoopInput(1);
 			}
@@ -388,6 +491,8 @@ void SampleRecorder::processLoopOverdub(std::span<StereoSample> backing, std::sp
 				// Missing prefetched audio is an underrun, not proof of an SD write error.
 				captureOutputBackingMissing = true;
 				traceLifecycle(LifecycleEvent::CACHE_UNDERRUN, nullptr, address / Cluster::size);
+				if (!backgroundCopy && !loopDrainingInput_ && loopSource_)
+					renderLoopFallbackBacking(backing, frame);
 				return;
 			}
 			bytes[byte] = entries[byte]->cluster->data + address % Cluster::size;
@@ -440,6 +545,8 @@ void SampleRecorder::processLoopOverdub(std::span<StereoSample> backing, std::sp
 			numSamplesCaptured = std::min(loopFrames_, numSamplesCaptured + 1);
 		}
 		loopFrameCursor_ = (loopFrameCursor_ + 1) % loopFrames_;
+		if (loopDrainingInput_)
+			++loopAppliedFrames_;
 		if (!backgroundCopy && !loopDrainingInput_)
 			loopPlaybackCursor_ = loopFrameCursor_;
 	}

@@ -22,7 +22,10 @@ void renderAudio(std::span<StereoSample> backing, std::span<const StereoSample> 
 		if (!recorder->hasLoopSource() && !backingRendered && recorder->captureOutputInputActive)
 			recorder->captureOutputBackingMissing = true;
 		recorder->processLoopOverdub(backing, input, false, true);
-		if (recorder->captureOutputBackingMissing)
+		// On a rejected generation the recorder may have restored the readable
+		// parent frame at this playback phase. Preserve that fallback; silence only
+		// when no source frame was available.
+		if (recorder->captureOutputBackingMissing && !recorder->loopFallbackBackingRendered())
 			std::fill(backing.begin(), backing.end(), StereoSample{});
 	}
 	int64_t amplitude = amplitudeStart;

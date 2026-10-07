@@ -74,7 +74,7 @@ bool SampleRecorder::inputLooksDifferential() {
 }
 #endif
 
-Cluster* SampleCluster::getCluster(Sample* owner, uint32_t index, int32_t, uint32_t, Error* error) {
+Cluster* SampleCluster::getCluster(Sample* owner, uint32_t index, int32_t loadMode, uint32_t, Error* error) {
 	if (error)
 		*error = Error::NONE;
 	if (recorder_test::failure == recorder_test::Failure::FIRST_CLUSTER || recorder_test::clusterLoadFails) {
@@ -87,6 +87,8 @@ Cluster* SampleCluster::getCluster(Sample* owner, uint32_t index, int32_t, uint3
 		cluster->sample = owner;
 		cluster->clusterIndex = index;
 	}
+	if (recorder_test::asyncClusterLoads && loadMode == CLUSTER_ENQUEUE && sdAddress)
+		cluster->loaded = false;
 	cluster->numReasonsToBeLoaded++;
 	return cluster;
 }

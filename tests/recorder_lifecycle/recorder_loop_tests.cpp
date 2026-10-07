@@ -5,6 +5,7 @@
 #include "model/sample/sample.h"
 #include "model/sample/sample_recorder.h"
 #include "storage/storage_manager.h"
+#include <algorithm>
 #include <bit>
 #include <memory>
 #include <vector>
@@ -18,6 +19,25 @@ struct SampleRecorderLifecycleTestAccess {
 		r.loopFrameCursor_ = writer;
 		r.loopPlaybackCursor_ = playback;
 	}
+	static int sourceStatus(SampleRecorder& r, uint32_t frame) {
+		StereoSample sample{};
+		return static_cast<int>(r.readLoopSourceFrame(frame, sample));
+	}
+	static int sourceReady() { return static_cast<int>(SampleRecorder::LoopReadResult::READY); }
+	static int sourcePending() { return static_cast<int>(SampleRecorder::LoopReadResult::PENDING); }
+	static uint32_t pendingCount(SampleRecorder& r) { return r.loopPendingCount_; }
+	static uint64_t acceptedFrames(SampleRecorder& r) { return r.loopAcceptedFrames_; }
+	static uint64_t appliedFrames(SampleRecorder& r) { return r.loopAppliedFrames_; }
+	static bool sourceCached(SampleRecorder& r, Sample* sample, uint32_t clusterIndex) {
+		return std::any_of(r.loopSourceCache_.begin(), r.loopSourceCache_.end(), [&](auto const& entry) {
+			return entry.cluster && entry.sample == sample && entry.index == clusterIndex;
+		});
+	}
+	static uint32_t sourceCacheSize(SampleRecorder& r) {
+		return std::count_if(r.loopSourceCache_.begin(), r.loopSourceCache_.end(),
+		                     [](auto const& entry) { return entry.cluster != nullptr; });
+	}
+	static void releaseLoopCache(SampleRecorder& r) { r.releaseLoopClusters(); }
 	static void pinFullCache(SampleRecorder& r) {
 		for (uint32_t i = 0; i < 8; ++i) {
 			if (!r.loopCache_[i].cluster) {
@@ -33,6 +53,7 @@ using namespace recorder_test;
 TEST_GROUP(LoopRecorder){void setup() override{failure = Failure::NONE;
 writeError = Error::NONE;
 clusterLoadFails = false;
+asyncClusterLoads = false;
 seekFails = closeFails = false;
 onSeek = {};
 onCreate = {};
@@ -45,6 +66,7 @@ void teardown() override {
 	CHECK_EQUAL(0, liveSamples);
 	CHECK_EQUAL(0, liveClusters);
 	onSeek = {};
+	asyncClusterLoads = false;
 }
 void initialize(SampleRecorder& r, uint32_t frames, Sample* source = nullptr, uint32_t sourceFrame = 0,
                 SampleRecorder* sourceRecorder = nullptr) {
@@ -274,6 +296,99 @@ TEST(LoopRecorder, PendingSourceRetainsInputUntilRawAudioIsReady) {
 	}
 }
 
+TEST(LoopRecorder, PendingParentInputBlocksOnlyItsOwnPhraseFrame) {
+	SampleRecorder source;
+	initialize(source, 4);
+	std::array<StereoSample, 4> backing;
+	backing.fill({3200, 3200});
+	std::array<StereoSample, 4> silence{};
+	source.processLoopOverdub(backing, silence);
+
+	SampleRecorder parent;
+	initialize(parent, 4, source.sample);
+	auto* sourceCluster = source.sample->clusters.getElement(0)->cluster;
+	sourceCluster->loaded = false;
+	std::array<StereoSample, 1> input{{{2560, 0}}};
+	parent.processLoopOverdub(std::span(backing).first(1), input);
+	CHECK_EQUAL(1, SampleRecorderLifecycleTestAccess::pendingCount(parent));
+	sourceCluster->loaded = true; // the asynchronous source read has now completed
+
+	SampleRecorder child;
+	initialize(child, 4, parent.sample, 0, &parent);
+	CHECK_EQUAL(SampleRecorderLifecycleTestAccess::sourcePending(),
+	            SampleRecorderLifecycleTestAccess::sourceStatus(child, 0));
+	CHECK_EQUAL(SampleRecorderLifecycleTestAccess::sourceReady(),
+	            SampleRecorderLifecycleTestAccess::sourceStatus(child, 3));
+}
+
+TEST(LoopRecorder, RejectedAudibleFrameFallsBackToReadableBackingAtTheSamePhase) {
+	SampleRecorder source;
+	initialize(source, 4);
+	std::array<StereoSample, 4> backing;
+	backing.fill({3200, 3200});
+	std::array<StereoSample, 4> silence{};
+	source.processLoopOverdub(backing, silence);
+
+	SampleRecorder parent;
+	initialize(parent, 4, source.sample);
+	auto* sourceCluster = source.sample->clusters.getElement(0)->cluster;
+	sourceCluster->loaded = false;
+	std::array<StereoSample, 1> input{{{2560, 0}}};
+	parent.processLoopOverdub(std::span(backing).first(1), input);
+	CHECK_EQUAL(1, SampleRecorderLifecycleTestAccess::pendingCount(parent));
+	sourceCluster->loaded = true;
+
+	SampleRecorder child;
+	initialize(child, 4, parent.sample, 0, &parent);
+	std::array<StereoSample, 1> audible{{{777, 888}}};
+	deluge::loop_station::renderAudio(audible, std::span(silence).first(1), &child, 1 << 26, 1 << 26, 1 << 24, false,
+	                                  [](std::span<StereoSample>) {});
+	CHECK_TRUE(child.captureOutputBackingMissing);
+	CHECK_EQUAL(0, child.numSamplesCaptured);
+	CHECK_EQUAL(3200, audible[0].l);
+	CHECK_EQUAL(3200, audible[0].r);
+}
+
+TEST(LoopRecorder, PendingInputSerialRangeTracksAppliedFramesAcrossWraps) {
+	SampleRecorder source;
+	initialize(source, 4);
+	std::array<StereoSample, 4> backing;
+	backing.fill({3200, 3200});
+	std::array<StereoSample, 4> silence{};
+	source.processLoopOverdub(backing, silence);
+
+	SampleRecorder parent;
+	initialize(parent, 4, source.sample);
+	auto* sourceCluster = source.sample->clusters.getElement(0)->cluster;
+	std::array<StereoSample, 3> firstInput;
+	firstInput.fill({2560, 0});
+	sourceCluster->loaded = false;
+	parent.processLoopOverdub(std::span(backing).first(3), firstInput);
+	CHECK_EQUAL(3, SampleRecorderLifecycleTestAccess::pendingCount(parent));
+
+	// Apply the first three accepted frames, then queue frames at phrase positions
+	// three and zero while the next asynchronous source read is pending.
+	sourceCluster->loaded = true;
+	parent.processLoopOverdub({}, {});
+	CHECK_EQUAL(3, SampleRecorderLifecycleTestAccess::appliedFrames(parent));
+	std::array<StereoSample, 2> wrapInput;
+	wrapInput.fill({5120, 0});
+	sourceCluster->loaded = false;
+	parent.processLoopOverdub(std::span(backing).first(2), wrapInput);
+	CHECK_EQUAL(5, SampleRecorderLifecycleTestAccess::acceptedFrames(parent));
+	CHECK_EQUAL(2, SampleRecorderLifecycleTestAccess::pendingCount(parent));
+	sourceCluster->loaded = true;
+
+	SampleRecorder child;
+	initialize(child, 4, parent.sample, 0, &parent);
+	CHECK_EQUAL(SampleRecorderLifecycleTestAccess::sourceReady(),
+	            SampleRecorderLifecycleTestAccess::sourceStatus(child, 1));
+	CHECK_EQUAL(SampleRecorderLifecycleTestAccess::sourcePending(),
+	            SampleRecorderLifecycleTestAccess::sourceStatus(child, 3));
+	CHECK_EQUAL(SampleRecorderLifecycleTestAccess::sourcePending(),
+	            SampleRecorderLifecycleTestAccess::sourceStatus(child, 0));
+}
+
 TEST(LoopRecorder, AudibleSourceDeadlineFailsInsteadOfPlayingSilence) {
 	SampleRecorder source;
 	initialize(source, 4);
@@ -400,7 +515,7 @@ TEST(LoopRecorder, EightTracksRetainAndDrainDelayedInputIndependently) {
 	}
 }
 
-TEST(LoopRecorder, EndingPlaybackNeverSubstitutesOlderAudioForMissingWorkingData) {
+TEST(LoopRecorder, EndingPlaybackFallsBackToReadableSourceWhenWorkingDataIsMissing) {
 	SampleRecorder source;
 	initialize(source, 4);
 	std::array<StereoSample, 4> dry;
@@ -418,7 +533,7 @@ TEST(LoopRecorder, EndingPlaybackNeverSubstitutesOlderAudioForMissingWorkingData
 	child.processLoopOverdub(dry, silence);
 	CHECK_TRUE(child.captureOutputBackingMissing);
 	CHECK_FALSE(child.hadCardError);
-	CHECK_EQUAL(0, dry[0].l);
+	CHECK_EQUAL(3200, dry[0].l);
 	child.sample->clusters.getElement(0)->cluster->loaded = true;
 }
 
@@ -558,6 +673,47 @@ TEST(LoopRecorder, SourcePrefetchIncludesSplitFramesAndLoopWrap) {
 			CHECK_EQUAL(frames, child.numSamplesCaptured);
 		}
 	}
+}
+
+TEST(LoopRecorder, SourcePrefetchPrioritizesAudibleFrameAheadOfWriterCursor) {
+	uint32_t const audibleFrame = (4 * Cluster::size - 44) / 6 + 2;
+	uint32_t const frames = audibleFrame + 8;
+	SampleRecorder source;
+	initialize(source, frames);
+	SampleRecorderLifecycleTestAccess::positions(source, audibleFrame, 0);
+	CHECK(SampleRecorderLifecycleTestAccess::prepare(source) == Error::NONE);
+	std::array<StereoSample, 1> dry{{{3200, 3200}}}, silence{};
+	source.processLoopOverdub(dry, silence);
+
+	SampleRecorder child;
+	initialize(child, frames, source.sample);
+	child.setLoopPlaybackCursor(audibleFrame);
+	Sample* sourceSample = source.sample;
+	auto* audibleCluster = sourceSample->clusters.getElement(4)->cluster;
+	CHECK(audibleCluster != nullptr);
+	uint64_t const sourceOffset = 44 + static_cast<uint64_t>(audibleFrame) * 6;
+	std::array<char, 6> persistedFrame{};
+	std::copy_n(audibleCluster->data + sourceOffset % Cluster::size, persistedFrame.size(), persistedFrame.begin());
+	sourceSample->clusters.getElement(4)->sdAddress = 99;
+	recycleReleasedClusters = true;
+	SampleRecorderLifecycleTestAccess::releaseLoopCache(source);
+	CHECK(sourceSample->clusters.getElement(4)->cluster == nullptr); // The released cache pin evicted this block.
+	asyncClusterLoads = true;
+	CHECK(SampleRecorderLifecycleTestAccess::prepare(child) == Error::NONE);
+	CHECK(SampleRecorderLifecycleTestAccess::sourceCached(child, sourceSample, 4));
+	audibleCluster = sourceSample->clusters.getElement(4)->cluster;
+	CHECK(audibleCluster != nullptr);
+	CHECK_FALSE(audibleCluster->loaded);
+
+	// The loader completed between card service and the next audible buffer.
+	std::copy(persistedFrame.begin(), persistedFrame.end(), audibleCluster->data + sourceOffset % Cluster::size);
+	audibleCluster->loaded = true;
+	std::array<StereoSample, 1> audible{{{0, 0}}};
+	deluge::loop_station::renderAudio(audible, std::span(silence).first(1), &child, 1 << 26, 1 << 26, 1 << 24, false,
+	                                  [](std::span<StereoSample>) {});
+	CHECK_FALSE(child.captureOutputBackingMissing);
+	CHECK_EQUAL(3200, audible[0].l);
+	CHECK(SampleRecorderLifecycleTestAccess::sourceCacheSize(child) <= 4);
 }
 
 TEST(LoopRecorder, ProductionPipelineKeepsEarlyOverdubAudibleWhileTailCopies) {

@@ -27,6 +27,7 @@ inline bool closeFails = false;
 inline bool headerFails = false;
 inline bool clusterLoadFails = false;
 inline bool clusterInsertFails = false;
+inline bool asyncClusterLoads = false;
 inline bool recycleReleasedClusters = false;
 inline std::function<void()> onSeek;
 inline std::function<void()> onTruncate;
