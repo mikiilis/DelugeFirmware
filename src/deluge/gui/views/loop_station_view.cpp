@@ -72,6 +72,7 @@ deluge::loop_station::Error recorderError(::Error error) {
 		return deluge::loop_station::Error::SD_CARD;
 	}
 }
+
 } // namespace
 
 PLACE_SDRAM_BSS LoopStationView loopStationView{};
@@ -521,15 +522,19 @@ void LoopStationView::abortCapture(SlotId slot, bool overdub) {
 	auto* live = clip->loopStationPlaybackRecorder;
 	auto* parent = live ? live->loopSourceRecorder() : nullptr;
 	uint32_t resumeFrame = live ? live->loopSourcePlaybackFrame() : 0;
-	if (parent && parent->isLoopOverdub())
+	bool parentProvidesLoopPlayback = parent && parent->isLoopOverdub();
+	if (parentProvidesLoopPlayback)
 		parent->setLoopPlaybackCursor(resumeFrame);
-	clip->setLoopStationPlaybackRecorder(parent && parent->isLoopOverdub() ? parent : nullptr);
+	clip->setLoopStationPlaybackRecorder(parentProvidesLoopPlayback ? parent : nullptr);
 	clip->abortRecording();
-	if (live && !parent && playbackHandler.isEitherClockActive() && !clip->isEmpty(false)) {
+	// A linear parent recorder is a source owner, not a Loop Station playback
+	// provider. Fall back to the durable AudioClip at the source frame instead
+	// of leaving the clip with no audible provider.
+	if (live && !parentProvidesLoopPlayback && playbackHandler.isEitherClockActive() && !clip->isEmpty(false)) {
 		char memory[MODEL_STACK_MAX_SIZE];
 		auto* stack = setupModelStackWithTimelineCounter(memory, currentSong, clip);
 		clip->unassignVoiceSample(false);
-		clip->resumeLoopStationAtFrame(stack, resumeFrame);
+		clip->resumeLoopStationAtFrame(stack, resumeFrame, true);
 	}
 }
 
@@ -567,7 +572,7 @@ bool LoopStationView::navigateHistory(SlotId slot, bool redo, bool& targetHasPhr
 	return true;
 }
 
-void LoopStationView::resumeCommittedClip(SlotId slot) {
+void LoopStationView::resumeCommittedClip(SlotId slot, uint32_t logicalSampleFrame) {
 	AudioClip* clip = backingClip(slot);
 	if (!clip || clip->isEmpty(false)) {
 		if (clip) {
@@ -580,13 +585,26 @@ void LoopStationView::resumeCommittedClip(SlotId slot) {
 	auto* modelStack = setupModelStackWithTimelineCounter(modelStackMemory, currentSong, clip);
 	clip->activeIfNoSolo = true;
 	clip->output->setActiveClip(modelStack);
-	uint32_t length = std::max<int32_t>(1, clip->loopLength);
-	uint32_t currentTick = playbackHandler.lastSwungTickActioned;
-	uint32_t logicalPhase = loopPhaseAt(currentTick, engine_->track(slot).playbackStartTick, length);
-	clip->setPos(modelStack,
-	             static_cast<int32_t>(samplePhaseForLoopPhase(logicalPhase, clip->loopStationPhaseZeroTicks(), length)),
-	             true);
-	clip->resumePlayback(modelStack, true);
+	uint32_t frameCount = std::max<uint32_t>(1, clip->sampleHolder.getDurationInSamples(true));
+	uint32_t sampleFrame =
+	    sampleFrameForLogicalSampleFrame(logicalSampleFrame, clip->loopStationPhaseZeroFrames(), frameCount);
+	clip->resumeLoopStationAtFrame(modelStack, sampleFrame, true);
+}
+
+uint32_t LoopStationView::currentLogicalSampleFrame(size_t index, AudioClip& clip) const {
+	if (!clip.sampleHolder.audioFile)
+		return 0;
+	auto* sample = static_cast<Sample*>(clip.sampleHolder.audioFile);
+	uint32_t frameCount = std::max<uint32_t>(1, clip.sampleHolder.getDurationInSamples(true));
+	uint32_t sampleZeroFrame = clip.loopStationPhaseZeroFrames();
+	if (clip.recorder && clip.recorder == clip.loopStationPlaybackRecorder && clip.recorder->isLoopOverdub())
+		sampleZeroFrame = overdubStartFrames_[index];
+	int64_t sampleFrame = clip.loopStationPlaybackRecorder ? clip.loopStationPlaybackRecorder->loopPlaybackCursor()
+	                      : clip.voiceSample
+	                          ? clip.voiceSample->getPlaySample(sample, &clip.guide) - clip.sampleHolder.startPos
+	                          : 0;
+	uint32_t physicalFrame = static_cast<uint32_t>(std::max<int64_t>(0, sampleFrame)) % frameCount;
+	return logicalSampleFrameForSampleFrame(physicalFrame, sampleZeroFrame, frameCount);
 }
 
 void LoopStationView::releaseSlot(Song& song, size_t index) {
@@ -623,10 +641,16 @@ void LoopStationView::discardGenerations(size_t slot) {
 	}
 }
 
-deluge::loop_station::Error LoopStationView::rollbackGenerations(size_t index, deluge::loop_station::Error failure) {
+deluge::loop_station::Error LoopStationView::rollbackGenerations(size_t index, deluge::loop_station::Error failure,
+                                                                 uint32_t& logicalSampleFrame, ::Error& recoveryError) {
 	auto slot = static_cast<SlotId>(index);
 	auto* clip = backingClip(slot);
+	logicalSampleFrame = 0;
+	recoveryError = ::Error::NONE;
 	if (clip) {
+		// Snapshot before detaching the working Sample or its live provider. The
+		// frame stays stable across storage yields and later tempo changes.
+		logicalSampleFrame = currentLogicalSampleFrame(index, *clip);
 		// Stop every provisional producer before restoreCurrent(), which may
 		// yield while loading the durable revision.
 		if (clip->recorder) {
@@ -635,10 +659,9 @@ deluge::loop_station::Error LoopStationView::rollbackGenerations(size_t index, d
 		}
 		clip->setLoopStationPlaybackRecorder(nullptr);
 		clip->unassignVoiceSample(true);
-		auto restoreError = currentSong->loopStationRevisionHistory[index].restoreCurrent(*clip);
-		if (restoreError != ::Error::NONE)
-			failure = recorderError(restoreError);
+		recoveryError = currentSong->loopStationRevisionHistory[index].restoreCurrent(*clip);
 	}
+	rollbackFailures_[index] = {.initiating = failure, .recovery = recoveryError};
 	discardGenerations(index);
 	return failure;
 }
@@ -663,6 +686,9 @@ void LoopStationView::processPendingCommits() {
 		             : recorder->captureOutputBackingMissing  ? deluge::loop_station::Error::BACKING_UNAVAILABLE
 		             : recorder->reachedMaxFileSize           ? deluge::loop_station::Error::MAX_FILE_SIZE
 		                                                      : deluge::loop_station::Error::SD_CARD;
+		uint32_t logicalSampleFrame = clip ? currentLogicalSampleFrame(i, *clip) : 0;
+		uint32_t rollbackLogicalSampleFrame = logicalSampleFrame;
+		::Error recoveryError = ::Error::NONE;
 		deluge::loop_station::resolveGenerationCommit(
 		    runtime.finishingCapture, success,
 		    [&] {
@@ -679,11 +705,14 @@ void LoopStationView::processPendingCommits() {
 			    recorder->releaseCommit(true);
 			    return true;
 		    },
-		    [&] { error = rollbackGenerations(i, error); },
+		    [&] { error = rollbackGenerations(i, error, rollbackLogicalSampleFrame, recoveryError); },
 		    [&](bool published) {
 			    engine_->notifyCommitComplete(slot, published, error);
-			    if (!published && clip && !runtime.stopAfterCapture && !clip->isEmpty(false))
-				    resumeCommittedClip(slot);
+			    if (published && clip && clip->loopStationPlaybackRecorder == recorder && !runtime.stopAfterCapture)
+				    resumeCommittedClip(slot, logicalSampleFrame);
+			    else if (!published && recoveryError == ::Error::NONE && clip && !runtime.stopAfterCapture
+			             && !clip->isEmpty(false))
+				    resumeCommittedClip(slot, rollbackLogicalSampleFrame);
 		    });
 	}
 }
@@ -1454,19 +1483,21 @@ void LoopStationView::serviceBackgroundWork() {
 		}
 		if (failure != deluge::loop_station::Error::NONE) {
 			bool notifiedCommitFailure = runtime.pendingCommits != 0;
+			uint32_t rollbackLogicalSampleFrame = clip ? currentLogicalSampleFrame(i, *clip) : 0;
+			::Error recoveryError = ::Error::NONE;
 			deluge::loop_station::resolveGenerationCommit(
 			    engine_->track(slot).finishingCapture, false, [] { return false; },
 			    [&] {
 				    if (clip && (clip->recorder || clip->loopStationPlaybackRecorder))
-					    failure = rollbackGenerations(i, failure);
+					    failure = rollbackGenerations(i, failure, rollbackLogicalSampleFrame, recoveryError);
 			    },
 			    [&](bool) {
 				    if (notifiedCommitFailure)
 					    engine_->notifyCommitComplete(slot, false, failure);
 				    else
 					    engine_->notifyFailure(slot, failure);
-				    if (clip && !runtime.stopAfterCapture && !clip->isEmpty(false))
-					    resumeCommittedClip(slot);
+				    if (clip && recoveryError == ::Error::NONE && !runtime.stopAfterCapture && !clip->isEmpty(false))
+					    resumeCommittedClip(slot, rollbackLogicalSampleFrame);
 			    });
 		}
 	}

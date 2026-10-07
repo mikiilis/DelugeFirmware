@@ -548,6 +548,16 @@ TEST(LoopStationState, RotatedOverdubSampleMapsBackToLogicalLoopPhase) {
 	CHECK_EQUAL(24, samplePhaseForLoopPhase(48, overdubStartPhase, length));
 }
 
+TEST(LoopStationState, RotatedSampleFrameMapsThroughLogicalPhaseAfterTempoChanges) {
+	constexpr uint32_t frameCount = 96000;
+	constexpr uint32_t sampleZeroFrame = 24000;
+	constexpr uint32_t currentSampleFrame = 41000;
+	constexpr uint32_t logicalFrame = logicalSampleFrameForSampleFrame(currentSampleFrame, sampleZeroFrame, frameCount);
+	CHECK_EQUAL(65000, logicalFrame);
+	CHECK_EQUAL(currentSampleFrame, sampleFrameForLogicalSampleFrame(logicalFrame, sampleZeroFrame, frameCount));
+	CHECK_EQUAL(5000, sampleFrameForLogicalSampleFrame(29000, sampleZeroFrame, frameCount));
+}
+
 TEST(LoopStationState, ClearRetainsBindingAndSettings) {
 	SongModel model;
 	model.global.startAction.mode = ActionMode::IMMEDIATE;
@@ -929,6 +939,21 @@ TEST(LoopStationState, FinishDelegateCannotBeReenteredWhileYieldingToAudioOrPads
 	CHECK(engine.track(SlotId::ONE).committingLength != 0);
 	engine.notifyCommitComplete(SlotId::ONE, true);
 	CHECK_EQUAL(1, engine.track(SlotId::ONE).historySize);
+}
+
+TEST(LoopStationState, StopIntentSurvivesYieldingFailureRollback) {
+	SongModel model;
+	model.global.startAction.mode = ActionMode::IMMEDIATE;
+	Delegate delegate;
+	Engine engine(model, &delegate);
+	engine.restoreBoundPhrase(SlotId::ONE, 96, true);
+	engine.centrePressed(SlotId::ONE, at(0), 0);
+	CHECK(engine.track(SlotId::ONE).state == TrackState::OVERDUBBING);
+	delegate.duringAbort = [&] { engine.stopAll(at(97)); };
+	engine.notifyFailure(SlotId::ONE, Error::SD_CARD);
+	CHECK_TRUE(engine.track(SlotId::ONE).stopAfterCapture);
+	CHECK(engine.track(SlotId::ONE).stateBeforeCommit == TrackState::STOPPED);
+	CHECK(engine.track(SlotId::ONE).state == TrackState::ERROR);
 }
 
 TEST(LoopStationState, FailedShortOverdubPreservesRedoAndAcknowledgesWithoutRecording) {
@@ -1354,7 +1379,6 @@ TEST(LoopStationState, ActiveFailureCannotReenterAndRetryNeedsNoRestart) {
 		CHECK(engine.track(SlotId::ONE).finishingCapture);
 		engine.notifyFailure(SlotId::ONE, Error::ALLOCATION);
 		engine.centrePressed(SlotId::ONE, at(11), 2000);
-		engine.stopAll(at(11));
 	};
 	engine.notifyFailure(SlotId::ONE, Error::SD_CARD);
 	CHECK_EQUAL(1, delegate.aborts[0]);

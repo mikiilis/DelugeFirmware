@@ -58,3 +58,30 @@ TEST(LoopRevisionPublication, FailedGenerationCanRollBackWithoutPublishingOrDest
 	CHECK(history.canRedo());
 	POINTERS_EQUAL(&samples[0], clip.sampleHolder.audioFile);
 }
+
+TEST(LoopRevisionPublication, FailedDurableRestoreDetachesRejectedSampleAndKeepsHistoryForRetry) {
+	std::array<Sample, 2> samples;
+	AudioClip clip;
+	LoopStationRevisionHistory history;
+	history.revisions.emplace_back();
+	history.revisions.back().filePath.set("missing-durable.wav");
+	history.revisions.emplace_back();
+	history.revisions.back().capture(clip);
+	history.cursor = 0;
+	clip.sampleHolder.setAudioFile(&samples[1]);
+	clip.sampleHolder.filePath.set("rejected-working.wav");
+	clip.sampleHolder.startPos = 12;
+	clip.sampleHolder.endPos = 345;
+	clip.loopStationSampleZeroFrames = 234;
+
+	CHECK(history.restoreCurrent(clip) == Error::FILE_NOT_FOUND);
+	POINTERS_EQUAL(nullptr, clip.sampleHolder.audioFile);
+	CHECK(clip.sampleHolder.filePath.isEmpty());
+	CHECK_EQUAL(0, clip.sampleHolder.startPos);
+	CHECK_EQUAL(0, clip.sampleHolder.endPos);
+	CHECK_EQUAL(0, clip.loopStationSampleZeroFrames);
+	CHECK_EQUAL(2, history.revisions.size());
+	CHECK(history.canRedo());
+	STRCMP_EQUAL("missing-durable.wav", history.current()->filePath.get());
+	CHECK_EQUAL(0, samples[1].reasons);
+}

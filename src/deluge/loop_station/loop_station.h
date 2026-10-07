@@ -293,6 +293,27 @@ struct TrackRuntime {
 	                                        : phraseLength - (sampleZeroLoopPhase - loopPhase);
 }
 
+// Keep rollback phase in the sample's frame domain. A cumulative overdub's
+// physical sample zero can be rotated relative to the phrase's logical zero.
+[[nodiscard]] constexpr uint32_t logicalSampleFrameForSampleFrame(uint32_t sampleFrame, uint32_t sampleZeroFrame,
+                                                                  uint32_t frameCount) {
+	if (!frameCount)
+		return 0;
+	sampleFrame %= frameCount;
+	sampleZeroFrame %= frameCount;
+	return static_cast<uint32_t>((static_cast<uint64_t>(sampleFrame) + sampleZeroFrame) % frameCount);
+}
+
+[[nodiscard]] constexpr uint32_t sampleFrameForLogicalSampleFrame(uint32_t logicalFrame, uint32_t sampleZeroFrame,
+                                                                  uint32_t frameCount) {
+	if (!frameCount)
+		return 0;
+	logicalFrame %= frameCount;
+	sampleZeroFrame %= frameCount;
+	return logicalFrame >= sampleZeroFrame ? logicalFrame - sampleZeroFrame
+	                                       : frameCount - (sampleZeroFrame - logicalFrame);
+}
+
 struct CaptureFinish {
 	bool accepted = true;
 	bool asynchronous = false;

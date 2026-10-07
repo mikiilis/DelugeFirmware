@@ -79,6 +79,7 @@ AudioClip::~AudioClip() {
 void AudioClip::setLoopStationPlaybackRecorder(SampleRecorder* next) {
 	if (next == loopStationPlaybackRecorder)
 		return;
+	loopStationPlaybackHandoffPending = false;
 	if (next)
 		next->retainLoopReader();
 	auto* previous = loopStationPlaybackRecorder;
@@ -578,10 +579,62 @@ uint32_t AudioClip::loopStationPhaseZeroTicks() const {
 	       / std::max<int64_t>(1, sampleHolder.endPos - sampleHolder.startPos);
 }
 
-void AudioClip::resumeLoopStationAtFrame(ModelStackWithTimelineCounter* modelStack, uint32_t frame) {
+void AudioClip::resumeLoopStationAtFrame(ModelStackWithTimelineCounter* modelStack, uint32_t frame,
+                                         bool preservePlaybackState) {
+	auto* audioOutput = static_cast<AudioOutput*>(output);
+	Envelope envelope;
+	int32_t amplitudeLastTime = 0;
+	int32_t overrideReleaseRate = 0;
+	if (preservePlaybackState) {
+		envelope = audioOutput->envelope;
+		amplitudeLastTime = audioOutput->amplitudeLastTime;
+		overrideReleaseRate = audioOutput->overrideAmplitudeEnvelopeReleaseRate;
+	}
 	setPos(modelStack, 0, true);
 	resumePlayback(modelStack, true);
 	loopStationResumeFrame = frame % std::max<uint32_t>(1, sampleHolder.getDurationInSamples(true));
+	loopStationPlaybackHandoffPending = loopStationPlaybackRecorder != nullptr;
+	if (preservePlaybackState) {
+		audioOutput->envelope = envelope;
+		audioOutput->amplitudeLastTime = amplitudeLastTime;
+		audioOutput->overrideAmplitudeEnvelopeReleaseRate = overrideReleaseRate;
+	}
+}
+
+bool AudioClip::tryHandoffLoopStationPlayback(ModelStackWithTimelineCounter* modelStack) {
+	if (!loopStationPlaybackHandoffPending || !loopStationPlaybackRecorder || !sampleHolder.audioFile)
+		return false;
+	if (!voiceSample) {
+		auto* audioOutput = static_cast<AudioOutput*>(output);
+		Envelope envelope = audioOutput->envelope;
+		int32_t amplitudeLastTime = audioOutput->amplitudeLastTime;
+		int32_t overrideReleaseRate = audioOutput->overrideAmplitudeEnvelopeReleaseRate;
+		resumePlayback(modelStack, true);
+		audioOutput->envelope = envelope;
+		audioOutput->amplitudeLastTime = amplitudeLastTime;
+		audioOutput->overrideAmplitudeEnvelopeReleaseRate = overrideReleaseRate;
+		if (!voiceSample)
+			return false;
+	}
+
+	auto* sample = static_cast<Sample*>(sampleHolder.audioFile);
+	uint32_t frameCount = std::max<uint32_t>(1, sampleHolder.getDurationInSamples(true));
+	uint32_t frame = loopStationPlaybackRecorder->loopPlaybackCursor() % frameCount;
+	loopStationResumeFrame = frame;
+	loopStationResumeSampleTime = AudioEngine::audioSampleTimer;
+	LateStartAttemptStatus status = voiceSample->attemptLateSampleStart(&guide, sample, frame);
+	if (status == LateStartAttemptStatus::WAIT)
+		return false;
+	if (status == LateStartAttemptStatus::FAILURE) {
+		unassignVoiceSample(false);
+		return false;
+	}
+
+	// The ordinary voice is now ready at the provider's current frame. Keep the
+	// shared envelope and pitch shifter alive while transferring reader ownership.
+	doingLateStart = false;
+	setLoopStationPlaybackRecorder(nullptr);
+	return true;
 }
 
 void AudioClip::setupPlaybackBounds() {

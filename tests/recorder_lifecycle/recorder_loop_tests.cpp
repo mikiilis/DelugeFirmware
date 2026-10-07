@@ -148,6 +148,51 @@ TEST(LoopRecorder, CompletedGenerationStaysAliveUntilItsPlaybackAndDependentRead
 	CHECK_FALSE(source.pointerHeldElsewhere);
 }
 
+TEST(LoopRecorder, DurablePlaybackProviderWaitsForReplacementVoiceBeforeReleasingReader) {
+	SampleRecorder provider;
+	initialize(provider, 4);
+	provider.retainForCommit();
+	provider.retainLoopReader(); // AudioClip remains on this provider until its WAV voice is ready.
+	provider.status = RecorderStatus::COMPLETE;
+	provider.releaseCommit(true);
+	CHECK(provider.status == RecorderStatus::COMPLETE);
+	CHECK_TRUE(provider.hasLoopReaders());
+
+	bool replacementVoiceReady = false;
+	if (replacementVoiceReady)
+		provider.releaseLoopReader();
+	CHECK_TRUE(provider.hasLoopReaders());
+	CHECK(provider.status == RecorderStatus::COMPLETE);
+
+	replacementVoiceReady = true;
+	if (replacementVoiceReady)
+		provider.releaseLoopReader();
+	CHECK_FALSE(provider.hasLoopReaders());
+	CHECK(provider.status == RecorderStatus::AWAITING_DELETION);
+}
+
+TEST(LoopRecorder, AbortingAutomaticDubWithLinearParentReleasesItsSourceReader) {
+	SampleRecorder linearParent;
+	CHECK(SampleRecorderLifecycleTestAccess::initialize(linearParent) == Error::NONE);
+	linearParent.folderID = AudioRecordingFolder::CLIPS;
+	linearParent.recordingNumChannels = linearParent.sample->numChannels = 2;
+	linearParent.sample->byteDepth = 3;
+
+	SampleRecorder automaticDub;
+	initialize(automaticDub, 4, linearParent.sample, 3, &linearParent);
+	POINTERS_EQUAL(&linearParent, automaticDub.loopSourceRecorder());
+	CHECK_FALSE(linearParent.isLoopOverdub());
+	CHECK_TRUE(linearParent.hasLoopReaders());
+
+	automaticDub.abort();
+	CHECK(automaticDub.cardRoutine() == Error::NONE);
+	CHECK(linearParent.status == RecorderStatus::CAPTURING_DATA);
+	CHECK_FALSE(linearParent.hasLoopReaders());
+
+	linearParent.abort();
+	CHECK(linearParent.cardRoutine() == Error::NONE);
+}
+
 TEST(LoopRecorder, SixteenShortGenerationsRemainAudibleWithoutMaterializingAnyParentTail) {
 	SampleRecorder source;
 	initialize(source, 256);

@@ -126,9 +126,12 @@ public:
 	uint32_t loopStationResumeFrame = 0;
 	uint32_t loopStationResumeSampleTime = 0;
 	bool loopStationHasStarted = false;
+	bool loopStationPlaybackHandoffPending = false;
 	uint32_t loopStationPhaseZeroFrames() const;
 	uint32_t loopStationPhaseZeroTicks() const;
-	void resumeLoopStationAtFrame(ModelStackWithTimelineCounter* modelStack, uint32_t frame);
+	void resumeLoopStationAtFrame(ModelStackWithTimelineCounter* modelStack, uint32_t frame,
+	                              bool preservePlaybackState = false);
+	bool tryHandoffLoopStationPlayback(ModelStackWithTimelineCounter* modelStack);
 
 	VoicePriority voicePriority;
 

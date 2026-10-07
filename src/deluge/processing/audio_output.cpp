@@ -288,6 +288,10 @@ bool AudioOutput::renderGlobalEffectableForClip(ModelStackWithTimelineCounter* m
 	                             && recorder->status < RecorderStatus::FINISHED_CAPTURING_BUT_STILL_WRITING;
 	bool backingRenderedForCapture = false;
 	bool loopStation = activeClip && static_cast<AudioClip*>(activeClip)->loopStationSlotId != 0;
+	// Give a durable sample voice first chance to take over before selecting the
+	// retained recorder provider for this audio window.
+	if (loopStation && static_cast<AudioClip*>(activeClip)->loopStationPlaybackHandoffPending)
+		static_cast<AudioClip*>(activeClip)->tryHandoffLoopStationPlayback(modelStack);
 	auto* liveLoop = loopStation ? static_cast<AudioClip*>(activeClip)->loopStationPlaybackRecorder : nullptr;
 	int32_t loopAmplitudeStart = 0, loopAmplitudeEnd = 0;
 	// Audio outputs can have an activeClip while being muted. A Loop Station

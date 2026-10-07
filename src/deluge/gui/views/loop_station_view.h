@@ -62,9 +62,11 @@ private:
 	AudioClip* ensureBackingClip(deluge::loop_station::SlotId slot);
 	void clearBackingClip(deluge::loop_station::SlotId slot);
 	void processPendingCommits();
-	deluge::loop_station::Error rollbackGenerations(size_t slot, deluge::loop_station::Error failure);
+	deluge::loop_station::Error rollbackGenerations(size_t slot, deluge::loop_station::Error failure,
+	                                                uint32_t& logicalSampleFrame, ::Error& recoveryError);
+	uint32_t currentLogicalSampleFrame(size_t slot, AudioClip& clip) const;
 	void serviceBackgroundWork();
-	void resumeCommittedClip(deluge::loop_station::SlotId slot);
+	void resumeCommittedClip(deluge::loop_station::SlotId slot, uint32_t logicalSampleFrame);
 	RGB palette(deluge::loop_station::PadColour colour) const;
 	RGB destinationColour(deluge::loop_station::PendingAction action) const;
 	deluge::loop_station::Error preflight(deluge::loop_station::SlotId slot, bool overdub) override;
@@ -96,6 +98,11 @@ private:
 	    generations_{};
 	std::array<uint8_t, deluge::loop_station::kTrackCount> generationHead_{};
 	std::array<uint8_t, deluge::loop_station::kTrackCount> generationCount_{};
+	struct RollbackFailure {
+		deluge::loop_station::Error initiating = deluge::loop_station::Error::NONE;
+		::Error recovery = ::Error::NONE;
+	};
+	std::array<RollbackFailure, deluge::loop_station::kTrackCount> rollbackFailures_{};
 	void discardGenerations(size_t slot);
 	std::array<uint8_t, deluge::loop_station::kTrackCount> centreHeldMask_{};
 	std::array<uint16_t, deluge::loop_station::kTrackCount> borderHeldMask_{};

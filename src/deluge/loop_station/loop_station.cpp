@@ -405,8 +405,12 @@ void Engine::stopAll(Transport const& transport) {
 	for (size_t i = 0; i < runtime_.size(); ++i) {
 		auto slot = static_cast<SlotId>(i);
 		auto& runtime = runtime_[i];
-		if (runtime.finishingCapture)
+		if (runtime.finishingCapture) {
+			// Commit and rollback delegates may yield to audio or storage. Keep a
+			// stop pressed during that interval so completion cannot restart it.
+			runtime.stopAfterCapture = true;
 			continue;
+		}
 		if (runtime.event.action == PendingAction::START_RECORDING
 		    || runtime.event.action == PendingAction::RETRIGGER) {
 			runtime.event = {};
@@ -626,8 +630,10 @@ void Engine::completeCapture(SlotId slot, bool overdub, uint32_t length) {
 
 void Engine::stop(SlotId slot, Transport const& transport, bool forceImmediate) {
 	auto& runtime = track(slot);
-	if (runtime.finishingCapture)
+	if (runtime.finishingCapture) {
+		runtime.stopAfterCapture = true;
 		return;
+	}
 	if (!forceImmediate) {
 		requestAction(slot, PendingAction::STOP, transport, model_.global.stopAction);
 		return;

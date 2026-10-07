@@ -226,6 +226,17 @@ Error LoopStationRevisionHistory::restoreCurrent(AudioClip& clip) {
 	if (revision) {
 		Error error = revision->loadSample(true);
 		if (error != Error::NONE || !revision->sample) {
+			// Do not leave the rejected working WAV attached when its durable
+			// predecessor is unavailable. Keep the history entry and path so a
+			// later recovery attempt can load it again.
+			clip.unassignVoiceSample(true);
+			clip.sampleHolder.setAudioFile(nullptr);
+			clip.sampleHolder.filePath.clear();
+			clip.sampleHolder.startPos = 0;
+			clip.sampleHolder.endPos = 0;
+			clip.loopStationSampleZeroTicks = 0;
+			clip.loopStationSampleZeroFrames = 0;
+			clip.renderData.xScroll = -1;
 			return error == Error::NONE ? Error::FILE_NOT_FOUND : error;
 		}
 		revision->apply(clip);
