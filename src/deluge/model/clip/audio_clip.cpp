@@ -64,6 +64,7 @@ AudioClip::AudioClip() : Clip(ClipType::AUDIO) {
 }
 
 AudioClip::~AudioClip() {
+	setLoopStationPlaybackRecorder(nullptr);
 	if (recorder) {
 		FREEZE_WITH_ERROR("E278");
 	}
@@ -73,6 +74,17 @@ AudioClip::~AudioClip() {
 	// ConsequenceClipExistence. Somehow neither abortRecording() nor finishLinearRecording() would be being called when
 	// some other AudioClip becomes the Output's activeClip. These get called in slightly roundabout ways, so this seems
 	// the most likely. I've added some further error code diversification.
+}
+
+void AudioClip::setLoopStationPlaybackRecorder(SampleRecorder* next) {
+	if (next == loopStationPlaybackRecorder)
+		return;
+	if (next)
+		next->retainLoopReader();
+	auto* previous = loopStationPlaybackRecorder;
+	loopStationPlaybackRecorder = next;
+	if (previous)
+		previous->releaseLoopReader();
 }
 
 // Will replace the Clip in the modelStack, if success.
@@ -123,7 +135,7 @@ void AudioClip::abortRecording() {
 	renderData.xScroll = -1; // Force re-render
 
 	// A Loop Station commit owns the recorder across detachment and rollback.
-	recorder->pointerHeldElsewhere = recorder->isCommitPending();
+	recorder->pointerHeldElsewhere = recorder->isCommitPending() || recorder->hasLoopReaders();
 
 	recorder->abort();
 	// Stop routing audio to a rejected recorder immediately. Its source/cache
@@ -182,11 +194,15 @@ Error AudioClip::beginLinearRecording(ModelStackWithTimelineCounter* modelStack,
 	    currentPlaybackMode->wantsToDoTempolessRecord(modelStack->getTimelineCounter()->getLastProcessedPos());
 
 	// recorder needs more config settings
-	recorder = AudioEngine::getNewRecorder(numChannels, AudioRecordingFolder::CLIPS, inputChannel, true,
-	                                       (loopStationSlotId ? false : shouldRecordMarginsNow), buttonPressLatency,
-	                                       false, outputRecordingFrom, {.neverUseThreshold = not tempoless_recording});
+	recorderAdmissionDenied = false;
+	::Error recorderCreationError = ::Error::NONE;
+	recorder = AudioEngine::getNewRecorder(
+	    numChannels, AudioRecordingFolder::CLIPS, inputChannel, true,
+	    (loopStationSlotId ? false : shouldRecordMarginsNow), buttonPressLatency, false, outputRecordingFrom,
+	    {.neverUseThreshold = not tempoless_recording, .loopStation = loopStationSlotId != 0}, &recorderAdmissionDenied,
+	    &recorderCreationError);
 	if (!recorder) {
-		return Error::INSUFFICIENT_RAM;
+		return recorderCreationError == ::Error::NONE ? Error::INSUFFICIENT_RAM : recorderCreationError;
 	}
 	recorder->autoDeleteWhenDone = true;
 	recorder->allowNormalization = shouldNormalize;
@@ -201,7 +217,8 @@ void AudioClip::finishLinearRecording(ModelStackWithTimelineCounter* modelStack,
 
 	// Got to check reachedMaxFileSize here, cos that'll go true a bit before cardRoutine() sets status to ERROR
 	// also check if we haven't captured any samples (which can happen with threshold recording)
-	if (recorder->status == RecorderStatus::ABORTED || recorder->reachedMaxFileSize || !recorder->numSamplesCaptured) {
+	if (recorder->status == RecorderStatus::ABORTED || recorder->reachedMaxFileSize
+	    || (!recorder->numSamplesCaptured && !(recorder->isLoopOverdub() && recorder->hasCapturedLoopInput()))) {
 		abortRecording();
 		return;
 	}
@@ -217,7 +234,7 @@ void AudioClip::finishLinearRecording(ModelStackWithTimelineCounter* modelStack,
 		}
 	}
 
-	recorder->pointerHeldElsewhere = recorder->isCommitPending();
+	recorder->pointerHeldElsewhere = recorder->isCommitPending() || recorder->hasLoopReaders();
 
 	recorder->endSyncedRecording(buttonLatencyForTempolessRecord); // Must call before setSample(), cos it sets up
 	                                                               // important stuff like the sample length
@@ -321,6 +338,8 @@ void AudioClip::processCurrentPos(ModelStackWithTimelineCounter* modelStack, uin
 	if (recorder && recorder->status == RecorderStatus::ABORTED) {
 		abortRecording();
 	}
+	if (loopStationPlaybackRecorder)
+		return; // The live generation owns its sample clock and loop boundaries.
 
 	if (loopStationSlotId && loopStationHasStarted && !voiceSample
 	    && modelStack->song->loopStation.tracks[loopStationSlotId - 1].settings.playback
@@ -1408,7 +1427,7 @@ void AudioClip::clear(Action* action, ModelStackWithTimelineCounter* modelStack,
 	// if clearSequenceAndMPE is true, clear sample
 	if (clearSequenceAndMPE) {
 		// If recording, stop that - but only if we're not doing tempoless recording
-		if (recorder) {
+		if (recorder && recorder->status < RecorderStatus::FINISHED_CAPTURING_BUT_STILL_WRITING) {
 			if (!playbackHandler.isEitherClockActive()) {
 				abortRecording();
 			}

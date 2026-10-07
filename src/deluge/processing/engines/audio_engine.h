@@ -164,9 +164,8 @@ LiveInputBuffer* getOrCreateLiveInputBuffer(OscType inputType, bool mayCreate);
 void slowRoutine();
 void doRecorderCardRoutines();
 
-// Shared admission limit for every recorder user. Recorders remain charged
-// while they are capturing or finalizing, which prevents rapid Loop Station
-// gestures from stacking unbounded SD writers behind the active captures.
+// Shared recorder admission. Retained objects stay bounded through finalization;
+// Loop Station channel units are released when input capture actually ends.
 constexpr uint16_t kRecorderChannelCapacity = 16;
 uint16_t getRecorderChannelUsage();
 bool hasRecorderChannelCapacity(uint8_t numChannels);
@@ -177,7 +176,8 @@ void registerSideChainHit(int32_t strength);
 
 SampleRecorder* getNewRecorder(int32_t numChannels, AudioRecordingFolder folderID, AudioInputChannel mode,
                                bool keepFirstReasons, bool writeLoopPoints, int32_t buttonPressLatency,
-                               bool shouldNormalize, Output* outputRecordingFrom, RecorderConfig config = {});
+                               bool shouldNormalize, Output* outputRecordingFrom, RecorderConfig config = {},
+                               bool* admissionDenied = nullptr, Error* creationError = nullptr);
 void discardRecorder(SampleRecorder* recorder);
 bool isAnyInternalRecordingHappening();
 

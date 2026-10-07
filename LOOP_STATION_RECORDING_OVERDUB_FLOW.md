@@ -4,6 +4,12 @@ This describes the implementation in this worktree. It separates musical timing,
 audio capture, SD finalization, and revision publication because those operations
 finish at different times.
 
+Closing an overdub seals its input immediately and detaches capture from saving.
+Playback retains that generation, and the next overdub can read its recorded
+prefix plus its retained source for the untouched tail. It does not wait for a
+cumulative WAV to finish. Up to 16 sealed generations per slot publish in order;
+each take keeps its own undo revision without replacing newer live audio.
+
 ## Components
 
 | Component | Responsibility |
@@ -18,7 +24,7 @@ finish at different times.
 Four milestones must not be confused:
 
 1. **Input closed:** no later performer input can enter the take.
-2. **Audio materialized:** every frame of the replacement WAV exists in RAM.
+2. **Audio materialized:** every frame exists in the working cache or WAV.
 3. **WAV complete:** dirty clusters, header, and file close succeeded on SD.
 4. **Revision published:** the staged WAV entered undo history.
 
@@ -92,8 +98,9 @@ Preflight returns a typed error:
 - recorder or SD setup failure → the mapped allocation/storage error
 
 The recorder pool has 16 channels. Mono physical first takes cost one channel;
-stereo first takes and all overdubs cost two. Capacity remains owned until the
-recorder's commit hold is released.
+stereo first takes and all overdubs cost two. Sealed/background recorders do not
+consume capture channels. Pending-generation count and retained ancestry are
+bounded separately; exhausting those resources rejects a new take explicitly.
 
 ## First take
 
@@ -140,13 +147,13 @@ error can publish.
 
 ### Setup
 
-1. Ensure the current sample voice exists and read its physical frame.
+1. Read the live generation's physical frame, or the sample voice for a first overdub.
 2. Convert that frame to logical phrase phase using `sampleZeroFrames`.
 3. Create a fixed-length 24-bit stereo recorder.
 4. Retain the current source Sample, pin up to four raw-source clusters ahead,
    by walking byte ranges through frame boundaries and loop wrap,
    and allocate an eight-entry destination cache plus one cluster-sized SD write
-   snapshot.
+   snapshot and one cluster-sized pending-input buffer.
 5. Rotate source frame zero to the overdub start and enter `OVERDUBBING`.
 
 ### Per-buffer mixer
@@ -164,9 +171,20 @@ write top 24 bits of result into the destination cache
 ```
 
 This keeps a silent overdub byte-stable at 24-bit storage precision and prevents
-playback transpose or attack envelopes from accumulating across overdubs. Missing
-source/destination clusters fail the provisional take rather than publishing an
-input-only replacement. No SD write occurs in this per-frame loop.
+playback transpose or attack envelopes from accumulating across overdubs. A
+missing working frame at its audible deadline fails the provisional take rather
+than substituting older audio. No SD write or allocation occurs in this
+per-frame loop.
+
+Source prefetch is independent from the active Audio Clip voice. A pending read
+is distinct from invalid backing and an SD operation failure. While source or
+destination writes await their cache, input is retained in a preallocated FIFO
+and mixed against the raw source when ready. A late-starting playback voice does
+not latch a capture error. Closing input retains already accepted frames, and
+completion waits for them to drain. FIFO exhaustion reports insufficient RAM;
+it never silently drops accepted input or stores an unverified playback buffer.
+Catch-up work is limited to 128 queued frames per service call plus one per new
+audio frame.
 
 The recorder also returns the current cumulative backing to audible playback on
 **every pass**, including while an early-stop tail is still copying. The production
@@ -188,7 +206,7 @@ than one full pass was captured, card service copies the untouched tail from the
 retained source WAV in batches of at most 128 frames. Source or destination data
 that is still loading causes a retry without advancing the cursor.
 
-Once every frame exists, the recorder moves to finalization. Card service drains
+The recorder enters background finalization as soon as input is sealed. Card service drains
 dirty cache entries one at a time, using the pinned snapshot so audio can dirty a
 live entry while a write yields. Exact seek and write lengths are verified; the
 file is closed before the recorder becomes Complete.
@@ -196,23 +214,32 @@ file is closed before the recorder becomes Complete.
 One continuous overdub creates one cumulative history revision, regardless of
 how many times it wrapped.
 
+If the performer requests another overdub while an early-stop tail is still being
+materialized, the engine starts a dependent capture on that gesture. Source
+resolution follows sealed generations to the recorded prefix or original tail;
+it never treats an unmaterialized destination as silence. Live playback owns its
+sample cursor independently of VoiceSample startup and save completion.
+
 ## Commit, rollback, and SD errors
 
 The old durable revision, staged revision, recorder hold, and any dependent dub
 retain their Samples until resolution. On completion:
 
-1. Claim and clear the pending recorder pointer.
-2. Publish the staged revision, or reject it on any recorder/history failure.
-3. If the parent failed, close and abort a dependent overdub first.
-4. Detach provisional playback before rollback.
-5. Restore the last durable revision, or the undoable Empty cursor.
-6. Resume only if the track should remain audible.
-7. Notify the engine and release the recorder hold.
+1. Examine the oldest pending generation under the slot's re-entry guard.
+2. Publish its saved revision without applying it to the live clip.
+3. On failure, detach provisional playback, abort dependent capture, discard
+   unpublished generations, and restore the last durable revision.
+4. Resume after rollback only if the track should remain audible.
+5. Notify the engine and release the commit hold. Playback and source readers
+   retain separate holds, so publication cannot delete a recorder they still use.
 
 Seek, short write, sync, close, card-full, card-missing, no-filesystem, and
 write-protected errors retain their specific cause. A failed revision is never
 published. Cleanup waits for voice, history, recorder, and dependent-source
 references before deleting a provisional Sample or temporary WAV.
+A recorder whose revision has already published is durable: a later playback
+prefetch failure retires the live provider and reports the error, but never sends
+that WAV through aborted-recording cleanup or unlinks it.
 
 ## Stop All, transport stop, and exit
 
@@ -228,6 +255,10 @@ finish guard is active. Tail copying and commit publication continue.
 **Exit** cancels queued starts, closes overdub input, and finishes first takes with
 Stop Action. It suppresses automatic `REC > DUB` and waits until active captures,
 tail copies, scheduled actions, and commits drain.
+Save and Load requests during capture use the same drain, retain the initiating
+button gesture, and open the requested screen once the drain completes. On exit,
+the completed live generation hands its phase back to ordinary clip playback
+before releasing its reader hold.
 
 ## Transpose and song persistence
 

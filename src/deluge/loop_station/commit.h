@@ -5,6 +5,24 @@
 #include "model/sample/sample_recorder.h"
 
 namespace deluge::loop_station {
+// Coordinate ordered generation publication without knowing about the view's
+// queue or revision types. All callbacks may yield and re-enter this function.
+template <typename Publish, typename Rollback, typename Notify>
+void resolveGenerationCommit(bool& slotBusy, bool success, Publish publish, Rollback rollback, Notify notify) {
+	if (slotBusy)
+		return;
+	struct Guard {
+		bool& busy;
+		Guard(bool& flag) : busy(flag) { busy = true; }
+		~Guard() { busy = false; }
+	} guard(slotBusy);
+	if (success)
+		success = publish();
+	if (!success)
+		rollback();
+	notify(success);
+}
+
 // All callbacks can yield to audio/card work. The slot stays busy and the parent
 // retains commit ownership until history, playback and the engine agree.
 template <typename Publish, typename Dependent, typename Quiesce, typename Rollback, typename Notify>

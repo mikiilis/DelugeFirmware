@@ -348,6 +348,7 @@ Error SampleRecorder::createNextCluster() {
 // Gets called when we've captured all the samples of audio that we wanted - either as a direct result of user
 // action, or after being fed a few more samples to make up for latency.
 void SampleRecorder::finishCapturing() {
+	recorderBudgetLease_.finishCapture();
 	status = RecorderStatus::FINISHED_CAPTURING_BUT_STILL_WRITING;
 	traceLifecycle(LifecycleEvent::FINISHED);
 	if (getRootUI()) {
@@ -555,11 +556,7 @@ doFinishCapturing:
 
 void SampleRecorder::endSyncedRecording(int32_t buttonLatencyForTempolessRecording) {
 	if (isLoopOverdub()) {
-		if (!loopOverdubReady()) {
-			abort();
-			return;
-		}
-		finishCapturing();
+		sealLoopOverdub();
 		return;
 	}
 

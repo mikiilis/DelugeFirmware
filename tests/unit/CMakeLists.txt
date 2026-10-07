@@ -86,8 +86,9 @@ add_executable(UnitTests
         default_name_tests.cpp
         rgb_tests.cpp
         notes_state_tests.cpp
-		loop_station_integration_tests.cpp
-        loop_station_action_tests.cpp
+        loop_station_integration_tests.cpp
+		loop_station_action_tests.cpp
+        recorder_budget_tests.cpp
 )
 add_test(NAME UnitTests
         COMMAND UnitTests)

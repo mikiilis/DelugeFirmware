@@ -326,7 +326,11 @@ void Engine::centrePressed(SlotId slot, Transport const& transport, uint32_t ges
 			stop(slot, transport);
 		else if (model_.tracks[indexOf(slot)].settings.playback == PlaybackMode::ONE_SHOT)
 			requestAction(slot, PendingAction::RETRIGGER, transport, model_.global.startAction);
-		else if (!runtime.finishingOverdub) {
+		else {
+			if (runtime.finishingOverdub)
+				serviceAudioCompletion(transport);
+			if (runtime.finishingOverdub || runtime.state == TrackState::ERROR)
+				return;
 			runtime.overdubStartedByLastTap = true;
 			execute(slot, PendingAction::START_OVERDUB, transport, transport.tick,
 			        (static_cast<uint64_t>(transport.tick) << 16) | transport.fractionQ16);
@@ -540,6 +544,7 @@ void Engine::finishCapture(SlotId slot, bool overdub, uint32_t tick, uint32_t re
 		runtime.event = {};
 	if (finish.asynchronous) {
 		runtime.committingLength = committedLength;
+		++runtime.pendingCommits;
 		runtime.finishingOverdub = false;
 		if (!overdub) {
 			runtime.phraseLength = committedLength;
@@ -698,7 +703,7 @@ void Engine::serviceAudioCompletion(Transport const& transport) {
 			if (r.phraseLength)
 				stop(slot, transport, true);
 		}
-		if (r.finishingOverdub && !r.committingLength && (!delegate_ || delegate_->overdubReady(slot))) {
+		if (r.finishingOverdub && (!delegate_ || delegate_->overdubReady(slot))) {
 			finishCapture(slot, true, transport.tick, transport.tick);
 		}
 		if (r.state == TrackState::PLAYING && !r.finishingOverdub && !r.committingLength
@@ -862,8 +867,12 @@ void Engine::notifyCommitComplete(SlotId slot, bool success, Error error) {
 	auto& runtime = track(slot);
 	if (!runtime.committingLength)
 		return;
-	runtime.committingLength = 0;
+	if (runtime.pendingCommits)
+		--runtime.pendingCommits;
+	if (!runtime.pendingCommits || !success)
+		runtime.committingLength = 0;
 	if (!success) {
+		runtime.pendingCommits = 0;
 		fail(slot, error == Error::NONE ? Error::SD_CARD : error);
 		return;
 	}

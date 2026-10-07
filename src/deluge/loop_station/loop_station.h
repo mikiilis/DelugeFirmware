@@ -240,6 +240,7 @@ struct TrackRuntime {
 	// Input is closed; untouched first-pass backing is still being materialized.
 	bool finishingOverdub = false;
 	uint32_t committingLength = 0;
+	uint8_t pendingCommits = 0;
 	uint32_t currentRevision = 0;
 	bool redoAvailable = false;
 	bool undoAvailable = false;

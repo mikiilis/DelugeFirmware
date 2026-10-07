@@ -53,7 +53,8 @@ struct LoopStationRevisionHistory {
 	bool seedFromClip(AudioClip& clip);
 	// Reserve all metadata needed by the next successful capture before its
 	// recorder starts. This keeps allocation failure on the safe side of commit.
-	bool prepareAppend(AudioClip& clip, bool preserveCurrent);
+	bool prepareAppend(AudioClip& clip, bool preserveCurrent, size_t pending = 0);
+	bool publishGeneration(LoopStationRevision&& revision);
 	void appendCurrent(AudioClip& clip);
 	bool stageCurrent(AudioClip& clip);
 	bool publishStaged(AudioClip& clip);

@@ -12,9 +12,19 @@ namespace deluge::loop_station {
 // Record before audible envelope, playback fade, monitoring and pitch processing.
 template <typename Pitch>
 void renderAudio(std::span<StereoSample> backing, std::span<const StereoSample> input, SampleRecorder* recorder,
-                 int32_t amplitudeStart, int32_t amplitudeEnd, int32_t playbackGain, bool monitor, Pitch&& pitch) {
-	if (recorder)
-		recorder->processLoopOverdub(backing, input);
+                 int32_t amplitudeStart, int32_t amplitudeEnd, int32_t playbackGain, bool monitor, Pitch&& pitch,
+                 bool backingRendered = true) {
+	if (!backingRendered)
+		std::fill(backing.begin(), backing.end(), StereoSample{});
+	if (recorder) {
+		// A retained raw source owns capture readiness independently of the
+		// playback voice. Only legacy callers need a rendered backing buffer.
+		if (!recorder->hasLoopSource() && !backingRendered && recorder->captureOutputInputActive)
+			recorder->captureOutputBackingMissing = true;
+		recorder->processLoopOverdub(backing, input, false, true);
+		if (recorder->captureOutputBackingMissing)
+			std::fill(backing.begin(), backing.end(), StereoSample{});
+	}
 	int64_t amplitude = amplitudeStart;
 	int32_t increment = backing.empty() ? 0 : (int64_t(amplitudeEnd) - amplitudeStart) / int64_t(backing.size());
 	for (size_t i = 0; i < backing.size(); ++i) {

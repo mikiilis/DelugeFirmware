@@ -159,6 +159,8 @@ PLACE_SDRAM_BSS char paramManagerForSamplePreviewMemory[sizeof(ParamManagerForTi
 PLACE_SDRAM_BSS char sampleForPreviewMemory[sizeof(SoundDrum)];
 
 SampleRecorder* firstRecorder = nullptr;
+deluge::RecorderBudget recorderBudget{};
+static_assert(deluge::RecorderBudget::kMaxChannelUnits == kRecorderChannelCapacity);
 
 // Let's keep these grouped - the stuff we're gonna access regularly during audio rendering
 int32_t cpuDireness = 0;
@@ -1560,40 +1562,48 @@ void slowRoutine() {
 }
 
 uint16_t getRecorderChannelUsage() {
-	uint16_t used = 0;
-	for (SampleRecorder* recorder = firstRecorder; recorder; recorder = recorder->next) {
-		// A recorder handed back for deletion has no remaining capture or SD work.
-		if (recorder->status != RecorderStatus::AWAITING_DELETION) {
-			used += std::clamp<uint16_t>(recorder->recordingNumChannels, 1, 2);
-		}
-	}
-	return used;
+	return recorderBudget.channelUsage();
 }
 
 bool hasRecorderChannelCapacity(uint8_t numChannels) {
 	auto requested = std::clamp<uint16_t>(numChannels, 1, 2);
-	return getRecorderChannelUsage() + requested <= kRecorderChannelCapacity;
+	return recorderBudget.canAcquire(static_cast<uint8_t>(requested));
 }
 
 // will need to take in the config argument
 SampleRecorder* getNewRecorder(int32_t numChannels, AudioRecordingFolder folderID, AudioInputChannel mode,
                                bool keepFirstReasons, bool writeLoopPoints, int32_t buttonPressLatency,
-                               bool shouldNormalize, Output* outputRecordingFrom, RecorderConfig config) {
+                               bool shouldNormalize, Output* outputRecordingFrom, RecorderConfig config,
+                               bool* admissionDenied, Error* creationError) {
 	Error error;
-	if (!hasRecorderChannelCapacity(static_cast<uint8_t>(numChannels))) {
+	if (admissionDenied)
+		*admissionDenied = false;
+	if (creationError)
+		*creationError = Error::NONE;
+	auto lease = recorderBudget.tryAcquire(static_cast<uint8_t>(numChannels), config.loopStation);
+	if (!lease) {
+		if (admissionDenied)
+			*admissionDenied = true;
+		if (creationError)
+			*creationError = Error::INSUFFICIENT_RAM;
 		return nullptr;
 	}
 
 	void* recorderMemory = GeneralMemoryAllocator::get().allocMaxSpeed(sizeof(SampleRecorder));
 	if (!recorderMemory) {
+		if (creationError)
+			*creationError = Error::INSUFFICIENT_RAM;
 		return nullptr;
 	}
 
 	SampleRecorder* newRecorder = new (recorderMemory) SampleRecorder();
+	newRecorder->setRecorderBudgetLease(std::move(*lease));
 	error = newRecorder->setup(numChannels, mode, keepFirstReasons, writeLoopPoints, folderID, buttonPressLatency,
 	                           outputRecordingFrom, config);
 	if (error != Error::NONE) {
 errorAfterAllocation:
+		if (creationError)
+			*creationError = error;
 		newRecorder->~SampleRecorder();
 		delugeDealloc(recorderMemory);
 		return nullptr;
@@ -1602,11 +1612,15 @@ errorAfterAllocation:
 	if (mode == AudioInputChannel::SPECIFIC_OUTPUT) {
 		if (!outputRecordingFrom) {
 			D_PRINTLN("Specific output recorder with no output provided");
+			if (admissionDenied)
+				*admissionDenied = true;
 			goto errorAfterAllocation;
 		}
 		bool success = outputRecordingFrom->addRecorder(newRecorder);
 		if (!success) {
 			D_PRINTLN("Tried to attach to an occupied output");
+			if (admissionDenied)
+				*admissionDenied = true;
 			goto errorAfterAllocation;
 		}
 	}

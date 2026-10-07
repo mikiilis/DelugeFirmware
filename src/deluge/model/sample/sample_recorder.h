@@ -22,10 +22,12 @@
 #include "dsp/envelope_follower/absolute_value.h"
 #include "dsp/stereo_sample.h"
 #include "fatfs/fatfs.hpp"
+#include "processing/engines/recorder_budget.h"
 #include <array>
 #include <cstddef>
 #include <gsl/gsl>
 #include <optional>
+#include <utility>
 
 enum class MonitoringAction {
 	NONE = 0,
@@ -50,12 +52,14 @@ class AudioClip;
 class Output;
 struct RecorderConfig {
 	bool neverUseThreshold = false;
+	bool loopStation = false;
 };
 
 class SampleRecorder {
 public:
 	SampleRecorder() = default;
 	~SampleRecorder();
+	void setRecorderBudgetLease(deluge::RecorderBudget::Lease&& lease) { recorderBudgetLease_ = std::move(lease); }
 	Error setup(int32_t newNumChannels, AudioInputChannel newMode, bool newKeepingReasons,
 	            bool shouldRecordExtraMargins, AudioRecordingFolder newFolderID, int32_t buttonPressLatency,
 	            Output* outputRecordingFrom, RecorderConfig config = {});
@@ -64,17 +68,38 @@ public:
 	Error cardRoutine();
 	// A private cumulative working WAV. Fixed cache size, unchanged durable base.
 	Error setupLoopOverdub(uint32_t frames, Sample* source = nullptr, uint32_t sourceStart = 0,
-	                       uint32_t sourceFrame = 0);
+	                       uint32_t sourceFrame = 0, SampleRecorder* sourceRecorder = nullptr);
+	void retainLoopReader();
+	void releaseLoopReader();
+	void sealLoopOverdub();
+	[[nodiscard]] bool hasCapturedLoopInput() const { return numSamplesCaptured || loopPendingCount_; }
+	[[nodiscard]] uint32_t loopPlaybackCursor() const { return loopPlaybackCursor_; }
+	void setLoopPlaybackCursor(uint32_t frame) {
+		loopPlaybackCursor_ = frame % loopFrames_;
+		loopPlaybackFramesRendered_ = 0;
+	}
+	[[nodiscard]] bool loopPlaybackEnded() const { return loopFrames_ && loopPlaybackFramesRendered_ >= loopFrames_; }
+	[[nodiscard]] SampleRecorder* loopSourceRecorder() const { return loopSourceRecorder_; }
+	[[nodiscard]] uint32_t loopSourcePlaybackFrame() const {
+		return (loopSourceFrame_ + loopPlaybackCursor_) % loopFrames_;
+	}
+	[[nodiscard]] uint32_t loopGenerationDepth() const {
+		uint32_t depth = 0;
+		for (auto* parent = this; parent; parent = parent->loopSourceRecorder_)
+			++depth;
+		return depth;
+	}
 	void processLoopOverdub(std::span<StereoSample> backing, std::span<const StereoSample> input,
-	                        bool backgroundCopy = false);
+	                        bool backgroundCopy = false, bool audibleDeadline = false);
 	void stopLoopOverdubInput() {
 		captureOutputInputActive = false;
 		loopEnding_ = true;
 	}
 	[[nodiscard]] bool loopOverdubReady() const {
-		return loopFrames_ && loopEnding_ && numSamplesCaptured >= loopFrames_;
+		return loopFrames_ && loopEnding_ && !loopPendingCount_ && numSamplesCaptured >= loopFrames_;
 	}
 	[[nodiscard]] bool isLoopOverdub() const { return loopFrames_ != 0; }
+	[[nodiscard]] bool hasLoopSource() const { return loopSource_ != nullptr; }
 	[[nodiscard]] uint32_t loopFrameCursor() const { return loopFrameCursor_; }
 
 	void endSyncedRecording(int32_t buttonLatencyForTempolessRecording);
@@ -91,6 +116,8 @@ public:
 	void retainForCommit();
 	void releaseCommit(bool success);
 	[[nodiscard]] bool isCommitPending() const { return commitPending_; }
+	[[nodiscard]] bool hasLoopReaders() const { return loopReaders_ != 0; }
+	[[nodiscard]] bool isPublished() const { return published_; }
 	enum class LifecycleEvent : uint8_t {
 		CREATED,
 		RETAINED,
@@ -208,6 +235,7 @@ public:
 	std::optional<FatFS::File> file;
 
 private:
+	deluge::RecorderBudget::Lease recorderBudgetLease_;
 #ifdef IN_UNIT_TESTS
 	friend struct SampleRecorderLifecycleTestAccess;
 #endif
@@ -221,26 +249,56 @@ private:
 	struct LoopSourceCacheEntry {
 		Cluster* cluster = nullptr;
 		uint32_t index = 0;
+		Sample* sample = nullptr;
 	};
 	std::array<LoopSourceCacheEntry, 4> loopSourceCache_{};
 	Sample* loopSource_ = nullptr;
+	SampleRecorder* loopSourceRecorder_ = nullptr;
+	uint16_t loopReaders_ = 0;
+	uint16_t loopDependentReaders_ = 0;
+	bool loopSealed_ = false;
+	uint32_t loopSealedPrefix_ = 0;
 	uint32_t loopSourceStart_ = 0;
 	uint32_t loopSourceFrame_ = 0;
 	uint32_t loopFrames_ = 0;
 	uint32_t loopFrameCursor_ = 0;
 	uint32_t loopPlaybackCursor_ = 0;
+	uint32_t loopPlaybackFramesRendered_ = 0;
 	bool loopEnding_ = false;
 	bool loopIOActive_ = false;
 	bool loopPreparing_ = false;
+	// Input which arrived before an asynchronous source read completed. This
+	// storage is reserved at setup, never allocated by the audio callback.
+	struct LoopPendingFrame {
+		StereoSample backing;
+		StereoSample input;
+	};
+	LoopPendingFrame* loopPendingFrames_ = nullptr;
+	uint32_t loopPendingCapacity_ = 0;
+	uint32_t loopPendingHead_ = 0;
+	uint32_t loopPendingCount_ = 0;
+	bool loopDrainingInput_ = false;
+	bool loopFrameReady();
+	void drainLoopInput(uint32_t budget = 128);
 	void* loopWriteSnapshot_ = nullptr;
 	Error prepareLoopClusters();
 	Error prepareLoopSourceClusters();
 	Error copyLoopRemainder();
-	Error readLoopSourceFrame(uint32_t frame, StereoSample& destination);
+	enum class LoopReadResult : uint8_t { READY, PENDING, INVALID };
+	struct LoopSourceLocation {
+		Sample* sample = nullptr;
+		uint32_t frame = 0;
+		uint32_t count = 0;
+	};
+	LoopReadResult locateLoopSource(uint32_t frame, LoopSourceLocation& location);
+	LoopReadResult readLoopSourceFrame(uint32_t frame, StereoSample& destination);
 	Error serviceLoopWrites();
 	void releaseLoopClusters();
 	LoopCacheEntry* loopCacheAt(uint32_t index);
 	bool commitPending_ = false;
+	// Publication makes the WAV durable. Reader lifetime and playback health
+	// must never route a published file through aborted-recording cleanup.
+	bool published_ = false;
 	bool writerResourcesReleased_ = false;
 	bool cleanupActive_ = false;
 	bool cleanupDeferred_ = false;

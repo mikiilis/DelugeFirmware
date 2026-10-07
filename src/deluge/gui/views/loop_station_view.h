@@ -7,6 +7,7 @@
 
 #include "gui/ui/root_ui.h"
 #include "loop_station/loop_station.h"
+#include "loop_station/revision.h"
 #include "model/clip/clip_minder.h"
 #include "util/d_string.h"
 
@@ -54,12 +55,14 @@ private:
 	void updateModControllableTarget();
 	void dispatchCentreGesture(deluge::loop_station::SlotId slot, uint32_t pressSample);
 	void requestExit();
+	void completeExit();
 	void disableMonitoring();
 	void restoreBoundPhrases();
 	AudioClip* backingClip(deluge::loop_station::SlotId slot) const;
 	AudioClip* ensureBackingClip(deluge::loop_station::SlotId slot);
 	void clearBackingClip(deluge::loop_station::SlotId slot);
 	void processPendingCommits();
+	deluge::loop_station::Error rollbackGenerations(size_t slot, deluge::loop_station::Error failure);
 	void serviceBackgroundWork();
 	void resumeCommittedClip(deluge::loop_station::SlotId slot);
 	RGB palette(deluge::loop_station::PadColour colour) const;
@@ -84,6 +87,16 @@ private:
 	// accepted or rejected its asynchronously finalized revision.
 	std::array<uint32_t, deluge::loop_station::kTrackCount> overdubStartFrames_{};
 	std::array<SampleRecorder*, deluge::loop_station::kTrackCount> pendingCommitRecorders_{};
+	struct PendingGeneration {
+		SampleRecorder* recorder = nullptr;
+		LoopStationRevision revision;
+	};
+	static constexpr size_t kPendingGenerationCapacity = 16;
+	std::array<std::array<PendingGeneration, kPendingGenerationCapacity>, deluge::loop_station::kTrackCount>
+	    generations_{};
+	std::array<uint8_t, deluge::loop_station::kTrackCount> generationHead_{};
+	std::array<uint8_t, deluge::loop_station::kTrackCount> generationCount_{};
+	void discardGenerations(size_t slot);
 	std::array<uint8_t, deluge::loop_station::kTrackCount> centreHeldMask_{};
 	std::array<uint16_t, deluge::loop_station::kTrackCount> borderHeldMask_{};
 	std::array<bool, deluge::loop_station::kTrackCount> centreGestureActive_{};
@@ -94,6 +107,9 @@ private:
 	RecordingMode recordingModeBefore_{};
 	uint64_t lastAudioPositionQ16_ = 0;
 	bool exitRequested_ = false;
+	std::optional<deluge::hid::Button> deferredGlobalButton_;
+	bool deferredGlobalButtonReleased_ = false;
+	bool deferredGlobalShift_ = false;
 	bool clipMenuContext_ = false;
 	bool monitoringActive_ = false;
 };

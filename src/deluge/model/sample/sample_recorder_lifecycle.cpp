@@ -242,9 +242,10 @@ void SampleRecorder::releaseCommit(bool success) {
 		return;
 	}
 	commitPending_ = false;
-	pointerHeldElsewhere = false;
+	pointerHeldElsewhere = loopReaders_ != 0;
 	if (success) {
-		status = RecorderStatus::AWAITING_DELETION;
+		published_ = true;
+		status = loopReaders_ ? RecorderStatus::COMPLETE : RecorderStatus::AWAITING_DELETION;
 	}
 	else {
 		abort();
@@ -252,8 +253,30 @@ void SampleRecorder::releaseCommit(bool success) {
 	traceLifecycle(LifecycleEvent::RELEASED);
 }
 
+void SampleRecorder::retainLoopReader() {
+	++loopReaders_;
+	pointerHeldElsewhere = true;
+}
+
+void SampleRecorder::releaseLoopReader() {
+	if (!loopReaders_)
+		return;
+	--loopReaders_;
+	pointerHeldElsewhere = loopReaders_ || commitPending_;
+	if (!pointerHeldElsewhere && status == RecorderStatus::COMPLETE)
+		status = RecorderStatus::AWAITING_DELETION;
+}
+
 void SampleRecorder::abort() {
 	captureOutputInputActive = false;
+	recorderBudgetLease_.finishCapture();
+	if (published_) {
+		// The capture transaction is over. A playback failure may retire this
+		// provider, but its published WAV belongs to history and must survive.
+		if (!loopReaders_ && !commitPending_)
+			status = RecorderStatus::AWAITING_DELETION;
+		return;
+	}
 	if (status != RecorderStatus::ABORTED) {
 		status = RecorderStatus::ABORTED;
 		traceLifecycle(LifecycleEvent::ABORTED);
@@ -264,7 +287,7 @@ Error SampleRecorder::cleanupAbortedRecording() {
 	if (loopIOActive_ || loopPreparing_ || cleanupActive_)
 		return Error::NONE;
 	// Holding the recorder pointer alone is insufficient: the clip/history can own its Sample too.
-	if (commitPending_) {
+	if (commitPending_ || loopReaders_) {
 		return Error::NONE;
 	}
 	struct Guard {

@@ -288,13 +288,14 @@ bool AudioOutput::renderGlobalEffectableForClip(ModelStackWithTimelineCounter* m
 	                             && recorder->status < RecorderStatus::FINISHED_CAPTURING_BUT_STILL_WRITING;
 	bool backingRenderedForCapture = false;
 	bool loopStation = activeClip && static_cast<AudioClip*>(activeClip)->loopStationSlotId != 0;
+	auto* liveLoop = loopStation ? static_cast<AudioClip*>(activeClip)->loopStationPlaybackRecorder : nullptr;
 	int32_t loopAmplitudeStart = 0, loopAmplitudeEnd = 0;
 	// Audio outputs can have an activeClip while being muted. A Loop Station
 	// overdub must still render that backing clip into its private capture pass;
 	// activity bookkeeping must never turn an Add overdub into input-only Replace.
-	if ((isClipActive || capturingPreFXOverdub) && activeClip) {
+	if ((isClipActive || capturingPreFXOverdub || liveLoop) && activeClip) {
 		auto& activeAudioClip = static_cast<AudioClip&>(*activeClip);
-		if (activeAudioClip.voiceSample) {
+		if (activeAudioClip.voiceSample || liveLoop || (capturingPreFXOverdub && recorder->hasLoopSource())) {
 
 			int32_t attackNeutralValue = paramNeutralValues[params::LOCAL_ENV_0_ATTACK];
 			int32_t attack = getExp(attackNeutralValue, -(activeAudioClip.attack / 4));
@@ -334,13 +335,14 @@ renderEnvelope:
 				loopAmplitudeStart = amplitudeEffectiveStart;
 				loopAmplitudeEnd = amplitudeEffectiveEnd;
 				backingRenderedForCapture =
-				    activeAudioClip.render(modelStack, render_mono, loopStation ? 1 << 26 : amplitudeEffectiveStart,
-				                           loopStation ? 0 : amplitudeIncrementEffective, pitchAdjust);
+				    !liveLoop
+				    && activeAudioClip.render(modelStack, render_mono, loopStation ? 1 << 26 : amplitudeEffectiveStart,
+				                              loopStation ? 0 : amplitudeIncrementEffective, pitchAdjust);
 				rendered = isClipActive;
 				amplitudeLastTime = amplitudeLocal;
 
 				// If we need to duplicate mono to stereo...
-				if (AudioOutput::willRenderAsOneChannelOnlyWhichWillNeedCopying()) {
+				if (!liveLoop && AudioOutput::willRenderAsOneChannelOnlyWhichWillNeedCopying()) {
 					// If can write directly into Song buffer...
 					if (bufferToTransferTo != nullptr) {
 						std::ranges::transform(render_mono, reinterpret_cast<StereoSample*>(bufferToTransferTo),
@@ -373,18 +375,20 @@ renderEnvelope:
 				frame.r = deluge::loop_station::restoreCaptureGain(frame.r);
 			}
 		}
-		auto* loopRecorder = capturingPreFXOverdub && recorder->isLoopOverdub() ? recorder : nullptr;
-		if (loopRecorder && !backingRenderedForCapture && loopRecorder->captureOutputInputActive)
-			loopRecorder->captureOutputBackingMissing = true;
+		auto* loopRecorder = liveLoop && (isClipActive || capturingPreFXOverdub)
+		                         ? liveLoop
+		                         : (capturingPreFXOverdub && recorder->isLoopOverdub() ? recorder : nullptr);
 		deluge::loop_station::renderAudio(
 		    output, input, loopRecorder, loopAmplitudeStart, loopAmplitudeEnd,
-		    isClipActive ? loopStationPlaybackGain : 0, monitor, [&](std::span<StereoSample> audio) {
+		    isClipActive ? loopStationPlaybackGain : 0, monitor,
+		    [&](std::span<StereoSample> audio) {
 			    if (loopStationPitchShifter) {
 				    int32_t phase = std::min<uint64_t>(
 				        INT32_MAX, (uint64_t(loopStationTransposePhaseIncrement()) * pitchAdjust) >> 24);
 				    loopStationPitchShifter->render(audio, phase, AudioEngine::audioSampleTimer);
 			    }
-		    });
+		    },
+		    backingRenderedForCapture);
 		return rendered || monitor;
 	}
 

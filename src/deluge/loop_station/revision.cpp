@@ -146,7 +146,7 @@ bool LoopStationRevisionHistory::seedFromClip(AudioClip& clip) {
 	return true;
 }
 
-bool LoopStationRevisionHistory::prepareAppend(AudioClip& clip, bool preserveCurrent) {
+bool LoopStationRevisionHistory::prepareAppend(AudioClip& clip, bool preserveCurrent, size_t pending) {
 	if (provisionalPending) {
 		return false;
 	}
@@ -156,6 +156,7 @@ bool LoopStationRevisionHistory::prepareAppend(AudioClip& clip, bool preserveCur
 	if (preserveCurrent && revisions.empty()) {
 		required = 2;
 	}
+	required += pending;
 	try {
 		revisions.reserve(required);
 	} catch (deluge::exception error) {
@@ -165,6 +166,17 @@ bool LoopStationRevisionHistory::prepareAppend(AudioClip& clip, bool preserveCur
 		throw;
 	}
 	return !preserveCurrent || seedFromClip(clip);
+}
+
+bool LoopStationRevisionHistory::publishGeneration(LoopStationRevision&& revision) {
+	if (!revision.sample || revisions.capacity() < static_cast<size_t>(cursor + 2))
+		return false;
+	revision.filePath.set(&revision.sample->filePath);
+	auto firstRedo = revisions.begin() + std::min<size_t>(revisions.size(), static_cast<size_t>(cursor + 1));
+	revisions.erase(firstRedo, revisions.end());
+	revisions.emplace_back(std::move(revision));
+	cursor = static_cast<int32_t>(revisions.size()) - 1;
+	return true;
 }
 
 void LoopStationRevisionHistory::appendCurrent(AudioClip& clip) {

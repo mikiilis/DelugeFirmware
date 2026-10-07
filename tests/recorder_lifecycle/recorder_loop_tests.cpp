@@ -46,7 +46,8 @@ void teardown() override {
 	CHECK_EQUAL(0, liveClusters);
 	onSeek = {};
 }
-void initialize(SampleRecorder& r, uint32_t frames, Sample* source = nullptr, uint32_t sourceFrame = 0) {
+void initialize(SampleRecorder& r, uint32_t frames, Sample* source = nullptr, uint32_t sourceFrame = 0,
+                SampleRecorder* sourceRecorder = nullptr) {
 	CHECK(SampleRecorderLifecycleTestAccess::initialize(r) == Error::NONE);
 	r.numSamplesCaptured = 0;
 	r.folderID = AudioRecordingFolder::CLIPS;
@@ -55,10 +56,141 @@ void initialize(SampleRecorder& r, uint32_t frames, Sample* source = nullptr, ui
 	r.sample->byteDepth = 3;
 	r.mode = AudioInputChannel::SPECIFIC_OUTPUT;
 	r.captureOutputInputActive = true;
-	CHECK(r.setupLoopOverdub(frames, source, 0, sourceFrame) == Error::NONE);
+	CHECK(r.setupLoopOverdub(frames, source, 0, sourceFrame, sourceRecorder) == Error::NONE);
 }
 }
 ;
+
+TEST(LoopRecorder, NextGenerationCapturesBeforeParentTailOrFileIsWritten) {
+	SampleRecorder source;
+	initialize(source, 4);
+	std::array<StereoSample, 4> dry;
+	dry.fill({3200, 3200});
+	std::array<StereoSample, 4> silence{};
+	source.processLoopOverdub(dry, silence);
+	SampleRecorder first;
+	initialize(first, 4, source.sample);
+	std::array<StereoSample, 1> firstInput{{{2560, 2560}}};
+	first.processLoopOverdub(std::span(dry).first(1), firstInput);
+	first.sealLoopOverdub();
+	CHECK_EQUAL(1, first.numSamplesCaptured);
+	CHECK_FALSE(first.loopOverdubReady());
+	CHECK_FALSE(first.file.has_value());
+	SampleRecorder second;
+	initialize(second, 4, first.sample, 1, &first);
+	std::array<StereoSample, 4> secondInput;
+	secondInput.fill({5120, 5120});
+	auto bypass = [](std::span<StereoSample>) {};
+	deluge::loop_station::renderAudio(dry, secondInput, &second, 1 << 26, 1 << 26, 1 << 24, false, bypass, false);
+	CHECK_EQUAL(4, second.numSamplesCaptured);
+	CHECK_EQUAL(1, first.numSamplesCaptured);
+	CHECK_EQUAL(3200, dry[0].l);
+	CHECK_EQUAL(3520, dry[3].l);
+	second.sealLoopOverdub();
+	deluge::loop_station::renderAudio(dry, silence, &second, 1 << 26, 1 << 26, 1 << 24, false, bypass, false);
+	CHECK_EQUAL(3840, dry[0].l);
+	CHECK_EQUAL(4160, dry[3].l);
+	CHECK_FALSE(second.captureOutputBackingMissing);
+	CHECK_FALSE(first.file.has_value());
+}
+
+TEST(LoopRecorder, CompletedGenerationStaysAliveUntilItsPlaybackAndDependentReadersReleaseIt) {
+	SampleRecorder source;
+	initialize(source, 4);
+	std::array<StereoSample, 4> silence{};
+	source.processLoopOverdub(silence, silence);
+	source.retainForCommit();
+	source.retainLoopReader();
+	source.status = RecorderStatus::COMPLETE;
+	{
+		SampleRecorder child;
+		initialize(child, 4, source.sample, 0, &source);
+		source.releaseCommit(true);
+		CHECK(source.status == RecorderStatus::COMPLETE);
+		CHECK_TRUE(source.pointerHeldElsewhere);
+		source.releaseLoopReader();
+		CHECK(source.status == RecorderStatus::COMPLETE);
+	}
+	CHECK(source.status == RecorderStatus::AWAITING_DELETION);
+	CHECK_FALSE(source.pointerHeldElsewhere);
+}
+
+TEST(LoopRecorder, SixteenShortGenerationsRemainAudibleWithoutMaterializingAnyParentTail) {
+	SampleRecorder source;
+	initialize(source, 256);
+	std::array<StereoSample, 256> dry;
+	dry.fill({3200, 3200});
+	std::array<StereoSample, 256> silence{};
+	source.processLoopOverdub(dry, silence);
+	std::array<SampleRecorder, 16> takes;
+	std::array<StereoSample, 1> input{{{2560, 2560}}};
+	for (size_t i = 0; i < takes.size(); ++i) {
+		auto* parent = i ? &takes[i - 1] : nullptr;
+		initialize(takes[i], 256, parent ? parent->sample : source.sample, i ? 1 : 0, parent);
+		takes[i].processLoopOverdub(std::span(dry).first(1), input);
+		takes[i].sealLoopOverdub();
+		CHECK_EQUAL(1, takes[i].numSamplesCaptured);
+		CHECK_FALSE(takes[i].captureOutputBackingMissing);
+	}
+	auto& last = takes.back();
+	last.processLoopOverdub(dry, silence);
+	uint64_t sum = 0;
+	for (auto frame : dry)
+		sum += frame.l;
+	CHECK_EQUAL(256 * 3200 + 16 * 320, sum);
+	CHECK_FALSE(last.captureOutputBackingMissing);
+	for (auto const& take : takes) {
+		CHECK_EQUAL(1, take.numSamplesCaptured);
+		CHECK_FALSE(take.file.has_value());
+	}
+}
+
+TEST(LoopRecorder, EightTracksStartSecondTakesWhileEveryFirstTakeIsStillUnsaved) {
+	std::array<SampleRecorder, 8> sources, first, second;
+	std::array<StereoSample, 8> dry, silence{};
+	std::array<StereoSample, 1> firstInput{{{2560, 2560}}};
+	std::array<StereoSample, 8> secondInput;
+	secondInput.fill({5120, 5120});
+	for (size_t i = 0; i < sources.size(); ++i) {
+		initialize(sources[i], 8);
+		dry.fill({3200, 3200});
+		sources[i].processLoopOverdub(dry, silence);
+		initialize(first[i], 8, sources[i].sample);
+		first[i].processLoopOverdub(std::span(dry).first(1), firstInput);
+		first[i].sealLoopOverdub();
+		initialize(second[i], 8, first[i].sample, 1, &first[i]);
+		second[i].processLoopOverdub(dry, secondInput);
+		CHECK_EQUAL(8, second[i].numSamplesCaptured);
+		CHECK_EQUAL(1, first[i].numSamplesCaptured);
+		CHECK_FALSE(first[i].file.has_value());
+	}
+	for (auto& recorder : second) {
+		recorder.sealLoopOverdub();
+		recorder.processLoopOverdub(dry, silence);
+		CHECK_EQUAL(3840, dry[0].l);
+		CHECK_EQUAL(4160, dry[7].l);
+		CHECK_FALSE(recorder.captureOutputBackingMissing);
+	}
+}
+
+TEST(LoopRecorder, AbortedParentCannotBeCleanedWhileAnUnpublishedGenerationReadsIt) {
+	SampleRecorder parent;
+	initialize(parent, 4);
+	std::array<StereoSample, 4> dry{}, input{};
+	parent.processLoopOverdub(dry, input);
+	parent.retainForCommit();
+	SampleRecorder child;
+	initialize(child, 4, parent.sample, 0, &parent);
+	parent.releaseCommit(false);
+	CHECK(SampleRecorderLifecycleTestAccess::clean(parent) == Error::NONE);
+	CHECK(parent.sample != nullptr);
+	CHECK(parent.hasLoopReaders());
+	child.abort();
+	CHECK(SampleRecorderLifecycleTestAccess::clean(child) == Error::NONE);
+	CHECK_FALSE(parent.hasLoopReaders());
+	CHECK(SampleRecorderLifecycleTestAccess::clean(parent) == Error::NONE);
+	POINTERS_EQUAL(nullptr, parent.sample);
+}
 
 TEST(LoopRecorder, AddsEveryPassAndStopsInputWithoutChangingUntouchedFrames) {
 	SampleRecorder r;
@@ -101,6 +233,193 @@ TEST(LoopRecorder, EarlyStopCopiesOnlyTheUntouchedBackingRemainder) {
 	CHECK_EQUAL(3520, dry[0].l);
 	for (int i = 1; i < 4; ++i)
 		CHECK_EQUAL(3200, dry[i].l);
+}
+
+TEST(LoopRecorder, PendingSourceRetainsInputUntilRawAudioIsReady) {
+	SampleRecorder source;
+	initialize(source, 4);
+	std::array<StereoSample, 4> sourceBacking;
+	sourceBacking.fill({3200, -3200});
+	std::array<StereoSample, 4> silence{};
+	source.processLoopOverdub(sourceBacking, silence);
+
+	SampleRecorder child;
+	initialize(child, 4, source.sample);
+	auto* sourceCluster = source.sample->clusters.getElement(0)->cluster;
+	sourceCluster->loaded = false;
+
+	std::array<StereoSample, 4> renderedBacking;
+	// Capture-side work may wait without turning an asynchronous source load
+	// into corrupt backing or dropping already accepted input.
+	renderedBacking.fill({123456, -654321});
+	std::array<StereoSample, 4> input;
+	input.fill({2560, 5120});
+	child.processLoopOverdub(renderedBacking, input);
+
+	CHECK_EQUAL(0, child.numSamplesCaptured);
+	CHECK_FALSE(child.captureOutputBackingMissing);
+	CHECK_EQUAL(123456, renderedBacking[0].l);
+	CHECK_EQUAL(-654321, renderedBacking[0].r);
+	// Closing the input gate must not discard samples already accepted.
+	child.stopLoopOverdubInput();
+	CHECK_FALSE(child.loopOverdubReady());
+	sourceCluster->loaded = true;
+	child.processLoopOverdub(renderedBacking, silence);
+	CHECK_EQUAL(4, child.numSamplesCaptured);
+	CHECK_TRUE(child.loopOverdubReady());
+	CHECK_FALSE(child.captureOutputBackingMissing);
+	for (auto frame : renderedBacking) {
+		CHECK_EQUAL(3520, frame.l);
+		CHECK_EQUAL(-2560, frame.r);
+	}
+}
+
+TEST(LoopRecorder, AudibleSourceDeadlineFailsInsteadOfPlayingSilence) {
+	SampleRecorder source;
+	initialize(source, 4);
+	std::array<StereoSample, 4> backing;
+	backing.fill({3200, 3200});
+	std::array<StereoSample, 4> silence{};
+	source.processLoopOverdub(backing, silence);
+	SampleRecorder child;
+	initialize(child, 4, source.sample);
+	source.sample->clusters.getElement(0)->cluster->loaded = false;
+	auto bypass = [](std::span<StereoSample>) {};
+	deluge::loop_station::renderAudio(backing, silence, &child, 1 << 26, 1 << 26, 1 << 24, false, bypass, false);
+	CHECK_TRUE(child.captureOutputBackingMissing);
+	CHECK_EQUAL(0, child.numSamplesCaptured);
+	source.sample->clusters.getElement(0)->cluster->loaded = true;
+}
+
+TEST(LoopRecorder, PublishedPlaybackFailureNeverUnlinksTheDurableWav) {
+	int oldUnlinks = unlinks;
+	{
+		SampleRecorder recorder;
+		initialize(recorder, 4);
+		recorder.filePathCreated.set("published.wav");
+		recorder.retainForCommit();
+		recorder.retainLoopReader();
+		recorder.status = RecorderStatus::COMPLETE;
+		recorder.releaseCommit(true);
+		CHECK_TRUE(recorder.isPublished());
+		recorder.captureOutputBackingMissing = true;
+		CHECK(recorder.cardRoutine() == Error::NONE);
+		CHECK(recorder.status == RecorderStatus::COMPLETE);
+		recorder.releaseLoopReader();
+		CHECK(recorder.status == RecorderStatus::AWAITING_DELETION);
+	}
+	CHECK_EQUAL(oldUnlinks, unlinks);
+}
+
+TEST(LoopRecorder, PlaybackCompletionCountsOneNativePhraseAndResetsOnRetrigger) {
+	SampleRecorder source;
+	initialize(source, 4);
+	std::array<StereoSample, 4> backing{};
+	std::array<StereoSample, 4> silence{};
+	source.processLoopOverdub(backing, silence);
+	SampleRecorder recorder;
+	initialize(recorder, 4, source.sample);
+	recorder.processLoopOverdub(std::span(backing).first(3), std::span(silence).first(3));
+	CHECK_FALSE(recorder.loopPlaybackEnded());
+	recorder.processLoopOverdub(std::span(backing).first(1), std::span(silence).first(1));
+	CHECK_TRUE(recorder.loopPlaybackEnded());
+	recorder.setLoopPlaybackCursor(2);
+	CHECK_FALSE(recorder.loopPlaybackEnded());
+}
+
+TEST(LoopRecorder, PendingSourceHasBoundedInputStorageAndReportsExhaustion) {
+	SampleRecorder source;
+	initialize(source, 4);
+	std::array<StereoSample, 4> dry{};
+	std::array<StereoSample, 4> input{};
+	source.processLoopOverdub(dry, input);
+	SampleRecorder child;
+	initialize(child, 4, source.sample);
+	source.sample->clusters.getElement(0)->cluster->loaded = false;
+	for (uint32_t i = 0; i <= Cluster::size; ++i) {
+		child.processLoopOverdub(dry, input);
+		if (child.terminalError != Error::NONE)
+			break;
+	}
+	CHECK(child.terminalError == Error::INSUFFICIENT_RAM);
+	CHECK_FALSE(child.hadCardError);
+	CHECK_FALSE(child.captureOutputBackingMissing);
+	CHECK_EQUAL(0, child.numSamplesCaptured);
+	source.sample->clusters.getElement(0)->cluster->loaded = true;
+}
+
+TEST(LoopRecorder, DelayedInputPreservesChronologicalAdditionsAcrossLoopWraps) {
+	SampleRecorder source;
+	initialize(source, 1);
+	std::array<StereoSample, 1> seed{{{3200, 3200}}};
+	std::array<StereoSample, 1> silence{};
+	source.processLoopOverdub(seed, silence);
+	SampleRecorder child;
+	initialize(child, 1, source.sample);
+	auto* cluster = source.sample->clusters.getElement(0)->cluster;
+	cluster->loaded = false;
+	std::array<StereoSample, 8> dry{};
+	std::array<StereoSample, 8> input;
+	input.fill({2560, -2560});
+	int allocationsBeforeAudio = liveAllocations;
+	child.processLoopOverdub(dry, input);
+	CHECK_EQUAL(allocationsBeforeAudio, liveAllocations);
+	child.stopLoopOverdubInput();
+	cluster->loaded = true;
+	child.processLoopOverdub(seed, silence);
+	CHECK(child.loopOverdubReady());
+	CHECK_EQUAL(5760, seed[0].l);
+	CHECK_EQUAL(640, seed[0].r);
+	CHECK_EQUAL(allocationsBeforeAudio, liveAllocations);
+}
+
+TEST(LoopRecorder, EightTracksRetainAndDrainDelayedInputIndependently) {
+	std::array<SampleRecorder, 8> sources;
+	std::array<SampleRecorder, 8> children;
+	std::array<StereoSample, 4> dry{};
+	std::array<StereoSample, 4> silence{};
+	std::array<StereoSample, 4> input;
+	for (size_t i = 0; i < sources.size(); ++i) {
+		initialize(sources[i], 4);
+		dry.fill({3200, 3200});
+		sources[i].processLoopOverdub(dry, silence);
+		initialize(children[i], 4, sources[i].sample);
+		sources[i].sample->clusters.getElement(0)->cluster->loaded = false;
+		input.fill({int32_t(2560 * (i + 1)), 0});
+		children[i].processLoopOverdub(dry, input);
+		children[i].stopLoopOverdubInput();
+		CHECK_FALSE(children[i].captureOutputBackingMissing);
+		CHECK_FALSE(children[i].loopOverdubReady());
+	}
+	for (size_t i = children.size(); i-- > 0;) {
+		sources[i].sample->clusters.getElement(0)->cluster->loaded = true;
+		children[i].processLoopOverdub(dry, silence);
+		CHECK(children[i].loopOverdubReady());
+		CHECK_EQUAL(3200 + 320 * (i + 1), dry[0].l);
+		CHECK_EQUAL(3200, dry[0].r);
+	}
+}
+
+TEST(LoopRecorder, EndingPlaybackNeverSubstitutesOlderAudioForMissingWorkingData) {
+	SampleRecorder source;
+	initialize(source, 4);
+	std::array<StereoSample, 4> dry;
+	dry.fill({3200, 3200});
+	std::array<StereoSample, 4> silence{};
+	source.processLoopOverdub(dry, silence);
+	SampleRecorder child;
+	initialize(child, 4, source.sample);
+	std::array<StereoSample, 4> input;
+	input.fill({2560, 2560});
+	child.processLoopOverdub(dry, input);
+	child.stopLoopOverdubInput();
+	child.sample->clusters.getElement(0)->cluster->loaded = false;
+	dry.fill({3200, 3200});
+	child.processLoopOverdub(dry, silence);
+	CHECK_TRUE(child.captureOutputBackingMissing);
+	CHECK_FALSE(child.hadCardError);
+	CHECK_EQUAL(0, dry[0].l);
+	child.sample->clusters.getElement(0)->cluster->loaded = true;
 }
 
 TEST(LoopRecorder, ShortLoopWrapsRepeatedlyWithinOneAudioBuffer) {
@@ -433,6 +752,33 @@ TEST(LoopRecorder, MissingPrefetchReportsBackingUnderrunWithoutInventingSdFailur
 }
 
 #include "loop_station/commit.h"
+TEST(LoopRecorder, GenerationCommitCoordinatorRejectsReentryAndRollsBackBeforeNotify) {
+	bool busy = false;
+	int publishes = 0, rollbacks = 0, notifications = 0;
+	deluge::loop_station::resolveGenerationCommit(
+	    busy, true,
+	    [&] {
+		    ++publishes;
+		    deluge::loop_station::resolveGenerationCommit(
+		        busy, true, [&] { return ++publishes != 0; }, [&] { ++rollbacks; }, [&](bool) { ++notifications; });
+		    return false;
+	    },
+	    [&] {
+		    CHECK(busy);
+		    ++rollbacks;
+	    },
+	    [&](bool success) {
+		    CHECK_FALSE(success);
+		    CHECK(busy);
+		    CHECK_EQUAL(1, rollbacks);
+		    ++notifications;
+	    });
+	CHECK_FALSE(busy);
+	CHECK_EQUAL(1, publishes);
+	CHECK_EQUAL(1, rollbacks);
+	CHECK_EQUAL(1, notifications);
+}
+
 TEST(LoopRecorder, RealCommitCoordinatorHoldsParentThroughYieldingRollback) {
 	SampleRecorder parent;
 	initialize(parent, 4);
@@ -562,9 +908,12 @@ TEST(LoopRecorder, SeekFailureAbortsBeforePublishingClusterAddress) {
 TEST(LoopRecorder, CloseFailureRetainsItsStageThroughCleanup) {
 	SampleRecorder r;
 	initialize(r, 4);
+	std::array<StereoSample, 4> silence{};
+	r.processLoopOverdub(silence, silence);
 	r.file.emplace();
 	r.filePathCreated.set("test.wav");
 	r.status = RecorderStatus::FINISHED_CAPTURING_BUT_STILL_WRITING;
+	r.stopLoopOverdubInput();
 	CHECK(r.cardRoutine() == Error::NONE); // Flush dirty first cluster.
 	closeFails = true;
 	CHECK(r.cardRoutine() == Error::SD_CARD);
@@ -633,8 +982,15 @@ TEST(LoopRecorder, OneHundredSuccessiveOverdubsReleaseParentsAndAccumulateAudio)
 		auto* backing = parent->sample;
 		retired[i] = backing;
 		CHECK_EQUAL(2, backing->numReasonsToBeLoaded);
+		backing->clusters.getElement(0)->cluster->loaded = false;
+		dry.fill({0, 0});
 		child->processLoopOverdub(dry, input);
+		CHECK_EQUAL(0, child->numSamplesCaptured);
+		CHECK_FALSE(child->captureOutputBackingMissing);
 		child->stopLoopOverdubInput();
+		CHECK_FALSE(child->loopOverdubReady());
+		backing->clusters.getElement(0)->cluster->loaded = true;
+		child->processLoopOverdub(dry, silence);
 		CHECK(child->loopOverdubReady());
 		// Preview during delayed publication must not add the supplied input again.
 		for (int n = 0; n < 5; ++n)

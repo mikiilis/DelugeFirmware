@@ -21,7 +21,7 @@ Error SampleRecorder::cardRoutine() {
 
 	// A backing underrun is terminal for this take. Do not let a later write
 	// failure replace it while waiting for the view to acknowledge the error.
-	if (isLoopOverdub() && captureOutputBackingMissing)
+	if (isLoopOverdub() && captureOutputBackingMissing && !published_)
 		abort();
 
 	// If aborted, delete the file.
@@ -32,6 +32,12 @@ aborted:
 	}
 
 	if (status >= RecorderStatus::COMPLETE) {
+		if (status == RecorderStatus::COMPLETE && isLoopOverdub() && loopReaders_) {
+			auto error = prepareLoopClusters();
+			if (error != Error::NONE && terminalError == Error::NONE)
+				terminalError = error;
+			return error;
+		}
 		return Error::NONE;
 	}
 

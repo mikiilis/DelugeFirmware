@@ -36,13 +36,16 @@ class AudioClip final : public Clip {
 public:
 	AudioClip();
 	~AudioClip() override;
+	// Owns the audible cumulative generation independently of the input recorder.
+	SampleRecorder* loopStationPlaybackRecorder = nullptr;
+	void setLoopStationPlaybackRecorder(SampleRecorder* recorder);
 	void processCurrentPos(ModelStackWithTimelineCounter* modelStack, uint32_t ticksSinceLast) override;
 	void expectNoFurtherTicks(Song* song, bool actuallySoundChange = true) override;
 	Error clone(ModelStackWithTimelineCounter* modelStack, bool shouldFlattenReversing = false) const override;
 	// Returns true only when the complete requested buffer was rendered from the
-	// backing Sample. Loop Station overdubs use this as a hard commit invariant:
-	// an attempted render which late-started, lost its voice, or otherwise wrote
-	// no backing audio must never be accepted as a cumulative revision.
+	// backing Sample. A Loop Station recorder with a retained raw source owns
+	// its capture readiness independently; legacy capture callers require this
+	// result before using the rendered buffer as cumulative backing.
 	bool render(ModelStackWithTimelineCounter* modelStack, std::span<q31_t> output, int32_t amplitude,
 	            int32_t amplitudeIncrement, int32_t pitchAdjust);
 	void detachFromOutput(ModelStackWithTimelineCounter* modelStack, bool shouldRememberDrumName,
@@ -111,6 +114,7 @@ public:
 	// TODO: For looping without monitoring we'll need a second recorder plus maybe a second sample player?
 	SampleRecorder* recorder; // Will be set to NULL right at the end of the loop's recording, even though the
 	                          // SampleRecorder itself will usually persist slightly longer
+	bool recorderAdmissionDenied = false;
 	int32_t attack;
 
 	// 1..8 identifies a Loop Station slot, 0 is an ordinary Audio Clip. This is

@@ -259,6 +259,55 @@ TEST(LoopStationActions, ContinuousOverdubHasNoMusicalEndAndStopsInputImmediatel
 	CHECK_EQUAL(2, engine.track(SlotId::ONE).historySize);
 }
 
+TEST(LoopStationActions, OverdubStartsImmediatelyWhilePreviousGenerationIsSaving) {
+	SongModel model;
+	model.global.startAction.mode = ActionMode::IMMEDIATE;
+	ActionDelegate delegate;
+	delegate.async = true;
+	delegate.ready = true; // Sealing is immediate; async means the WAV is not saved.
+	Engine engine(model, &delegate);
+	engine.restoreBoundPhrase(SlotId::ONE, 96, true);
+	engine.centrePressed(SlotId::ONE, timeAt(0), 0);
+	CHECK_EQUAL(1, delegate.begins);
+	engine.centrePressed(SlotId::ONE, timeAt(1), 1000);
+	CHECK(engine.track(SlotId::ONE).state == TrackState::PLAYING);
+	engine.centrePressed(SlotId::ONE, timeAt(2), 2000);
+	CHECK(engine.track(SlotId::ONE).state == TrackState::OVERDUBBING);
+	CHECK_EQUAL(2, delegate.begins);
+	CHECK_EQUAL(2, engine.track(SlotId::ONE).captureStartTick);
+	CHECK(engine.track(SlotId::ONE).committingLength != 0);
+	engine.centrePressed(SlotId::ONE, timeAt(3), 3000);
+	CHECK_EQUAL(2, engine.track(SlotId::ONE).pendingCommits);
+	engine.centrePressed(SlotId::ONE, timeAt(4), 4000);
+	CHECK_EQUAL(3, delegate.begins);
+	engine.notifyCommitComplete(SlotId::ONE, true);
+	CHECK_EQUAL(1, engine.track(SlotId::ONE).pendingCommits);
+	CHECK(engine.track(SlotId::ONE).state == TrackState::OVERDUBBING);
+	CHECK_EQUAL(4, engine.track(SlotId::ONE).captureStartTick);
+	engine.notifyCommitComplete(SlotId::ONE, true);
+	CHECK_EQUAL(0, engine.track(SlotId::ONE).committingLength);
+}
+
+TEST(LoopStationActions, StopDuringSavingClosesNewInputWithoutRestartingCapture) {
+	SongModel model;
+	model.global.startAction.mode = ActionMode::IMMEDIATE;
+	model.global.stopAction.mode = ActionMode::IMMEDIATE;
+	ActionDelegate delegate;
+	delegate.async = true;
+	delegate.ready = true;
+	Engine engine(model, &delegate);
+	engine.restoreBoundPhrase(SlotId::ONE, 96, true);
+	engine.centrePressed(SlotId::ONE, timeAt(0), 0);
+	engine.centrePressed(SlotId::ONE, timeAt(1), 1000);
+	engine.centrePressed(SlotId::ONE, timeAt(2), 2000);
+	CHECK(engine.track(SlotId::ONE).state == TrackState::OVERDUBBING);
+	engine.stopAll(timeAt(3));
+	engine.serviceAudioCompletion(timeAt(4));
+	CHECK(engine.track(SlotId::ONE).state == TrackState::STOPPED);
+	CHECK_EQUAL(2, delegate.begins);
+	CHECK_EQUAL(2, engine.track(SlotId::ONE).pendingCommits);
+}
+
 TEST(LoopStationActions, CommitDoesNotDelayDependentOverdubOrResetItsPosition) {
 	SongModel model;
 	model.global.stopAction.mode = ActionMode::IMMEDIATE;
