@@ -33,6 +33,7 @@ __pycache__
 
 # script scratch area
 /scratch*
+/.worktrees/
 
 .idea
 .junie
