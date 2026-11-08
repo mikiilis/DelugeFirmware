@@ -1,6 +1,6 @@
 # RAM-resident Loop Station design
 
-Status: updated November 8, 2026; proposed for user approval. The existing implementation plan must be reconciled with this revision after approval. No product implementation is authorized by this document alone.
+Status: approved by the user on November 8, 2026. Implementation follows the matching plan in `docs/superpowers/plans/2026-11-05-loop-station.md`; design approval does not constitute hardware acceptance.
 
 ## Intent and decisions
 
