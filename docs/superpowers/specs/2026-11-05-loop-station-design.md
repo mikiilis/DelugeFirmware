@@ -1,6 +1,6 @@
 # RAM-resident Loop Station design
 
-Status: proposed for user approval. No product implementation is authorized by this document alone.
+Status: updated November 8, 2026; proposed for user approval. The existing implementation plan must be reconciled with this revision after approval. No product implementation is authorized by this document alone.
 
 ## Intent and decisions
 
@@ -10,8 +10,12 @@ User decisions:
 
 - Immediate repeated overdubbing without waiting for storage is the primary requirement.
 - Active loops reside in RAM.
-- The shared active-audio budget is 32 MiB.
+- The target shared active-audio budget is 32 MiB, giving roughly twelve seconds per track when divided equally. The user accepts ten seconds per track if measurements show that extra operating memory is necessary; the bounded fallback below replaces the earlier unconditional 32 MiB requirement.
 - Undo availability may temporarily decrease when SD storage falls behind, so overdubbing can continue.
+- Progress animation uses the filling ring selected by the user on November 8, 2026: twelve border pads fill clockwise from physical top-left, then reset on each loop wrap.
+- The user accepted the eight-tile layout and centre-pad record/play/overdub cycle, double-tap stop, two-second stopped hold-and-release clear, border selection, and sidebar Start All / Stop All controls.
+- An unmodified CROSS-SCREEN press in Song/Session View opens Loop Station. CROSS-SCREEN or SONG returns to Song/Session View. The CROSS-SCREEN LED is lit at the Loop Station root; existing clip and Arranger uses remain intact.
+- For optional ONE_SHOT playback, an active overdub repeats so layers can be added. Finishing overdub with the centre pad closes capture immediately, finishes the current phrase pass, and stops. A subsequent start plays the phrase once. Ordinary LOOP playback continues repeating after overdub ends.
 
 This is a substantial audio-engine and storage project. Hardware feasibility and measured budgets precede the complete performance UI. No claim of eight-track hardware acceptance is made here.
 
@@ -37,7 +41,9 @@ Builder proposal: use interleaved stereo signed 32-bit firmware-native samples f
 
 32 MiB / (44,100 frames/s * 8 bytes/frame) gives approximately 95.11 seconds of combined active audio, before page rounding. Eight equal phrases have about 11.89 seconds each. This is one pool, not eight fixed partitions. A live phrase has a positive immutable frame length; subsequent passes update the same storage.
 
-Reserve the entire active pool before enabling live operation, from external memory with explicit non-stealable lifetime ownership. Do not assume the ordinary small external allocator can supply it. The memory integration must leave an independently measured reserve for normal sample streaming, outputs, FX, menus, archive staging, and history. If that reserve cannot coexist with 32 MiB, report an enable/admission failure; do not silently use a smaller pool. The existing device-wide runtime flag remains default Off. Reservation must happen in safe foreground setup, not the audio callback.
+Reserve the entire selected active pool before enabling live operation, from external memory with explicit non-stealable lifetime ownership. Do not assume the ordinary small external allocator can supply it. The memory integration must leave an independently measured reserve for normal sample streaming, outputs, FX, menus, archive staging, and history. Prefer 32 MiB. If measurements demonstrate that the required reserves cannot coexist with it, the user authorizes a reduced pool that still fits eight independent ten-second stereo phrases, including per-phrase page rounding. With the candidate 4096-byte/512-frame pages this requires 6896 pages, or 26.9375 MiB. This is a measured operating profile, not an unrestricted fallback to any allocation that happens to succeed. Document the selected capacity, reserve measurements and reason for reducing it, and show the reduced capacity when enabled. If neither profile fits safely, report enable/admission failure.
+
+Builder call: retain a shared pool, allowing different phrase lengths rather than fixed per-track partitions. The ten-second fallback capacity is evaluated with eight equal phrases in an empty pool; later admission depends on existing use. Select and reserve the operating profile in safe foreground setup while no live phrases own pages. Never shrink a live pool, truncate an admitted phrase, or change profiles in the audio callback. The device-wide runtime flag remains default Off.
 
 Builder proposal: fixed-size preallocated pages with a free-page index, no compaction while performing. All page tables and free-list capacity are provisioned in setup. Empty-track capture claims available pages incrementally using bounded constant-time operations; no general allocation is permitted in its sample path. Page exhaustion seals the valid initial phrase at the exact capacity boundary and enters Play/Dub according to Record Action, with an explicit memory-limit notice. A fixed-duration take that cannot fit is rejected before starting. Simultaneous manual takes share remaining pages in a deterministic fair order. Clearing returns pages only after readers release them.
 
@@ -69,7 +75,7 @@ For multiple captures sharing a physical source, each enabled capturing output r
 
 ## Bounded undo and stable snapshots
 
-Builder proposal: a separate preallocated before-image page pool, outside the 32 MiB active pool. Its exact safe size is determined by the memory audit and hardware feasibility milestone, not assumed to be another complete active pool. History metadata and snapshot descriptor counts also have explicit caps.
+Builder proposal: a separate preallocated before-image page pool, outside the selected active pool. Its exact safe size is determined by the memory audit and hardware feasibility milestone, not assumed to be another complete active pool. History metadata and snapshot descriptor counts also have explicit caps.
 
 At session start, open a logical undo boundary. On the first modification of a page during that session, retain its previous contents if history space allows. Later passes in the same session do not create additional undo boundaries. A held before-image is immutable. The audio path performs only bounded page copies and fixed-capacity bookkeeping; measure worst-case simultaneous page-boundary cost. Split copying across bounded spans if whole-page copies violate deadlines.
 
@@ -95,7 +101,7 @@ On load, check summed decoded RAM demand before binding; hydrate admitted loops 
 
 Eight 4x4 tiles form a 4x2 layout; tracks 1-4 are physical top row, 5-8 bottom row. Inner 2x2 is the action button, outer twelve pads are selection/progress. Keep the specified state colours, progress colours, stopped hold-to-clear sweep, 350 ms double press, two-second stopped hold, SHIFT-centre track settings and SELECT global settings. Border selects the FX/monitor target. Display root title Loop Station plus concise memory, unsaved and history-pressure status when relevant.
 
-Keep the default-Off community flag and SessionView cross-screen entry. Do not intercept Arranger behavior or switch/stop active Arrangement playback to enter the mode. Bound clips are lazily created with independent outputs and LOOP 1-8 names.
+Keep the default-Off community flag. From the Song/Session root, with no modal operation or held-pad edit active, an unmodified CROSS-SCREEN press opens Loop Station after memory preflight; consume its paired release so it cannot immediately toggle back. If the feature is disabled, show the enable hint. At the Loop Station root, an unmodified CROSS-SCREEN or SONG press returns to Song/Session View through the normal exit policy. Keep the CROSS-SCREEN LED steadily lit at the Loop Station root and restore each destination view's own indicator state on exit; menus retain their existing navigation behavior. Display the root title Loop Station. KEYBOARD keeps its existing Performance View shortcut in Song/Session View. Do not intercept clip wrap-edit, Arranger auto-scroll or menu paging, and do not switch/stop active Arrangement playback to enter the mode; reject entry with a concise notice in that situation. Entry itself never starts recording or transport. Bound clips are lazily created with independent outputs and LOOP 1-8 names.
 
 Keep Record Action, song-wide Start/Stop Action with strictly future straight/triplet pulses, Q16 fractional deadlines rounded up to sample boundaries, pending cancellation independent of fixed-duration recording, common group deadlines, and one-shot semantics. Initial capture completion enters Play/Dub immediately without storage or a second start deadline. Double tap discards its provisional overdub via mandatory protected before-images described below; normal history availability cannot weaken this gesture.
 
@@ -121,7 +127,7 @@ Introduce a versioned RAM-loop schema. Preserve ordinary Song XML and the suppli
 
 Before complete UI work, build a minimal hardware harness to demonstrate:
 
-1. A real pinned 32 MiB pool alongside the minimum operating reserves, on OLED and seven-segment builds.
+1. A real pinned 32 MiB pool alongside the minimum operating reserves, on OLED and seven-segment builds; if measured reserves require the authorized reduced profile, record that evidence and demonstrate capacity for eight ten-second stereo phrases instead. Failure to fit either supported profile fails the gate.
 2. Eight independent RAM loops with continuous dry overdubs, short-loop multiwrap and immediate stop/start across repeated sessions.
 3. Slow/stalled/removed SD during overdub without any storage dependency in live audio.
 4. Worst-case eight-track simultaneous before-image copies, provisional double-tap buffers and snapshot cancellation without deadline misses.
@@ -134,9 +140,9 @@ Host tests cover the state engine, exact frame content and saturation, phase, ti
 
 ## Builder discretion and review
 
-Builder calls still to measure: page size, bounded history pool size, per-track scratch layout, reserve thresholds, transition-ramp length, scheduler batch sizes, archive retry policy and exact menu wording. These cannot change the 32 MiB active budget or insert storage waits into admitted overdubs. Record their measured values before implementation acceptance.
+Builder calls still to measure: page size, bounded history pool size, per-track scratch layout, reserve thresholds, transition-ramp length, scheduler batch sizes, archive retry policy and exact menu wording. These must honor the preferred 32 MiB profile or the explicitly authorized eight-by-ten-second fallback; they cannot introduce a smaller profile or insert storage waits into admitted overdubs. Record their measured values before implementation acceptance.
 
-Design review must especially check that snapshots cannot force realtime allocation, double taps can discard provisional input under history pressure, the active pool fits beside all required reserves, and saved state never claims a mixed or incomplete generation. If feasibility fails, return with measurements and a proposed requirement change rather than silently reducing the selected budget or limiting repeated overdubs.
+Design review must especially check that snapshots cannot force realtime allocation, double taps can discard provisional input under history pressure, the active pool fits beside all required reserves, and saved state never claims a mixed or incomplete generation. Use the authorized ten-second fallback only when measurements justify it. If both supported profiles fail feasibility, return with measurements and a proposed requirement change rather than reducing capacity further or limiting repeated overdubs.
 
 ## Self-contained behavioral baseline
 
@@ -148,7 +154,7 @@ The supplied September 8 algorithm specification is discussion input, not an ext
 | Recording | Press | Queue completion using Stop Action; enter Play/Dub per Record Action |
 | Playing, loop | Press | Begin continuous overdub immediately, provisionally for double-tap handling |
 | Playing, one-shot | Press | Queue retrigger from zero using Start Action |
-| Overdubbing | Press | Close input immediately; continue playback |
+| Overdubbing | Press | Close input immediately; LOOP continues playback, ONE_SHOT finishes the current pass and stops |
 | Playing/overdubbing | Double press within 350 ms | Discard provisional additions; close input; queue backing stop using Stop Action |
 | Stopped | Short release | Queue start from zero using Start Action |
 | Stopped | Hold at least two seconds then release | Clear audio/history; retain identity, output and settings |
@@ -159,6 +165,8 @@ Storage-error indication is orthogonal to live state; it never suppresses live a
 
 Record Action defaults to REC > PLAY > DUB; alternative REC > DUB > PLAY enters automatic continuous overdub at the initial capture boundary. That automatic entry is not a provisional playing-tap gesture. Global Start Action and Stop Action each default to Synced, straight 1/16 bar, with Immediate available. Start All queues eligible stopped phrases at one deadline without restarting active loops; Stop All cancels queued starts. A repeated tap cancels a user pending action without deleting a fixed record-duration stop.
 
+ONE_SHOT completion is suspended while its overdub capture gate is open, including automatic entry through REC > DUB > PLAY. The phrase wraps continuously during capture. A centre press ending that overdub closes input immediately, preserves the playback frame, and allows the current pass to finish before stopping at its native sample-frame boundary. It does not retrigger from zero or wait for a musical Stop Action deadline. A gate closed at frame zero leaves one complete pass to play. A stopped start or playing one-shot retrigger uses Start Action, begins at frame zero, and plays once. REC > PLAY > DUB initially enters ordinary one-shot playback; playing one-shot centre presses remain retriggers, as specified in the table. Explicit double-tap stop, Stop All, view exit, capture-error and transport-stop commands retain their documented policies.
+
 Synced timing counts strictly future metronome pulses relative to metronome offset, including when the metronome is inaudible. For 1 bar count four future quarter pulses, 1/2 bar two quarter pulses, 1/4 bar one quarter pulse, 1/8 bar one half-quarter pulse, 1/16 bar one quarter-quarter pulse and 1/32 bar one eighth-quarter pulse. Triplets multiply pulse spacing by 2/3 with the same count. A gesture exactly on a pulse waits for the next. Preserve rational/fixed-point fractional precision, using Q16 positions where representable and explicit rounding rules; split audio windows at the first sample not earlier than the mathematical deadline. Tempo edits retime pending musical actions, never phrase frames.
 
 XML modes: 0 Immediate, 1 Synced. Interval IDs: 0 bar, 1 half, 2 quarter, 3 eighth, 4 bar triplet, 5 half triplet, 6 quarter triplet, 7 eighth triplet, 8 sixteenth, 9 thirty-second, 10 sixteenth triplet, 11 thirty-second triplet. Menu order is six straight then six triplet choices. Invalid/missing modes become Synced; invalid/missing intervals become straight sixteenth. Preserve valid Immediate settings. New song settings are startActionMode, startActionInterval, stopActionMode and stopActionInterval under loopStation.
@@ -167,8 +175,10 @@ Per-track settings: physical Source LEFT (default), RIGHT, STEREO, BALANCED; Mon
 
 Monitoring is audible for enabled capturing tracks; an enabled selected idle track monitors only when no capture consumes the same source. Recording remains dry regardless of monitoring. FX selection follows border selection. Transpose ratio is 2^(totalCents / 1200), converted to the firmware Q24 unity convention; semitone and cent components must normalize to the stated total range. Ordinary FX follow the combined transpose stage.
 
-Buttons: Empty gray; Recording solid red; Overdubbing solid orange; Playing solid green; Stopped dim green; capture error fast red blink. Borders: empty dim song colour; recording red pulse; overdubbing orange pulse; playback actual-frame clockwise track-colour progress from physical top-left; stopped dim track colour except delete sweep; capture error dim red. Background archive jobs do not replace musical state with COMMITTING. Show archive pending/error independently. Pending musical actions blink their destination indication. Physical top sidebar left is green Start All, right red Stop All; bright when eligible, dim when unavailable and blink while pending.
+Buttons: Empty gray; Recording solid red; Overdubbing solid orange; Playing solid green; Stopped dim green; capture error fast red blink. Borders: empty dim song colour; recording red pulse; overdubbing orange pulse; playback uses a clockwise filling ring in the track colour, starting at physical top-left, with unfilled pads dim. The number of lit border pads follows each loop's actual sample-frame position and phrase length; a wrap resets the fill to the first pad. Stopped borders are dim track colour except the delete sweep; capture error borders are dim red. Background archive jobs do not replace musical state with COMMITTING. Show archive pending/error independently. Pending musical actions blink their destination indication. Physical top sidebar left is green Start All, right red Stop All; bright when eligible, dim when unavailable and blink while pending.
 
 Capture input/resource failure closes only the affected gate, preserves existing live phrase and latches a slot error. Zero-frame initial takes do not become phrases. Source missing and RAM/resource failures must not become SD errors. Clear/history replacement/deletion are serialized with audio-boundary ownership changes; one slot's archive/transaction must not block other slots. Exit and transport during setup invalidate the setup generation so it cannot attach a late live capture. Reopening the view preserves all resident audio and background jobs.
 
 Builder review performed by an independent firmware/audio reviewer. Its three findings (missing checked-in behavioral baseline, provisional audio entering snapshots, and evictable double-tap rollback) are addressed explicitly in this document. Hardware budgets and the safe bounded scratch-buffer reuse mechanism remain measured feasibility work, not established results.
+
+The November 8 revision received a fresh independent builder check. Its remaining question concerned ONE_SHOT combined with automatic overdub. The user confirmed continuous wrapping during overdub and stopping at the end of the current pass after the centre press closes capture; that rule is now included above. No implementation or hardware acceptance is claimed by this design review.
