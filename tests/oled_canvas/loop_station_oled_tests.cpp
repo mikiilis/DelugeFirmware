@@ -189,22 +189,24 @@ void testSettingsSelectionStaysVisible() {
 	song.model = &model;
 	currentSong = &song;
 	SettingsMenu menu;
-	for (bool synced : {false, true}) {
-		model.testEngine.values.startAction.mode =
-		    synced ? loop_station::ActionMode::Synced : loop_station::ActionMode::Immediate;
-		model.testEngine.values.stopAction.mode =
-		    synced ? loop_station::ActionMode::Synced : loop_station::ActionMode::Immediate;
-		menu.scope_ = MenuScope::Global;
-		const auto rows = globalRows(model.testEngine.values);
-		for (uint8_t selected = 0; selected < rows.size(); ++selected) {
-			menu.row_ = selected;
-			Canvas actual, expected;
-			imageContext = "global settings";
-			initialize(actual);
-			composeSettingsExpected(expected, "Global Settings", rows, selected);
-			menu.renderOLED(actual);
-			compareImages(actual, expected);
-			checkCanaries(actual);
+	for (bool startSynced : {false, true}) {
+		for (bool stopSynced : {false, true}) {
+			model.testEngine.values.startAction.mode =
+			    startSynced ? loop_station::ActionMode::Synced : loop_station::ActionMode::Immediate;
+			model.testEngine.values.stopAction.mode =
+			    stopSynced ? loop_station::ActionMode::Synced : loop_station::ActionMode::Immediate;
+			menu.scope_ = MenuScope::Global;
+			const auto rows = globalRows(model.testEngine.values);
+			for (uint8_t selected = 0; selected < rows.size(); ++selected) {
+				menu.row_ = selected;
+				Canvas actual, expected;
+				imageContext = "global settings";
+				initialize(actual);
+				composeSettingsExpected(expected, "Global Settings", rows, selected);
+				menu.renderOLED(actual);
+				compareImages(actual, expected);
+				checkCanaries(actual);
+			}
 		}
 	}
 
