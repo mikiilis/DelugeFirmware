@@ -117,3 +117,30 @@ The menu-fixed Release from commit `ce564ca1` is also preserved under `.superpow
 - Menu-fixed BIN SHA-256: `7596ff2d6c79e24615f97c0c03ac11d3170d82277f13656bb213dec31161b6bf`.
 
 A photo of the existing fault pads plus the installed firmware version can now be resolved against either preserved build. That is the missing evidence needed to locate the failing instruction; another broad logging or audio qualification run is not required.
+
+## Separate follow-up: enabled OLED entry overflow (2026-11-12)
+
+This is a separate incident from the earlier reported failure on the first CROSS-SCREEN attempt while Loop Station was disabled. The installed firmware identity for the newer enabled-entry report is still unconfirmed; the following addresses are specific to the preserved artifact and must not be treated as proof of the image on the user's device.
+
+### Diagnosis and repair
+
+The enabled Loop Station root rendered `"Undo unavailable"` at y=48 on the 128×48 OLED. Canvas storage is 6×128 bytes; the production bitmap renderer formed and wrote the first destination row before checking whether its row was outside the image. In the preserved ELF, the destination beyond the OLED buffer overlaps the MIDI display pointer. The resulting overwrite is followed by the observed dereference in `HIDSysex::sendDisplayIfChanged()` (`hid_sysex.cpp:87`). This makes the OLED write the upstream corruption and the MIDI dereference the downstream crash, for this artifact.
+
+The shared production bitmap renderer now rejects null input, invalid origins and non-positive geometry/stride before touching the image, while preserving valid right/bottom clipping and mirrored output. The Loop Station root now uses the title font at y=6 and body rows at y=20, 30 and 40. Settings use the same title/body fonts, a three-row selection window at y=20/29/38, and Copy To Track text at y=22/38.
+
+### Verification
+
+- The production-backed `OledCanvasTests` regression failed before the renderer guard: the exact y=48 undo string changed the trailing canary. After the guard, the canvas bounds/golden suite passed under UBSan.
+- `LoopStationOledTests` execute the extracted production view-rendering bodies, actual production canvas routines and firmware font data. Full-image comparisons cover both memory profile strings, all saved/unsaved × undo/no-undo combinations, model absence, every global/track selection, edit markers, and Copy To Track destinations 1 and 8. Canary checks pass. This view-layout target intentionally omits UBSan because the unchanged font renderer performs an unaligned `uint16_t` load; this is not a claimed font-renderer sanitizer pass.
+- Focused Debug CTest: `OledCanvasTests`, `LoopStationOledTests`, and `LoopStationTests` passed (3/3).
+- Full configured host Debug CTest passed (19/19) after building all test targets.
+- Firmware builds `DBT_NO_SYNC=1 ./dbt build debug` and `DBT_NO_SYNC=1 ./dbt build release` both exited successfully. Both ELF files contain firmware version `1.3.0-dev-fb335a5c` / commit `fb335a5c`. The generated filenames retain the old `29f02b4b` prefix, so identify these replacement artifacts by their full paths and hashes, not by that filename prefix:
+  - Debug ELF: `build/Debug/deluge-v1_3_0-dev+2026_11_12-29f02b4b.elf`, SHA-256 `0245892cd5ab88898ab647a360ad4943e08b25684332291ed4f692ed5f85daa2`.
+  - Debug BIN: `build/Debug/deluge-v1_3_0-dev+2026_11_12-29f02b4b.bin`, SHA-256 `495627c831a4e04de1a848dad1de772c38a099503212fc9915e13490864988ad`.
+  - Release ELF: `build/Release/deluge-v1_3_0-dev+2026_11_12-29f02b4b.elf`, SHA-256 `280c3f5318f6c88977faff57c45c976981a12a4efd685846c2800d1c493df59b`.
+  - Release BIN: `build/Release/deluge-v1_3_0-dev+2026_11_12-29f02b4b.bin`, SHA-256 `e280b9af918498aab458916c9c8df60b9c503db4a1a751c1edc62cf3fed7af46`.
+- The original failing ELF/BIN remain preserved at `.superpowers/diagnostics/2026-11-12-loop-station-oled-crash/failing/`; their hashes match the values recorded above in the approved repair investigation.
+
+### Hardware status — NOT_RUN
+
+No physical Deluge was available in this workspace, and the installed filename/full firmware version was not confirmed. Therefore the enabled CROSS-SCREEN reproduction, ten entry/exit cycles, OLED global/track scrolling and copy flow, USB-display streaming variants, disabled-feature behavior, Shift/modal/Arrangement rules, and seven-segment behavior are all **NOT_RUN**. Host tests and firmware links do not establish hardware acceptance. The earlier disabled-entry diagnosis and its unresolved device fault remain unchanged.
