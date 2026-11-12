@@ -20,6 +20,10 @@ def main() -> None:
     parser.add_argument("--header", type=Path, required=True)
     parser.add_argument("--support", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--views-output", type=Path, required=True)
+    parser.add_argument("--loop-view", type=Path, required=True)
+    parser.add_argument("--settings-view", type=Path, required=True)
+    parser.add_argument("--menu-model", type=Path, required=True)
     args = parser.parse_args()
 
     canvas = args.source.read_text()
@@ -70,6 +74,56 @@ def main() -> None:
     )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(text)
+
+    loop_view = args.loop_view.read_text()
+    loop_helpers = section(loop_view, "SongModel* model()", "RGB colourFor(")
+    loop_method = section(
+        loop_view,
+        "void LoopStationView::renderOLED(",
+        "void LoopStationView::selectEncoderAction(",
+    )
+    loop_method = loop_method.replace(
+        "kConfiguredMemoryProfile", "testConfiguredMemoryProfile"
+    )
+
+    settings_view = args.settings_view.read_text()
+    settings_helpers = section(
+        settings_view,
+        "namespace {\nSongModel* currentModel()",
+        "bool SettingsMenu::openGlobal()",
+    )
+    settings_method = section(
+        settings_view,
+        "void SettingsMenu::renderOLED(",
+        "void SettingsMenu::closeMenu()",
+    )
+    menu_model = args.menu_model.read_text()
+    visible_fields = section(
+        menu_model,
+        "MenuFields visibleMenuFields(",
+        "uint16_t maxDurationBars(",
+    )
+    views_text = "\n".join(
+        [
+            "#include <algorithm>\n#include <array>\n#include <cstdio>\n#include <cstdint>",
+            f'#include "{args.support.as_posix()}"',
+            "using namespace loop_station;",
+            "namespace {",
+            loop_helpers,
+            "}",
+            loop_method,
+            "namespace loop_station {",
+            visible_fields,
+            "}",
+            "namespace deluge::gui::menu_item::loop_station {",
+            "using namespace ::loop_station;",
+            settings_helpers,
+            settings_method,
+            "}",
+        ]
+    )
+    args.views_output.parent.mkdir(parents=True, exist_ok=True)
+    args.views_output.write_text(views_text)
 
 
 if __name__ == "__main__":

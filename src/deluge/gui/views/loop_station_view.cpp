@@ -351,17 +351,17 @@ bool LoopStationView::renderSidebar(uint32_t rows, RGB image[][kDisplayWidth + k
 
 void LoopStationView::renderOLED(deluge::hid::display::oled_canvas::Canvas& canvas) {
 	canvas.clear();
-	canvas.drawString("Loop Station", 0, 0, 14, 16);
+	canvas.drawString("Loop Station", 0, OLED_MAIN_TOPMOST_PIXEL + 1, kTextTitleSpacingX, kTextTitleSizeY);
 	auto* m = model();
 	if (!m)
 		return;
 	canvas.drawString(kConfiguredMemoryProfile == MemoryProfile::TenSecond ? "26.9 MiB / 10s" : "32 MiB / ~12s x8", 0,
-	                  20, 18, 12);
-	canvas.drawString(m->hasUnsavedAudio() ? "Unsaved audio" : "Saved", 0, 34, 14, 12);
+	                  20, kTextSpacingX, kTextSizeYUpdated);
+	canvas.drawString(m->hasUnsavedAudio() ? "Unsaved audio" : "Saved", 0, 30, kTextSpacingX, kTextSizeYUpdated);
 	SlotId slot = m->engine().selected();
 	if (!validSlot(slot))
 		slot = 0;
-	canvas.drawString(m->canUndo(slot) ? "Undo ready" : "Undo unavailable", 0, 48, 16, 12);
+	canvas.drawString(m->canUndo(slot) ? "Undo ready" : "Undo unavailable", 0, 40, kTextSpacingX, kTextSizeYUpdated);
 }
 void LoopStationView::selectEncoderAction(int8_t offset) {
 	if (auto* m = model()) {

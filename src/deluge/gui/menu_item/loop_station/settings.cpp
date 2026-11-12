@@ -364,20 +364,21 @@ void SettingsMenu::renderOLED(deluge::hid::display::oled_canvas::Canvas& canvas)
 	canvas.drawString(deluge::l10n::get(scope_ == MenuScope::Global
 	                                        ? deluge::l10n::String::STRING_FOR_LOOP_STATION_GLOBAL_SETTINGS
 	                                        : deluge::l10n::String::STRING_FOR_LOOP_STATION_TRACK_SETTINGS),
-	                  0, 0, 18, 16);
+	                  0, OLED_MAIN_TOPMOST_PIXEL + 1, kTextTitleSpacingX, kTextTitleSizeY);
 	auto* model = currentModel();
 	if (!model)
 		return;
 	if (choosingCopyTarget_) {
 		char target[24];
 		snprintf(target, sizeof(target), "Copy to Track %u", copyTarget_ + 1);
-		canvas.drawString(target, 0, 22, 18, 14);
-		canvas.drawString("SELECT to copy", 0, 42, 18, 14);
+		canvas.drawString(target, 0, 22, kTextSpacingX, kTextSizeYUpdated);
+		canvas.drawString("SELECT to copy", 0, 38, kTextSpacingX, kTextSizeYUpdated);
 		return;
 	}
 	fields_ = visibleMenuFields(scope_, model->engine().settings());
-	const int32_t top = row_ > 1 ? 20 - (row_ - 1) * 13 : 20;
-	for (uint8_t i = 0; i < fields_.count; ++i) {
+	const uint8_t first = std::min<uint8_t>(row_ > 0 ? row_ - 1 : 0, fields_.count > 3 ? fields_.count - 3 : 0);
+	const uint8_t end = std::min<uint8_t>(first + 3, fields_.count);
+	for (uint8_t i = first; i < end; ++i) {
 		char value[32]{};
 		const auto field = fields_.rows[i];
 		const auto& settings = model->engine().settings();
@@ -441,12 +442,10 @@ void SettingsMenu::renderOLED(deluge::hid::display::oled_canvas::Canvas& canvas)
 				break;
 			}
 		}
-		const int32_t y = top + i * 13;
-		if (y < 18 || y > 62)
-			continue;
+		const int32_t y = 20 + (i - first) * kTextSpacingY;
 		char line[64];
 		snprintf(line, sizeof(line), "%c%s: %s", i == row_ ? (editing_ ? '*' : '>') : ' ', fieldName(field), value);
-		canvas.drawString(line, 0, y, 18, 12);
+		canvas.drawString(line, 0, y, kTextSpacingX, kTextSizeYUpdated);
 	}
 }
 
