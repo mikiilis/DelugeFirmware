@@ -235,6 +235,8 @@ public:
 	/// @param width Width of the graphic in pixels
 	/// @param height Height of the graphic in pixels
 	/// @param numBytesTall Number of bytes in the Y direction, determines the stride in the graphic array
+	/// Invalid origins or non-positive dimensions/stride, and a null graphic, are no-ops. Valid origins may be clipped
+	/// at the right and bottom edges of the canvas.
 	void drawGraphicMultiLine(uint8_t const* graphic, int32_t startX, int32_t startY, int32_t width, int32_t height = 8,
 	                          int32_t numBytesTall = 1, bool reversed = false);
 	/// Draw an icon.

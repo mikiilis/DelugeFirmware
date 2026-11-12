@@ -825,6 +825,11 @@ int32_t Canvas::getStringWidthInPixels(char const* string, int32_t textHeight) {
 
 void Canvas::drawGraphicMultiLine(uint8_t const* graphic, int32_t startX, int32_t startY, int32_t width, int32_t height,
                                   int32_t numBytesTall, bool reversed) {
+	if (!graphic || width <= 0 || height <= 0 || numBytesTall <= 0 || startX < 0 || startX >= OLED_MAIN_WIDTH_PIXELS
+	    || startY < 0 || startY >= OLED_MAIN_HEIGHT_PIXELS) {
+		return;
+	}
+
 	if (reversed) {
 		std::vector<uint8_t> reversedGraphic(width * numBytesTall);
 		for (int32_t col = 0; col < width; ++col) {
