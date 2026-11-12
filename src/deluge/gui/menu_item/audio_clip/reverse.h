@@ -36,6 +36,11 @@ public:
 	void readCurrentValue() override { this->setValue(getCurrentAudioClip()->sampleControls.reversed); }
 	void writeCurrentValue() override {
 		auto* clip = getCurrentAudioClip();
+		if (clip->hasResidentAudio()) {
+			display->displayPopup("Stop and unbind loop");
+			readCurrentValue();
+			return;
+		}
 		bool active = (playbackHandler.isEitherClockActive() && currentSong->isClipActive(clip) && clip->voiceSample);
 
 		clip->unassignVoiceSample(false);

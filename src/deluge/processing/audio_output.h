@@ -69,6 +69,7 @@ public:
 	bool setActiveClip(ModelStackWithTimelineCounter* modelStack,
 	                   PgmChangeSend maySendMIDIPGMs = PgmChangeSend::ONCE) override;
 	bool isSkippingRendering() override;
+	bool hasResidentClip() const;
 	Output* toOutput() override { return this; }
 	void getThingWithMostReverb(Sound** soundWithMostReverb, ParamManager** paramManagerWithMostReverb,
 	                            GlobalEffectableForClip** globalEffectableWithMostReverb,

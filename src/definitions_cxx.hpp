@@ -209,6 +209,8 @@ enum class UIType : uint8_t {
 	SESSION,
 	SLICER,
 	SOUND_EDITOR,
+	LOOP_STATION,
+	LOOP_STATION_SETTINGS,
 	// Keep these at the bottom!
 	UI_TYPE_COUNT,
 	NONE = 255,

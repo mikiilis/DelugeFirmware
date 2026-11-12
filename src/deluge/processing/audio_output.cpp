@@ -140,6 +140,26 @@ bool AudioOutput::renderGlobalEffectableForClip(ModelStackWithTimelineCounter* m
                                                 int32_t sideChainHitPending, bool shouldLimitDelayFeedback,
                                                 bool isClipActive, int32_t pitchAdjust, int32_t amplitudeAtStart,
                                                 int32_t amplitudeAtEnd) {
+	// Resident state is sample-clock driven, independent of transport/view/voice.
+	// The dry cumulative capture happens before this output's normal FX/level/pan.
+	if (hasResidentClip()) {
+		auto output =
+		    bufferToTransferTo ? std::span{reinterpret_cast<StereoSample*>(bufferToTransferTo), render.size()} : render;
+		if (output.empty())
+			return false;
+		static_cast<AudioClip*>(activeClip)->renderResidentAudio(output);
+		const auto increment =
+		    static_cast<int32_t>((int64_t(amplitudeAtEnd) - amplitudeAtStart) / static_cast<int64_t>(output.size()));
+		auto amplitude = amplitudeAtStart;
+		for (auto& sample : output) {
+			amplitude += increment;
+			sample.l = multiply_32x32_rshift32(sample.l, amplitude) << 2;
+			sample.r = multiply_32x32_rshift32(sample.r, amplitude) << 2;
+			if (!AudioEngine::renderInStereo)
+				sample = StereoSample::fromMono(sample.l / 2 + sample.r / 2);
+		}
+		return true;
+	}
 	bool rendered = false;
 	// audio outputs can have an activeClip while being muted
 	if (isClipActive) {
@@ -430,6 +450,9 @@ bool AudioOutput::wantsToBeginArrangementRecording() {
 }
 
 bool AudioOutput::setActiveClip(ModelStackWithTimelineCounter* modelStack, PgmChangeSend maySendMIDIPGMs) {
+	// A resident slot owns its independent output until explicit unbind/deletion.
+	if (hasResidentClip() && (!modelStack || modelStack->getTimelineCounter() != activeClip))
+		return false;
 	if (activeClip
 	    && (!modelStack || activeClip != modelStack->getTimelineCounter()
 	        || (playbackHandler.playbackState && currentPlaybackMode == &arrangement))) {
@@ -444,8 +467,13 @@ bool AudioOutput::setActiveClip(ModelStackWithTimelineCounter* modelStack, PgmCh
 	return clipChanged;
 }
 
+bool AudioOutput::hasResidentClip() const {
+	return activeClip && static_cast<AudioClip*>(activeClip)->hasResidentAudio();
+}
+
 bool AudioOutput::isSkippingRendering() {
-	return mode == AudioOutputMode::player && (!activeClip || !((AudioClip*)activeClip)->voiceSample);
+	return mode == AudioOutputMode::player
+	       && (!activeClip || (!hasResidentClip() && !static_cast<AudioClip*>(activeClip)->voiceSample));
 }
 
 void AudioOutput::getThingWithMostReverb(Sound** soundWithMostReverb, ParamManager** paramManagerWithMostReverb,

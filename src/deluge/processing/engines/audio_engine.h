@@ -136,6 +136,11 @@ class Reverb;
 /// For advanced debugging printouts.
 #define DO_AUDIO_LOG 0
 
+namespace loop_station {
+class AudioAdapter;
+class ClockMap;
+} // namespace loop_station
+
 namespace AudioEngine {
 #define logAction(string) logAudioAction(string, __FILE__, __LINE__)
 
@@ -148,6 +153,18 @@ void routineWithClusterLoading(bool mayProcessUserActionsBetween = false);
 void runRoutine();
 
 void init();
+// Foreground/audio-boundary ownership contract: both objects and all bound clips
+// must remain alive until detached between callbacks. Null detaches (default).
+// The song owner supplies actual tempo/metronome/transport updates to ClockMap;
+// changing those must never reset resident phrase phase.
+void setLoopStationAudioAdapter(loop_station::AudioAdapter* adapter, const loop_station::ClockMap* clock);
+uint64_t loopStationSampleClock();
+// Foreground scheduler only; storage may yield to audio.
+void serviceLoopStationArchive();
+// CPU-only bounded retirement; runs without SD resources so archive contention
+// cannot hold reclaimed phrase pages.
+void serviceLoopStationRetirement();
+
 /// The volume context for a sample preview: the params the preview drum should adopt so that it sounds like the
 /// instrument or kit-row the sample will be loaded into (issue #1591). Values are already fully resolved - the song and
 /// kit output stages have been folded in by the caller.

@@ -34,6 +34,8 @@
 #include "hid/matrix/matrix_driver.h"
 #include "io/midi/device_specific/specific_midi_device.h"
 #include "io/midi/midi_engine.h"
+#include "loop_station/persistence_firmware.h"
+#include "loop_station/song_model.h"
 #include "memory/general_memory_allocator.h"
 #include "model/action/action_logger.h"
 #include "model/clip/audio_clip.h"
@@ -208,6 +210,9 @@ Song::Song() : backedUpParamManagers(sizeof(BackedUpParamManager)) {
 }
 
 Song::~Song() {
+	// Remove every borrowed audio pointer before deletion can yield to audio.
+	if (!releaseLoopStation())
+		FREEZE_WITH_ERROR("L001");
 
 	// Delete existing Clips, if any
 	for (int32_t c = 0; c < sessionClips.getNumElements(); c++) {
@@ -1419,6 +1424,7 @@ weAreInArrangementEditorOrInClipInstance:
 	writer.writeTag("userScale", userScaleNotes.toBits());
 	writer.writeTag("disabledPresetScales", disabledPresetScales.to_ulong());
 	writer.writeClosingTag("scales");
+	loop_station::writeLoopStationSettings(writer, loopStationPersistence());
 
 	writer.writeClosingTag("song", true, true);
 }
@@ -1637,6 +1643,10 @@ unknownTag:
 			else if (!strcmp(tagName, "sessionLayout")) {
 				sessionLayout = (SessionLayoutType)reader.readTagOrAttributeValueInt();
 				reader.exitTag("sessionLayout");
+			}
+			else if (!strcmp(tagName, "loopStation")) {
+				loop_station::readLoopStationSettings(reader, loopStationPersistence());
+				break;
 			}
 
 			else if (!strcmp(tagName, "songGridScrollX")) {
@@ -3188,6 +3198,8 @@ void Song::setTempoFromParams(int32_t magnitude, int8_t whichValue, bool shouldL
 }
 
 void Song::deleteClipObject(Clip* clip, bool songBeingDestroyedToo, InstrumentRemoval instrumentRemovalInstruction) {
+	if (loopStation() && clip->type == ClipType::AUDIO)
+		loopStation()->clipDeleted(static_cast<AudioClip*>(clip));
 
 	if (!songBeingDestroyedToo) {
 		// Callers must remove any ClipInstances referencing this Clip first, or the arrangement is left pointing at

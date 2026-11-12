@@ -40,6 +40,8 @@
 
 ## Execution and checkpoints
 
+**Execution update, November 8:** The user explicitly directed: “Forget about these test, continue with implementation. NOW!” Physical-device qualification is deferred by that instruction. Continue Tasks 9-18 and software verification without waiting for hardware logs. The physical gate remains NOT PASSED; neither capacity/headroom nor measured codec alignment/deadlines may be claimed as qualified. Keep the feature Off by default and retain hardware checks as deferred acceptance work.
+
 This is one feature with tightly dependent components, not independent subsystem projects. Implement in an isolated worktree at execution time. Never execute the plan merely because the design was approved: obtain the execution-method selection required by the writing-plans workflow.
 
 Tasks 1-8 implement the first feasibility gate, with a minimal developer harness rather than the complete UI. Tasks 9-14 finish engine/storage integration. Tasks 15-18 complete product controls and acceptance. If real hardware is unavailable, finish meaningful host/firmware work for the first gate, record the missing measurement, and stop at the gate; do not mark it passed or continue to complete UI on assumptions.

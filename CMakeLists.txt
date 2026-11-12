@@ -73,6 +73,8 @@ option(ENABLE_RTT "Enable RTT output" ON)
 # SYSEX Load option
 option(ENABLE_SYSEX_LOAD "Enable loading firmware over midi sysex" OFF)
 
+option(LOOP_STATION_TEST_MODE "Enable debug-only eight-track loop feasibility harness" OFF)
+
 # MATRIX DRIVER pad logging
 option(ENABLE_MATRIX_DEBUG "Enable logging of pad events" OFF)
 

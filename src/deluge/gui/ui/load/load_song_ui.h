@@ -17,9 +17,12 @@
 
 #pragma once
 
+#include "deluge/loop_station/types.h"
 #include "gui/ui/load/load_ui.h"
 #include "hid/button.h"
+#include <array>
 
+class FileItem;
 class LoadSongUI final : public LoadUI {
 public:
 	LoadSongUI();
@@ -56,6 +59,9 @@ private:
 	bool performingLoad;
 	bool scrollingIntoSlot;
 	bool qwertyCurrentlyDrawnOnscreen;
+	FileItem* loopDiscardConfirmedFile = nullptr;
+	std::array<loop_station::Generation, loop_station::kTrackCount> loopDiscardConfirmedRevisions{};
+	uint8_t loopDiscardConfirmedCaptureMask = 0;
 	void doQueueLoadNextSongIfAvailable(int8_t offset);
 	// int32_t findNextFile(int32_t offset);
 	void exitThisUI();

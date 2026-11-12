@@ -598,6 +598,10 @@ void registerTasks() {
 	// formerly part of cluster loading (why? no idea), actions undo/redo midi commands
 	addRepeatingTask([]() { playbackHandler.slowRoutine(); }, p++, 0.01, 0.09, 0.1, "playback slow routine",
 	                 RESOURCE_SD);
+	addRepeatingTask(&AudioEngine::serviceLoopStationArchive, p++, 0.005, 0.02, 0.1, "loop archive",
+	                 RESOURCE_SD | RESOURCE_SD_ROUTINE);
+	addRepeatingTask(&AudioEngine::serviceLoopStationRetirement, p++, 0.005, 0.02, 0.1, "loop retirement",
+	                 RESOURCE_NONE);
 	// 31-39: Idle priority (40 for dyn tasks)
 	p = 31;
 	addRepeatingTask(&(PIC::flush), p++, 0.001, 0.001, 0.02, "PIC flush", RESOURCE_NONE);
@@ -645,6 +649,8 @@ void mainLoop() {
 		AudioEngine::slowRoutine();
 
 		audioRecorder.slowRoutine();
+		AudioEngine::serviceLoopStationArchive();
+		AudioEngine::serviceLoopStationRetirement();
 	}
 }
 extern "C" int32_t deluge_main(void) {

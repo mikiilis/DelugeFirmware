@@ -17,6 +17,7 @@
 
 #include "playback/playback_handler.h"
 #include "definitions_cxx.hpp"
+#include "deluge/loop_station/song_model.h"
 #include "gui/l10n/l10n.h"
 #include "gui/menu_item/sync_level.h"
 #include "gui/ui/audio_recorder.h"
@@ -573,6 +574,7 @@ void PlaybackHandler::setupPlayback(int32_t newPlaybackState, int32_t playFromPo
 	posToNextContinuePlaybackFrom = playFromPos;
 
 	metronomeOffset = playFromPos;
+	currentSong->updateLoopStationClock();
 
 	// We can only set these to -1 after calling the stuff above
 	// lastSwungTickDone = -1;
@@ -583,6 +585,10 @@ void PlaybackHandler::setupPlayback(int32_t newPlaybackState, int32_t playFromPo
 }
 
 void PlaybackHandler::endPlayback() {
+	if (currentSong && currentSong->loopStation()) {
+		const auto status = currentSong->loopStation()->requestTransportStop();
+		(void)status; // Transport stop is best-effort when the optional owner is still starting or retiring.
+	}
 	if (isInternalClockActive() && currentlySendingMIDIOutputClocks()) {
 		midiEngine.sendStop(this);
 	}
@@ -602,6 +608,8 @@ void PlaybackHandler::endPlayback() {
 	// Do this after calling currentPlaybackMode->endPlayback(), cos for arrangement that has to get the current
 	// tick, which needs to refer to which clock is active, which is stored in playbackState.
 	playbackState = 0;
+
+	currentSong->updateLoopStationClock();
 
 	// Nothing's going to play on into the Clusters we'd prefetched. Before any song swap, so it can delete Samples.
 	audioFileManager.releaseAllPrefetches();
@@ -1283,6 +1291,25 @@ int64_t PlaybackHandler::getActualSwungTickCount(uint32_t* timeRemainder) {
 	return actualSwungTick;
 }
 
+int64_t PlaybackHandler::getLoopStationMetronomeTickQ16() {
+	// Unswung musical grid, whether or not metronome audio is enabled. Use the
+	// same offset as metronome dispatch, including count-in's zero offset.
+	double tick = 0;
+	if (isInternalClockActive()) {
+		if (nextTimerTickScheduled) {
+			const int32_t elapsed = AudioEngine::audioSampleTimer - uint32_t(timeLastTimerTickBig >> 32);
+			const double fractionalAnchor = double(uint32_t(timeLastTimerTickBig)) / 4294967296.0;
+			tick = double(lastTimerTickActioned)
+			       + (double(elapsed) - fractionalAnchor) / currentSong->getTimePerTimerTickFloat();
+		}
+	}
+	else if (isExternalClockActive())
+		tick = getCurrentInternalTickFloatFollowingExternalClock();
+	if (!ticksLeftInCountIn)
+		tick += metronomeOffset;
+	return int64_t(tick * (24.0 * 65536.0 / currentSong->getQuarterNoteLength()));
+}
+
 int64_t PlaybackHandler::getCurrentInternalTickCount(uint32_t* timeRemainder) {
 
 	uint32_t timePerTimerTick = currentSong->getTimePerTimerTickRounded();
@@ -1494,6 +1521,8 @@ void PlaybackHandler::doSongSwap(bool preservePlayPosition) {
 	// Swap stuff over
 	AudioEngine::killAllVoices(true);
 	midiFollow.clearStoredClips(); // need to clear clip pointers stored for previous song
+	if (currentSong)
+		currentSong->detachLoopStation();
 	currentSong = preLoadedSong;
 	AudioEngine::mustUpdateReverbParamsBeforeNextRender = true;
 	preLoadedSong = nullptr;

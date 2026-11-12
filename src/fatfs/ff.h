@@ -153,6 +153,7 @@ typedef struct {
 #if !FF_FS_READONLY
 	DWORD	last_clst;		/* Last allocated cluster */
 	DWORD	free_clst;		/* Number of free clusters */
+	DWORD archive_revision; /* Invalidates paused archive scans after FAT mutations. */
 #endif
 #if FF_FS_RPATH
 	DWORD	cdir;			/* Current directory start cluster (0:root) */
@@ -178,6 +179,29 @@ typedef struct {
 } FATFS;
 
 
+
+/* Archive-only resumable allocation/directory state. Ordinary FatFs entry points ignore it.
+ * f_archive_work_reset preserves a detached root cluster until cleanup is serviced. */
+typedef struct {
+	FATFS* filesystem;
+	FATFS* directoryFilesystem;
+	DWORD revision, chain, next, scanned;
+	DWORD directoryOffset, directoryCluster, directoryStartCluster, directoryRevision;
+	DWORD clearCluster, clearParent;
+	LBA_t directorySector;
+	LBA_t clearSector;
+	WORD mount, directoryMount;
+	UINT remaining, examined, directoryBudget, directoryExamined, clearBudget, clearExamined;
+	BYTE valid, directoryPhase, directoryValid, clearPhase;
+} FFArchiveWork;
+typedef struct {
+	FATFS* filesystem;
+	DWORD next;
+	UINT examined;
+	WORD mount;
+	BYTE phase;
+	FFArchiveWork directory;
+} FFArchiveDelete;
 
 /* Object ID and allocation information (FFOBJID) */
 
@@ -295,7 +319,8 @@ typedef enum {
 	FR_LOCKED,				/* (16) The operation is rejected according to the file sharing policy */
 	FR_NOT_ENOUGH_CORE,		/* (17) LFN working buffer could not be allocated */
 	FR_TOO_MANY_OPEN_FILES,	/* (18) Number of open files > FF_FS_LOCK */
-	FR_INVALID_PARAMETER	/* (19) Given parameter is invalid */
+	FR_INVALID_PARAMETER,	/* (19) Given parameter is invalid */
+	FR_ARCHIVE_RETRY /* Archive-only bounded operation yielded; partial bw is valid. */
 } FRESULT;
 
 
@@ -307,6 +332,13 @@ typedef struct {
 
 /*--------------------------------------------------------------*/
 /* FatFs module application interface                           */
+
+void f_archive_work_reset(FFArchiveWork* work);
+/* Completes pending detached-cluster cleanup in bounded service steps. */
+FRESULT f_archive_work_cleanup(FFArchiveWork* work, UINT budget);
+FRESULT f_open_archive(FIL* fp, const TCHAR* path, BYTE mode, FFArchiveWork* work, UINT budget);
+FRESULT f_write_archive(FIL* fp, const void* buff, UINT btw, UINT* bw, FFArchiveWork* work, UINT budget);
+FRESULT f_unlink_archive(const TCHAR* path, FFArchiveDelete* state, UINT budget);
 
 FRESULT f_open (FIL* fp, const TCHAR* path, BYTE mode);				/* Open or create a file */
 FRESULT f_close (FIL* fp);											/* Close an open file object */

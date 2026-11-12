@@ -1236,6 +1236,7 @@ static FRESULT put_fat (	/* FR_OK(0):succeeded, !=0:error */
 
 
 	if (clst >= 2 && clst < fs->n_fatent) {	/* Check if in valid range */
+		++fs->archive_revision;
 		switch (fs->fs_type) {
 		case FS_FAT12:
 			bc = (UINT)clst; bc += bc / 2;	/* bc: byte offset of the entry */
@@ -1620,6 +1621,56 @@ static DWORD create_chain (	/* 0:No free cluster, 1:Internal error, 0xFFFFFFFF:D
 
 	return ncl;		/* Return new cluster number or error status */
 }
+#define ARCHIVE_CHAIN_RETRY ((DWORD)0xFFFFFFFE)
+
+/* Explicit archive context: normal/reentrant FatFs callers never take this path. */
+static DWORD create_chain_archive(FFOBJID* obj, DWORD clst, FFArchiveWork* work) {
+	FATFS* fs = obj->fs;
+	DWORD cs, candidate, revision;
+	FRESULT result;
+	if (!work) return create_chain(obj, clst);
+	if (fs->fs_type != FS_FAT12 && fs->fs_type != FS_FAT16 && fs->fs_type != FS_FAT32) return 1;
+	if (work->valid && (work->filesystem != fs || work->mount != fs->id || work->revision != fs->archive_revision)) work->valid = 0;
+	if (clst) {
+		cs = get_fat(obj, clst);
+		if (cs < 2) return 1;
+		if (cs == 0xFFFFFFFF) return cs;
+		if (cs < fs->n_fatent) return cs;
+	}
+	if (fs->free_clst == 0) { work->valid = 0; return 0; }
+	if (!work->valid || work->chain != clst) {
+		candidate = clst ? clst : fs->last_clst;
+		if (candidate < 1 || candidate >= fs->n_fatent) candidate = 1;
+		if (++candidate >= fs->n_fatent) candidate = 2;
+		work->filesystem = fs; work->mount = fs->id; work->revision = fs->archive_revision;
+		work->chain = clst; work->next = candidate; work->scanned = 0; work->valid = 1;
+	}
+	revision = work->revision;
+	for (;;) {
+		if (!work->remaining) return ARCHIVE_CHAIN_RETRY;
+		--work->remaining; ++work->examined;
+		candidate = work->next;
+		cs = get_fat(obj, candidate);
+		/* A cooperative ordinary writer may change FAT state while a read yields. */
+		if (revision != fs->archive_revision) { work->valid = 0; return ARCHIVE_CHAIN_RETRY; }
+		if (cs == 1 || cs == 0xFFFFFFFF) { work->valid = 0; return cs; }
+		if (!cs) {
+			result = put_fat(fs, candidate, 0xFFFFFFFF);
+			if (result == FR_OK && clst) result = put_fat(fs, clst, candidate);
+			work->valid = 0;
+			if (result != FR_OK) return result == FR_DISK_ERR ? 0xFFFFFFFF : 1;
+			fs->last_clst = candidate;
+			if (fs->free_clst <= fs->n_fatent - 2) --fs->free_clst;
+			fs->fsi_flag |= 1;
+			return candidate;
+		}
+		if (++work->next >= fs->n_fatent) work->next = 2;
+		if (++work->scanned >= fs->n_fatent - 2) {
+			work->valid = 0; fs->free_clst = 0; fs->fsi_flag |= 1; return 0;
+		}
+	}
+}
+
 
 #endif /* !FF_FS_READONLY */
 
@@ -1691,6 +1742,29 @@ static FRESULT dir_clear (	/* Returns FR_OK or FR_DISK_ERR */
 	}
 	return (n == fs->csize) ? FR_OK : FR_DISK_ERR;
 }
+
+/* Archive-only variant: zero one directory sector at a time. The candidate
+ * cluster stays unlinked until this completes, so cancellation can free it. */
+static FRESULT dir_clear_archive(FATFS* fs, FFArchiveWork* work) {
+	FRESULT res;
+	if (!work || work->clearPhase != 1) return FR_INVALID_OBJECT;
+	while (work->clearExamined < work->clearBudget && work->clearSector < clst2sect(fs, work->clearCluster) + fs->csize) {
+		res = sync_window(fs);
+		if (res != FR_OK) return res;
+		memset(fs->win, 0, sizeof fs->win);
+		res = disk_write(fs->pdrv, fs->win, work->clearSector, 1) == RES_OK ? FR_OK : FR_DISK_ERR;
+		fs->winsect = (LBA_t)0 - 1;
+		fs->wflag = 0;
+		if (res != FR_OK) return res;
+		++work->clearSector;
+		++work->clearExamined;
+	}
+	return work->clearSector >= clst2sect(fs, work->clearCluster) + fs->csize ? FR_OK : FR_ARCHIVE_RETRY;
+}
+
+/* Keep archive root preparation short even when the caller's general work
+ * budget is large (the production service currently supplies 128). */
+#define FF_ARCHIVE_CLEAR_QUANTUM 4
 #endif	/* !FF_FS_READONLY */
 
 
@@ -1741,6 +1815,39 @@ static FRESULT dir_sdi (	/* FR_OK(0):succeeded, !=0:error */
 	return FR_OK;
 }
 
+static FRESULT dir_archive_growth_step(DIR* dp, DWORD ofs, FFArchiveWork* work) {
+	FATFS* fs = dp->obj.fs;
+	DWORD currentTail;
+	FRESULT res = dir_clear_archive(fs, work);
+	if (res != FR_OK) return res;
+	/* Another ordinary writer may have edited or grown the root while this
+	 * detached cluster was being cleared. Retire it and restart lookup. */
+	if (work->directoryRevision != fs->archive_revision) {
+		work->clearPhase = 2;
+		work->directoryPhase = work->directoryValid = 0;
+		return FR_ARCHIVE_RETRY;
+	}
+	currentTail = get_fat(&dp->obj, work->clearParent);
+	if (currentTail == 0xFFFFFFFF) return FR_DISK_ERR;
+	if (currentTail == 1 || currentTail < 2) return FR_INT_ERR;
+	if (currentTail < fs->n_fatent) {
+		work->clearPhase = 2;
+		work->directoryPhase = work->directoryValid = 0;
+		return FR_ARCHIVE_RETRY;
+	}
+	res = put_fat(fs, work->clearParent, work->clearCluster);
+	if (res != FR_OK) return res;
+	dp->clust = work->clearCluster;
+	dp->sect = clst2sect(fs, work->clearCluster);
+	dp->dptr = ofs;
+	dp->dir = fs->win + (ofs % SS(fs));
+	work->clearPhase = 0;
+	work->clearCluster = work->clearParent = 0;
+	work->clearSector = 0;
+	work->clearExamined = 0;
+	return FR_OK;
+}
+
 
 
 
@@ -1748,13 +1855,16 @@ static FRESULT dir_sdi (	/* FR_OK(0):succeeded, !=0:error */
 /* Directory handling - Move directory table index next                  */
 /*-----------------------------------------------------------------------*/
 
-static FRESULT dir_next (	/* FR_OK(0):succeeded, FR_NO_FILE:End of table, FR_DENIED:Could not stretch */
-	DIR* dp,				/* Pointer to the directory object */
-	int stretch				/* 0: Do not stretch table, 1: Stretch table if needed */
-)
+static FRESULT dir_next_work(DIR* dp, int stretch, FFArchiveWork* work)
 {
 	DWORD ofs, clst;
+	LBA_t previousSector = dp->sect;
 	FATFS *fs = dp->obj.fs;
+	FRESULT res;
+	if (work && work->clearPhase == 1) {
+		res = dir_archive_growth_step(dp, dp->dptr + SZDIRE, work);
+		return res;
+	}
 
 
 	ofs = dp->dptr + SZDIRE;	/* Next entry */
@@ -1779,7 +1889,22 @@ static FRESULT dir_next (	/* FR_OK(0):succeeded, FR_NO_FILE:End of table, FR_DEN
 					if (!stretch) {								/* If no stretch, report EOT */
 						dp->sect = 0; return FR_NO_FILE;
 					}
-					clst = create_chain(&dp->obj, dp->clust);	/* Allocate a cluster */
+					if (work) {
+						clst = create_chain_archive(&dp->obj, 0, work); /* Reserve detached cluster for bounded clear. */
+						if (clst == ARCHIVE_CHAIN_RETRY) { dp->sect = previousSector; return FR_ARCHIVE_RETRY; }
+						if (clst == 0) return FR_DENIED;
+						if (clst == 1) return FR_INT_ERR;
+						if (clst == 0xFFFFFFFF) return FR_DISK_ERR;
+						work->clearCluster = clst;
+						work->clearParent = dp->clust;
+						work->clearSector = clst2sect(fs, clst);
+						work->clearExamined = 0;
+						work->clearPhase = 1;
+						work->directoryRevision = fs->archive_revision;
+						dp->sect = previousSector;
+						return dir_archive_growth_step(dp, ofs, work);
+					}
+					clst = create_chain(&dp->obj, dp->clust);	/* Ordinary FatFs: allocate and link as before. */
 					if (clst == 0) return FR_DENIED;			/* No free cluster */
 					if (clst == 1) return FR_INT_ERR;			/* Internal error */
 					if (clst == 0xFFFFFFFF) return FR_DISK_ERR;	/* Disk error */
@@ -1801,6 +1926,89 @@ static FRESULT dir_next (	/* FR_OK(0):succeeded, FR_NO_FILE:End of table, FR_DEN
 	return FR_OK;
 }
 
+static FRESULT dir_next(DIR* dp, int stretch) { return dir_next_work(dp, stretch, 0); }
+
+/* Save a root-directory cursor between archive-only calls. The working name
+ * buffer is rebuilt for each call, so only the directory position is kept. */
+static void archive_save_directory(FFArchiveWork* work, DIR* dp) {
+	work->directoryOffset = dp->dptr;
+	work->directoryCluster = dp->clust;
+	work->directorySector = dp->sect;
+	work->directoryValid = 1;
+}
+
+static FRESULT archive_restore_directory(DIR* dp, FFArchiveWork* work) {
+	FATFS* fs = dp->obj.fs;
+	if (!work->directoryValid) return dir_sdi(dp, 0);
+	if (work->directoryStartCluster != dp->obj.sclust) return FR_INVALID_OBJECT;
+	dp->dptr = work->directoryOffset;
+	dp->clust = work->directoryCluster;
+	dp->sect = work->directorySector;
+	dp->dir = fs->win + (dp->dptr % SS(fs));
+#if FF_USE_LFN
+	dp->blk_ofs = 0xFFFFFFFF;
+#endif
+	return FR_OK;
+}
+
+static void archive_start_directory(FFArchiveWork* work, DIR* dp, BYTE phase) {
+	work->directoryPhase = phase;
+	work->directoryValid = 0;
+	work->directoryStartCluster = dp->obj.sclust;
+	work->directoryFilesystem = dp->obj.fs;
+	work->directoryMount = dp->obj.fs->id;
+	work->directoryRevision = dp->obj.fs->archive_revision;
+}
+
+/* Archive candidates are root-only strict SFNs. Scan at most the caller's
+ * directory-entry budget; an ordinary FatFs lookup keeps using dir_find(). */
+static FRESULT dir_find_archive(DIR* dp, FFArchiveWork* work) {
+	FRESULT res;
+	BYTE c;
+	FATFS* fs = dp->obj.fs;
+	if (work->clearPhase == 1) return FR_NO_FILE; /* Resume the already-owned root-growth operation. */
+	if (work->directoryPhase && (work->directoryFilesystem != fs || work->directoryMount != fs->id ||
+	                              work->directoryRevision != fs->archive_revision)) {
+		work->directoryPhase = 0;
+		work->directoryValid = 0;
+	}
+	if (work->directoryPhase == 2) return FR_NO_FILE; /* Lookup already completed. */
+	if (work->directoryPhase == 0) {
+		archive_start_directory(work, dp, 1);
+		res = dir_sdi(dp, 0);
+	} else {
+		res = archive_restore_directory(dp, work);
+	}
+	if (res != FR_OK) return res;
+	while (work->directoryExamined < work->directoryBudget) {
+		res = move_window(fs, dp->sect);
+		if (res != FR_OK) return res;
+		c = dp->dir[DIR_Name];
+		++work->directoryExamined;
+		if (c == 0) {
+			archive_start_directory(work, dp, 2);
+			return FR_NO_FILE;
+		}
+		if (c != DDEM && !(dp->dir[DIR_Attr] & AM_VOL) && !memcmp(dp->dir, dp->fn, 11)) {
+			dp->obj.attr = dp->dir[DIR_Attr] & AM_MASK;
+			work->directoryPhase = 0;
+			work->directoryValid = 0;
+			return FR_OK;
+		}
+		res = dir_next_work(dp, 0, work);
+		if (res == FR_NO_FILE) {
+			archive_start_directory(work, dp, 2);
+			return FR_NO_FILE;
+		}
+		if (res != FR_OK) {
+			archive_save_directory(work, dp);
+			return res;
+		}
+	}
+	archive_save_directory(work, dp);
+	return FR_ARCHIVE_RETRY;
+}
+
 
 
 
@@ -1809,14 +2017,51 @@ static FRESULT dir_next (	/* FR_OK(0):succeeded, FR_NO_FILE:End of table, FR_DEN
 /* Directory handling - Reserve a block of directory entries             */
 /*-----------------------------------------------------------------------*/
 
-static FRESULT dir_alloc (	/* FR_OK(0):succeeded, !=0:error */
-	DIR* dp,				/* Pointer to the directory object */
-	UINT n_ent				/* Number of contiguous entries to allocate */
-)
+static FRESULT dir_alloc_work(DIR* dp, UINT n_ent, FFArchiveWork* work)
 {
 	FRESULT res;
 	UINT n;
 	FATFS *fs = dp->obj.fs;
+	/* Archive calls only create one-entry strict SFNs in the root. Keep that
+	 * scan resumable; ordinary FatFs allocation retains its original loop. */
+	if (work && work->directoryPhase == 2) {
+		if (n_ent != 1 || dp->obj.sclust != 0) return FR_INVALID_NAME;
+		if (!work->directoryValid) {
+			res = dir_sdi(dp, 0);
+			if (res != FR_OK) return res;
+			archive_save_directory(work, dp);
+			work->directoryStartCluster = dp->obj.sclust;
+		} else {
+			res = archive_restore_directory(dp, work);
+			if (res != FR_OK) return res;
+		}
+		while (work->directoryExamined < work->directoryBudget) {
+			res = move_window(fs, dp->sect);
+			if (res != FR_OK) return res;
+			++work->directoryExamined;
+#if FF_FS_EXFAT
+			if ((fs->fs_type == FS_EXFAT) ? (int)((dp->dir[XDIR_Type] & 0x80) == 0) : (int)(dp->dir[DIR_Name] == DDEM || dp->dir[DIR_Name] == 0)) {
+#else
+			if (dp->dir[DIR_Name] == DDEM || dp->dir[DIR_Name] == 0) {
+#endif
+				work->directoryPhase = 0;
+				work->directoryValid = 0;
+				return FR_OK;
+			}
+			res = dir_next_work(dp, 1, work);
+			if (res == FR_NO_FILE) {
+				work->directoryPhase = 0;
+				work->directoryValid = 0;
+				return FR_DENIED;
+			}
+			if (res != FR_OK) {
+				archive_save_directory(work, dp);
+				return res;
+			}
+		}
+		archive_save_directory(work, dp);
+		return FR_ARCHIVE_RETRY;
+	}
 
 
 	res = dir_sdi(dp, 0);
@@ -1834,13 +2079,15 @@ static FRESULT dir_alloc (	/* FR_OK(0):succeeded, !=0:error */
 			} else {
 				n = 0;				/* Not a free entry, restart to search */
 			}
-			res = dir_next(dp, 1);	/* Next entry with table stretch enabled */
+			res = dir_next_work(dp, 1, work);	/* Next entry with table stretch enabled */
 		} while (res == FR_OK);
 	}
 
 	if (res == FR_NO_FILE) res = FR_DENIED;	/* No directory entry to allocate */
 	return res;
 }
+
+static FRESULT dir_alloc(DIR* dp, UINT count) { return dir_alloc_work(dp, count, 0); }
 
 #endif	/* !FF_FS_READONLY */
 
@@ -2252,6 +2499,7 @@ static FRESULT store_xdir (
 		if (res != FR_OK) break;
 		memcpy(dp->dir, dirb, SZDIRE);
 		dp->obj.fs->wflag = 1;
+		++dp->obj.fs->archive_revision;
 		if (--nent == 0) break;
 		dirb += SZDIRE;
 		res = dir_next(dp, 0);
@@ -2472,9 +2720,7 @@ FRESULT dir_find (	/* FR_OK(0):succeeded, !=0:error */
 /* Register an object to the directory                                   */
 /*-----------------------------------------------------------------------*/
 
-static FRESULT dir_register (	/* FR_OK:succeeded, FR_DENIED:no free entry or too many SFN collision, FR_DISK_ERR:disk error */
-	DIR* dp						/* Target directory with object name to be created */
-)
+static FRESULT dir_register_work(DIR* dp, FFArchiveWork* work)
 {
 	FRESULT res;
 	FATFS *fs = dp->obj.fs;
@@ -2489,7 +2735,7 @@ static FRESULT dir_register (	/* FR_OK:succeeded, FR_DENIED:no free entry or too
 #if FF_FS_EXFAT
 	if (fs->fs_type == FS_EXFAT) {	/* On the exFAT volume */
 		n_ent = (len + 14) / 15 + 2;	/* Number of entries to allocate (85+C0+C1s) */
-		res = dir_alloc(dp, n_ent);		/* Allocate directory entries */
+		res = dir_alloc_work(dp, n_ent, work);		/* Allocate directory entries */
 		if (res != FR_OK) return res;
 		dp->blk_ofs = dp->dptr - SZDIRE * (n_ent - 1);	/* Set the allocated entry block offset */
 
@@ -2533,7 +2779,7 @@ static FRESULT dir_register (	/* FR_OK:succeeded, FR_DENIED:no free entry or too
 
 	/* Create an SFN with/without LFNs. */
 	n_ent = (sn[NSFLAG] & NS_LFN) ? (len + 12) / 13 + 1 : 1;	/* Number of entries to allocate */
-	res = dir_alloc(dp, n_ent);		/* Allocate entries */
+	res = dir_alloc_work(dp, n_ent, work);		/* Allocate entries */
 	if (res == FR_OK && --n_ent) {	/* Set LFN entry if needed */
 		res = dir_sdi(dp, dp->dptr - n_ent * SZDIRE);
 		if (res == FR_OK) {
@@ -2543,13 +2789,14 @@ static FRESULT dir_register (	/* FR_OK:succeeded, FR_DENIED:no free entry or too
 				if (res != FR_OK) break;
 				put_lfn(fs->lfnbuf, dp->dir, (BYTE)n_ent, sum);
 				fs->wflag = 1;
+				++fs->archive_revision;
 				res = dir_next(dp, 0);	/* Next entry */
 			} while (res == FR_OK && --n_ent);
 		}
 	}
 
 #else	/* Non LFN configuration */
-	res = dir_alloc(dp, 1);		/* Allocate an entry for SFN */
+	res = dir_alloc_work(dp, 1, work);		/* Allocate an entry for SFN */
 
 #endif
 
@@ -2563,11 +2810,14 @@ static FRESULT dir_register (	/* FR_OK:succeeded, FR_DENIED:no free entry or too
 			dp->dir[DIR_NTres] = dp->fn[NSFLAG] & (NS_BODY | NS_EXT);	/* Put NT flag */
 #endif
 			fs->wflag = 1;
+			++fs->archive_revision;
 		}
 	}
 
 	return res;
 }
+
+static FRESULT dir_register(DIR* dp) { return dir_register_work(dp, 0); }
 
 #endif /* !FF_FS_READONLY */
 
@@ -2598,6 +2848,7 @@ static FRESULT dir_remove (	/* FR_OK:Succeeded, FR_DISK_ERR:A disk error */
 				dp->dir[DIR_Name] = DDEM;	/* Mark the entry 'deleted'. */
 			}
 			fs->wflag = 1;
+			++fs->archive_revision;
 			if (dp->dptr >= last) break;	/* If reached last entry then all entries of the object has been deleted. */
 			res = dir_next(dp, 0);	/* Next entry */
 		} while (res == FR_OK);
@@ -2609,6 +2860,7 @@ static FRESULT dir_remove (	/* FR_OK:Succeeded, FR_DISK_ERR:A disk error */
 	if (res == FR_OK) {
 		dp->dir[DIR_Name] = DDEM;	/* Mark the entry 'deleted'.*/
 		fs->wflag = 1;
+		++fs->archive_revision;
 	}
 #endif
 
@@ -3122,6 +3374,27 @@ static FRESULT follow_path (	/* FR_OK(0): successful, !=0: error code */
 	}
 
 	return res;
+}
+
+
+/* Archive candidate files are deliberately root-only strict 8.3 names. This
+ * permits a resumable SFN-only scan without LFN alias-generation traversals. */
+static FRESULT follow_path_archive(DIR* dp, const TCHAR* path, FFArchiveWork* work) {
+	const TCHAR* p = path;
+	FRESULT res;
+	dp->obj.sclust = 0;
+#if FF_USE_LFN
+	dp->blk_ofs = 0xFFFFFFFF;
+#endif
+	if (!*p) return FR_INVALID_NAME;
+	while (*p) {
+		if (IsSeparator(*p)) return FR_INVALID_NAME;
+		++p;
+	}
+	res = create_name(dp, &path);
+	if (res != FR_OK) return res;
+	if (!(dp->fn[NSFLAG] & NS_LAST) || (dp->fn[NSFLAG] & (NS_LOSS | NS_LFN | NS_DOT | NS_NONAME))) return FR_INVALID_NAME;
+	return dir_find_archive(dp, work);
 }
 
 
@@ -3677,6 +3950,7 @@ FRESULT f_mount (
 
 	if (fs) {
 		fs->fs_type = 0;				/* Clear new fs object */
+		fs->archive_revision = 0;
 #if FF_FS_REENTRANT						/* Create sync object for the new volume */
 		if (!ff_cre_syncobj((BYTE)vol, &fs->sobj)) return FR_INT_ERR;
 #endif
@@ -3696,11 +3970,7 @@ FRESULT f_mount (
 /* Open or Create a File                                                 */
 /*-----------------------------------------------------------------------*/
 
-FRESULT f_open (
-	FIL* fp,			/* Pointer to the blank file object */
-	const TCHAR* path,	/* Pointer to the file name */
-	BYTE mode			/* Access mode and open mode flags */
-)
+static FRESULT f_open_work(FIL* fp, const TCHAR* path, BYTE mode, FFArchiveWork* work)
 {
 	FRESULT res;
 	DIR dj;
@@ -3721,7 +3991,7 @@ FRESULT f_open (
 	if (res == FR_OK) {
 		dj.obj.fs = fs;
 		INIT_NAMBUF(fs);
-		res = follow_path(&dj, path);	/* Follow the file path */
+		res = work ? follow_path_archive(&dj, path, work) : follow_path(&dj, path);	/* Follow the file path */
 #if !FF_FS_READONLY	/* Read/Write configuration */
 		if (res == FR_OK) {
 			if (dj.fn[NSFLAG] & NS_NONAME) {	/* Origin directory itself? */
@@ -3738,9 +4008,9 @@ FRESULT f_open (
 			if (res != FR_OK) {					/* No file, create new */
 				if (res == FR_NO_FILE) {		/* There is no file to open, create a new entry */
 #if FF_FS_LOCK != 0
-					res = enq_lock() ? dir_register(&dj) : FR_TOO_MANY_OPEN_FILES;
+					res = enq_lock() ? dir_register_work(&dj, work) : FR_TOO_MANY_OPEN_FILES;
 #else
-					res = dir_register(&dj);
+					res = dir_register_work(&dj, work);
 #endif
 				}
 				mode |= FA_CREATE_ALWAYS;		/* File is created */
@@ -3886,6 +4156,8 @@ FRESULT f_open (
 	LEAVE_FF(fs, res);
 }
 
+FRESULT f_open(FIL* fp, const TCHAR* path, BYTE mode) { return f_open_work(fp, path, mode, 0); }
+
 
 
 
@@ -3993,12 +4265,7 @@ FRESULT f_read (
 /* Write File                                                            */
 /*-----------------------------------------------------------------------*/
 
-FRESULT f_write (
-	FIL* fp,			/* Open file to be written */
-	const void* buff,	/* Data to be written */
-	UINT btw,			/* Number of bytes to write */
-	UINT* bw			/* Number of bytes written */
-)
+static FRESULT f_write_work(FIL* fp, const void* buff, UINT btw, UINT* bw, FFArchiveWork* work)
 {
 	FRESULT res;
 	FATFS *fs;
@@ -4025,7 +4292,7 @@ FRESULT f_write (
 				if (fp->fptr == 0) {		/* On the top of the file? */
 					clst = fp->obj.sclust;	/* Follow from the origin */
 					if (clst == 0) {		/* If no cluster is allocated, */
-						clst = create_chain(&fp->obj, 0);	/* create a new cluster chain */
+						clst = create_chain_archive(&fp->obj, 0, work);	/* create a new cluster chain */
 					}
 				} else {					/* On the middle or end of the file */
 #if FF_USE_FASTSEEK
@@ -4034,9 +4301,10 @@ FRESULT f_write (
 					} else
 #endif
 					{
-						clst = create_chain(&fp->obj, fp->clust);	/* Follow or stretch cluster chain on the FAT */
+						clst = create_chain_archive(&fp->obj, fp->clust, work);	/* Follow or stretch cluster chain on the FAT */
 					}
 				}
+				if (clst == ARCHIVE_CHAIN_RETRY) { fp->flag |= FA_MODIFIED; LEAVE_FF(fs, FR_ARCHIVE_RETRY); }
 				if (clst == 0) break;		/* Could not allocate a new cluster (disk full) */
 				if (clst == 1) ABORT(fs, FR_INT_ERR);
 				if (clst == 0xFFFFFFFF) ABORT(fs, FR_DISK_ERR);
@@ -4106,6 +4374,8 @@ FRESULT f_write (
 
 	LEAVE_FF(fs, FR_OK);
 }
+
+FRESULT f_write(FIL* fp, const void* buff, UINT btw, UINT* bw) { return f_write_work(fp, buff, btw, bw, 0); }
 
 
 
@@ -7085,3 +7355,117 @@ FRESULT f_setcp (
 }
 #endif	/* FF_CODE_PAGE == 0 */
 
+
+void f_archive_work_reset(FFArchiveWork* work) {
+	if (!work) return;
+	/* A detached directory cluster must be reclaimed by serviceAbort. */
+	if (work->clearPhase) {
+		if (work->clearPhase == 1) work->clearPhase = 2;
+		work->valid = 0;
+		work->directoryPhase = work->directoryValid = 0;
+		return;
+	}
+	memset(work, 0, sizeof(*work));
+}
+FRESULT f_archive_work_cleanup(FFArchiveWork* work, UINT budget) {
+	FATFS* fs;
+	FRESULT result;
+	if (!work || !budget) return FR_INVALID_PARAMETER;
+	if (!work->clearPhase) return FR_OK;
+	if (work->clearPhase == 1) work->clearPhase = 2;
+	fs = work->filesystem;
+	if (!fs || fs->id != work->mount || !fs->fs_type) {
+		/* The reserved cluster was never linked into a directory. After unmount
+		 * it can only be an allocated orphan, so drop the stale RAM pointer. */
+		memset(work, 0, sizeof(*work));
+		return FR_INVALID_OBJECT;
+	}
+	if (work->clearPhase == 2) {
+		result = put_fat(fs, work->clearCluster, 0);
+		if (result != FR_OK) return result;
+		if (fs->free_clst < fs->n_fatent - 2) ++fs->free_clst;
+		fs->fsi_flag |= 1;
+		work->clearPhase = 3;
+		work->clearCluster = 0;
+		return FR_ARCHIVE_RETRY;
+	}
+	if (work->clearPhase == 3) {
+		result = sync_fs(fs);
+		if (result != FR_OK) return result;
+		memset(work, 0, sizeof(*work));
+		return FR_OK;
+	}
+	return FR_INVALID_OBJECT;
+}
+FRESULT f_open_archive(FIL* fp, const TCHAR* path, BYTE mode, FFArchiveWork* work, UINT budget) {
+	FRESULT result;
+	if (!work || !budget) return FR_INVALID_PARAMETER;
+	if (work->clearPhase == 2 || work->clearPhase == 3) {
+		result = f_archive_work_cleanup(work, budget);
+		return result == FR_OK ? FR_ARCHIVE_RETRY : result;
+	}
+	work->remaining = budget; work->examined = 0;
+	work->directoryBudget = budget; work->directoryExamined = 0;
+	work->clearBudget = budget < FF_ARCHIVE_CLEAR_QUANTUM ? budget : FF_ARCHIVE_CLEAR_QUANTUM; work->clearExamined = 0;
+	result = f_open_work(fp, path, mode, work);
+	if (result != FR_ARCHIVE_RETRY) { work->valid = 0; work->directoryPhase = 0; work->directoryValid = 0; }
+	return result;
+}
+FRESULT f_write_archive(FIL* fp, const void* buff, UINT btw, UINT* bw, FFArchiveWork* work, UINT budget) {
+	FRESULT result;
+	if (!work || !budget) return FR_INVALID_PARAMETER;
+	work->remaining = budget; work->examined = 0;
+	result = f_write_work(fp, buff, btw, bw, work);
+	if (result != FR_ARCHIVE_RETRY) work->valid = 0;
+	return result;
+}
+FRESULT f_unlink_archive(const TCHAR* path, FFArchiveDelete* state, UINT budget) {
+	FATFS* fs;
+	FRESULT result;
+	FFOBJID object;
+	DIR directory;
+	DWORD next;
+	DEF_NAMBUF
+	if (!state || !budget) return FR_INVALID_PARAMETER;
+	state->examined = 0;
+	if (!state->phase) {
+		/* Archive candidates are exclusively owned regular files in the root. */
+		if (strchr(path, '/') || strchr(path, '\\')) return FR_INVALID_NAME;
+		result = mount_volume(&path, &fs, FA_WRITE);
+		if (result != FR_OK) return result;
+		if (fs->fs_type != FS_FAT12 && fs->fs_type != FS_FAT16 && fs->fs_type != FS_FAT32) LEAVE_FF(fs, FR_INVALID_PARAMETER);
+		directory.obj.fs = fs;
+		INIT_NAMBUF(fs);
+		state->directory.directoryBudget = budget;
+		state->directory.directoryExamined = 0;
+		result = follow_path_archive(&directory, path, &state->directory);
+		if (result == FR_OK && ((directory.fn[NSFLAG] & NS_NONAME) || (directory.obj.attr & (AM_DIR | AM_RDO)))) result = FR_DENIED;
+		if (result == FR_OK) {
+			state->next = ld_clust(fs, directory.dir);
+			result = dir_remove(&directory);
+			if (result == FR_OK) { state->filesystem = fs; state->mount = fs->id; state->phase = state->next ? 1 : 2; }
+		}
+		FREE_NAMBUF();
+		LEAVE_FF(fs, result == FR_OK ? FR_ARCHIVE_RETRY : result);
+	}
+	memset(&object, 0, sizeof(object)); object.fs = state->filesystem; object.id = state->mount;
+	result = validate(&object, &fs);
+	if (result != FR_OK) return result;
+	if (state->phase == 1) {
+		while (state->next >= 2 && state->next < fs->n_fatent && state->examined < budget) {
+			next = get_fat(&object, state->next); ++state->examined;
+			if (next == 1 || next == 0xFFFFFFFF) LEAVE_FF(fs, next == 1 ? FR_INT_ERR : FR_DISK_ERR);
+			if (!next) { state->next = 0; break; }
+			result = put_fat(fs, state->next, 0);
+			if (result != FR_OK) LEAVE_FF(fs, result);
+			if (fs->free_clst < fs->n_fatent - 2) ++fs->free_clst;
+			fs->fsi_flag |= 1;
+			state->next = next < fs->n_fatent ? next : 0;
+		}
+		if (!state->next || state->next >= fs->n_fatent) state->phase = 2;
+		LEAVE_FF(fs, FR_ARCHIVE_RETRY);
+	}
+	result = sync_fs(fs);
+	if (result == FR_OK) memset(state, 0, sizeof(*state));
+	LEAVE_FF(fs, result);
+}

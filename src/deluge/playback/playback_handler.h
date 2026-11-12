@@ -86,6 +86,7 @@ public:
 	int32_t getNumSwungTicksInSinceLastActionedSwungTick(uint32_t* timeRemainder = nullptr);
 	int64_t getActualSwungTickCount(uint32_t* timeRemainder = nullptr);
 	int64_t getCurrentInternalTickCount(uint32_t* remainder = nullptr);
+	int64_t getLoopStationMetronomeTickQ16();
 	void scheduleSwungTick();
 	int32_t getInternalTickTime(int64_t internalTickCount);
 	void scheduleTriggerClockOutTick();

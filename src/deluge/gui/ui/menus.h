@@ -4,6 +4,7 @@
 #include "gui/menu_item/edit_name.h"
 #include "gui/menu_item/filter/param.h"
 #include "gui/menu_item/firmware/version.h"
+#include "gui/menu_item/loop_station/settings.h"
 #include "gui/menu_item/note/fill.h"
 #include "gui/menu_item/note/iterance_divisor.h"
 #include "gui/menu_item/note/iterance_preset.h"

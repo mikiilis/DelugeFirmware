@@ -23,6 +23,7 @@
 #include "setting.h"
 #include "shift_is_sticky.h"
 #include <array>
+#include <tuple>
 
 extern deluge::gui::menu_item::runtime_feature::Setting runtimeFeatureSettingMenuItem;
 
@@ -68,6 +69,7 @@ SettingToggle menuEnableLaunchEventPlayhead(RuntimeFeatureSettingType::EnableLau
 SettingToggle menuDisplayChordLayout(RuntimeFeatureSettingType::DisplayChordKeyboard);
 SettingToggle menuAlternativePlaybackStartBehaviour(RuntimeFeatureSettingType::AlternativePlaybackStartBehaviour);
 SettingToggle menuEnableGridViewLoopPads(RuntimeFeatureSettingType::EnableGridViewLoopPads);
+SettingToggle menuEnableLoopStation(RuntimeFeatureSettingType::EnableLoopStation);
 SettingToggle menuAlternativeTapTempoBehaviour(RuntimeFeatureSettingType::AlternativeTapTempoBehaviour);
 OledOnlySettingToggle menuHorizontalMenus(RuntimeFeatureSettingType::HorizontalMenus);
 SettingToggle menuTrimFromStartOfAudioClip(RuntimeFeatureSettingType::TrimFromStartOfAudioClip);
@@ -75,32 +77,36 @@ SettingToggle menuShowBatteryLevel(RuntimeFeatureSettingType::ShowBatteryLevel);
 RoundedCornersSettingToggle menuRoundedCorners(RuntimeFeatureSettingType::RoundedCorners);
 Setting menuShortcutOverlay(RuntimeFeatureSettingType::ShortcutOverlay);
 
-std::array<MenuItem*, RuntimeFeatureSettingType::MaxElement - kNonTopLevelSettings> subMenuEntries{
-    &menuDrumRandomizer,
-    &menuFineTempo,
-    &menuQuantize,
-    &menuCatchNotes,
-    &menuDeleteUnusedKitRows,
-    &menuAltGoldenKnobDelayParams,
-    &menuDevSysexAllowed,
-    &menuSyncScalingAction,
-    &menuHighlightIncomingNotes,
-    &menuDisplayNornsLayout,
-    &menuShiftIsSticky,
-    &menuLightShiftLed,
-    &menuEnableDX7Engine,
-    &menuEmulatedDisplay,
-    &menuEnableKeyboardViewSidebarMenuExit,
-    &menuEnableLaunchEventPlayhead,
-    &menuDisplayChordLayout,
-    &menuAlternativePlaybackStartBehaviour,
-    &menuEnableGridViewLoopPads,
-    &menuAlternativeTapTempoBehaviour,
-    &menuHorizontalMenus,
-    &menuRoundedCorners,
-    &menuTrimFromStartOfAudioClip,
-    &menuShowBatteryLevel,
-    &menuShortcutOverlay};
+auto subMenuEntries = std::to_array<MenuItem*>({&menuDrumRandomizer,
+                                                &menuFineTempo,
+                                                &menuQuantize,
+                                                &menuCatchNotes,
+                                                &menuDeleteUnusedKitRows,
+                                                &menuAltGoldenKnobDelayParams,
+                                                &menuDevSysexAllowed,
+                                                &menuSyncScalingAction,
+                                                &menuHighlightIncomingNotes,
+                                                &menuDisplayNornsLayout,
+                                                &menuShiftIsSticky,
+                                                &menuLightShiftLed,
+                                                &menuEnableDX7Engine,
+                                                &menuEmulatedDisplay,
+                                                &menuEnableKeyboardViewSidebarMenuExit,
+                                                &menuEnableLaunchEventPlayhead,
+                                                &menuDisplayChordLayout,
+                                                &menuAlternativePlaybackStartBehaviour,
+                                                &menuEnableGridViewLoopPads,
+                                                &menuEnableLoopStation,
+                                                &menuAlternativeTapTempoBehaviour,
+                                                &menuHorizontalMenus,
+                                                &menuRoundedCorners,
+                                                &menuTrimFromStartOfAudioClip,
+                                                &menuShowBatteryLevel,
+                                                &menuShortcutOverlay});
+
+static_assert(std::tuple_size_v<decltype(subMenuEntries)>
+                  == RuntimeFeatureSettingType::MaxElement - kNonTopLevelSettings,
+              "Runtime feature menu registration is incomplete");
 
 Settings::Settings(l10n::String name, l10n::String title) : menu_item::Submenu(name, title, subMenuEntries) {
 }

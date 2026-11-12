@@ -107,6 +107,10 @@ bool SampleMarkerEditor::getGreyoutColsAndRows(uint32_t* cols, uint32_t* rows) {
 }
 
 bool SampleMarkerEditor::opened() {
+	if (auto* clip = getCurrentAudioClip(); clip && clip->hasResidentAudio()) {
+		display->displayPopup("Stop and unbind loop");
+		return false;
+	}
 
 	if (getRootUI() == &keyboardScreen) {
 		PadLEDs::skipGreyoutFade();

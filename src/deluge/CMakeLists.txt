@@ -77,3 +77,18 @@ if(ENABLE_MATRIX_DEBUG)
     target_compile_definitions(deluge PUBLIC ENABLE_MATRIX_DEBUG=1)
 endif(ENABLE_MATRIX_DEBUG)
 
+# Developer feasibility workload: excluded unless explicitly enabled, and Debug only.
+if(LOOP_STATION_TEST_MODE)
+    target_sources(deluge PRIVATE $<$<CONFIG:DEBUG>:${PROJECT_SOURCE_DIR}/tests/hardware/loop_station/fixture.cpp>)
+    set_property(SOURCE
+        ${PROJECT_SOURCE_DIR}/src/deluge/processing/engines/audio_engine.cpp
+        ${PROJECT_SOURCE_DIR}/tests/hardware/loop_station/fixture.cpp
+        TARGET_DIRECTORY deluge APPEND PROPERTY COMPILE_DEFINITIONS
+        $<$<CONFIG:DEBUG>:LOOP_STATION_TEST_MODE=1>)
+endif()
+
+# Loop invariants use the firmware fault handler instead of newlib stdio.
+set_property(SOURCE
+    ${CMAKE_CURRENT_LIST_DIR}/loop_station/gesture_rollback.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/loop_station/memory_reservation.cpp
+    TARGET_DIRECTORY deluge APPEND PROPERTY COMPILE_DEFINITIONS LOOP_STATION_FIRMWARE=1)

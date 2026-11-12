@@ -89,6 +89,7 @@
 #include "gui/menu_item/keyboard/layout.h"
 #include "gui/menu_item/lfo/sync.h"
 #include "gui/menu_item/lfo/type.h"
+#include "gui/menu_item/loop_station/settings.h"
 #include "gui/menu_item/master_transpose.h"
 #include "gui/menu_item/menu_item.h"
 #include "gui/menu_item/midi/after_touch_to_mono.h"
@@ -1905,6 +1906,9 @@ PLACE_SDRAM_BSS menu_item::Submenu soundEditorRootMenuKitGlobalFX{
 };
 
 // Root Menu
+PLACE_SDRAM_BSS deluge::gui::menu_item::loop_station::SettingsMenu
+    deluge::gui::menu_item::loop_station::loopStationSettingsMenu{};
+
 PLACE_SDRAM_BSS Submenu settingsRootMenu{
     STRING_FOR_SETTINGS,
     {

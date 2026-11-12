@@ -1,0 +1,70 @@
+---
+const demoUrl = `${import.meta.env.BASE_URL.replace(/\/$/, "")}/demos/loop-station.html`
+---
+
+<div class="loop-station-demo">
+  <p>
+    Try the eight-track view below, or <a
+      href={demoUrl}
+      target="_blank"
+      rel="noopener">open the interactive view at full size</a
+    >. This silent simulation starts with tracks in different states; timing is
+    illustrative.
+  </p>
+  <iframe
+    src={demoUrl}
+    title="Interactive Deluge Loop Station with eight tracks and clockwise filling rings"
+    loading="lazy"
+    data-loop-station-demo></iframe>
+</div>
+
+<script>
+  const demoFrames = [
+    ...document.querySelectorAll<HTMLIFrameElement>(
+      "iframe[data-loop-station-demo]",
+    ),
+  ]
+
+  window.addEventListener("message", (event) => {
+    if (
+      event.origin !== window.location.origin ||
+      event.data?.type !== "loop-station-demo-size"
+    )
+      return
+    const frame = demoFrames.find(
+      (candidate) => candidate.contentWindow === event.source,
+    )
+    const height = Number(event.data.height)
+    if (frame && Number.isFinite(height) && height > 0 && height < 5000) {
+      frame.style.height = `${Math.ceil(height) + 2}px`
+    }
+  })
+
+  for (const frame of demoFrames) {
+    const requestHeight = () => {
+      frame.contentWindow?.postMessage(
+        { type: "loop-station-demo-request-size" },
+        window.location.origin,
+      )
+    }
+    frame.addEventListener("load", requestHeight)
+    requestHeight()
+  }
+</script>
+
+<style>
+  .loop-station-demo {
+    margin-block: 1.5rem 2rem;
+  }
+
+  .loop-station-demo iframe {
+    box-sizing: border-box;
+    display: block;
+    width: 100%;
+    height: 1050px;
+    margin-top: 1rem;
+    border: 1px solid #39413e;
+    border-radius: 0.75rem;
+    background: #101415;
+  }
+</style>

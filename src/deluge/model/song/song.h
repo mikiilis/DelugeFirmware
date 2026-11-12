@@ -18,6 +18,7 @@
 #pragma once
 
 #include "definitions_cxx.hpp"
+#include "deluge/loop_station/persistence.h"
 #include "gui/menu_item/reverb/model.h"
 #include "io/midi/learned_midi.h"
 #include "model/clip/clip.h"
@@ -38,6 +39,11 @@
 #include "util/container/array/ordered_resizeable_array_with_multi_word_key.h"
 #include "util/d_string.h"
 
+namespace loop_station {
+class SongModel;
+struct FirmwareOwner;
+enum class Status : uint8_t;
+} // namespace loop_station
 class MidiCommand;
 class Clip;
 class AudioClip;
@@ -103,6 +109,20 @@ struct SessionMacro {
 class Song final : public TimelineCounter {
 public:
 	Song();
+	// Explicit enable from the default-Off community feature. Foreground only.
+	loop_station::Status ensureLoopStation(bool enabled);
+	loop_station::SongModel* loopStation() const;
+	loop_station::PersistenceState& loopStationPersistence() { return loopStationPersistence_; }
+	const loop_station::PersistenceState& loopStationPersistence() const { return loopStationPersistence_; }
+	loop_station::Status beginLoopStationSave();
+	loop_station::Status commitLoopStationSave();
+	void cancelLoopStationSave();
+	void failLoopStationSave();
+	void serviceLoopStationArchive(uint32_t maxBytes);
+	void updateLoopStationClock();
+	// Detach at a boundary; foreground release returns false while setup is yielding.
+	void detachLoopStation();
+	bool releaseLoopStation();
 	~Song() override;
 	bool mayDoubleTempo();
 	bool ensureAtLeastOneSessionClip();
@@ -465,6 +485,8 @@ public:
 	ThresholdRecordingMode thresholdRecordingMode;
 
 private:
+	loop_station::PersistenceState loopStationPersistence_{};
+	loop_station::FirmwareOwner* loopStationOwner_ = nullptr;
 	ScaleMapper scaleMapper;
 	NoteSet userScaleNotes;
 	bool fillModeActive;

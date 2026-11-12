@@ -22,6 +22,8 @@
 #include "gui/views/automation_view.h"
 #include "gui/waveform/waveform_renderer.h"
 #include "io/debug/log.h"
+#include "loop_station/audio_adapter.h"
+#include "loop_station/song_model.h"
 #include "memory/general_memory_allocator.h"
 #include "model/action/action_logger.h"
 #include "model/clip/clip_instance.h"
@@ -49,6 +51,48 @@ extern "C" {
 extern uint8_t currentlyAccessingCard;
 }
 
+loop_station::Status AudioClip::bindResidentAudio(loop_station::AudioAdapter* adapter, loop_station::SlotId slot) {
+	if (adapter && !loop_station::validSlot(slot))
+		return loop_station::Status::Invalid;
+	if (adapter && recorder)
+		return loop_station::Status::Busy;
+	if (adapter)
+		unassignVoiceSample(false);
+	residentAudio_ = adapter;
+	residentSlot_ = adapter ? slot : loop_station::kInvalidSlot;
+	return loop_station::Status::Ok;
+}
+
+loop_station::Status AudioClip::stopAndUnbindResident() {
+	if (!residentAudio_)
+		return loop_station::Status::Ok;
+	return residentOwner_ ? residentOwner_->unbind(residentSlot_) : loop_station::Status::Busy;
+}
+
+loop_station::FrameIndex AudioClip::residentAudioPhase() const {
+	return residentAudio_ ? residentAudio_->phase(residentSlot_) : 0;
+}
+
+void AudioClip::renderResidentAudio(std::span<StereoSample> output) {
+	if (!residentAudio_)
+		return;
+	std::array<StereoSample, SSI_TX_BUFFER_NUM_SAMPLES> physicalInput;
+	auto* input = AudioEngine::getInputReadPos(AudioInputChannel::STEREO);
+	const auto* end = AudioEngine::getInputBufferEnd(AudioInputChannel::STEREO);
+	const auto count = std::min(output.size(), physicalInput.size());
+	for (size_t i = 0; i < count; ++i) {
+		physicalInput[i] = {input[0], input[1]};
+		input += NUM_MONO_INPUT_CHANNELS;
+		if (input >= end)
+			input = AudioEngine::getInputBufferStart(AudioInputChannel::STEREO);
+	}
+	// Use the same RX cursor as ordinary track monitoring. No unmeasured analog
+	// latency correction or delayed capture tail is introduced here.
+	residentAudio_->setMonitoringGain(AudioEngine::getInputMonitoringGain(0),
+	                                  AudioEngine::getInputMonitoringGain(count));
+	residentAudio_->renderDry(residentSlot_, std::span<const StereoSample>(physicalInput).first(count), output);
+}
+
 AudioClip::AudioClip() : Clip(ClipType::AUDIO) {
 	overdubsShouldCloneOutput = true;
 	voiceSample = nullptr;
@@ -65,6 +109,8 @@ AudioClip::AudioClip() : Clip(ClipType::AUDIO) {
 }
 
 AudioClip::~AudioClip() {
+	if (residentOwner_)
+		residentOwner_->clipDeleted(this);
 	if (recorder) {
 		FREEZE_WITH_ERROR("E278");
 	}
@@ -139,7 +185,8 @@ void AudioClip::abortRecording() {
 }
 
 bool AudioClip::wantsToBeginLinearRecording(Song* song) {
-	return (Clip::wantsToBeginLinearRecording(song) && (!sampleHolder.audioFile || !shouldCloneForOverdubs())
+	return (!hasResidentAudio() && Clip::wantsToBeginLinearRecording(song)
+	        && (!sampleHolder.audioFile || !shouldCloneForOverdubs())
 	        && ((AudioOutput*)output)->inputChannel > AudioInputChannel::NONE);
 }
 
@@ -148,6 +195,8 @@ bool AudioClip::isAbandonedOverdub() {
 }
 
 Error AudioClip::beginLinearRecording(ModelStackWithTimelineCounter* modelStack, int32_t buttonPressLatency) {
+	if (hasResidentAudio())
+		return Error::UNSPECIFIED;
 
 	AudioInputChannel inputChannel;
 	Output* outputRecordingFrom;
@@ -317,6 +366,8 @@ bool AudioClip::cloneOutput(ModelStackWithTimelineCounter* modelStack) {
 void AudioClip::processCurrentPos(ModelStackWithTimelineCounter* modelStack, uint32_t ticksSinceLast) {
 
 	Clip::processCurrentPos(modelStack, ticksSinceLast);
+	if (hasResidentAudio())
+		return;
 	if (modelStack->getTimelineCounter() != this) {
 		return;
 	}
@@ -446,6 +497,8 @@ possiblyResetEnvelopeAndGetOut:
 
 // This must only be called if playback is on and this Clip is active!
 void AudioClip::resumePlayback(ModelStackWithTimelineCounter* modelStack, bool mayMakeSound) {
+	if (hasResidentAudio())
+		return;
 
 #if ALPHA_OR_BETA_VERSION
 	if (!playbackHandler.isEitherClockActive() || !modelStack->song->isClipActive(this)) {
@@ -563,7 +616,7 @@ int64_t AudioClip::getNumSamplesTilLoop(ModelStackWithTimelineCounter* modelStac
 void AudioClip::render(ModelStackWithTimelineCounter* modelStack, std::span<q31_t> outputBuffer, int32_t amplitude,
                        int32_t amplitudeIncrement, int32_t pitchAdjust) {
 
-	if (!voiceSample) {
+	if (hasResidentAudio() || !voiceSample) {
 		return;
 	}
 
@@ -1002,6 +1055,8 @@ void AudioClip::detachFromOutput(ModelStackWithTimelineCounter* modelStack, bool
 }
 
 void AudioClip::detachAudioClipFromOutput(Song* song, bool shouldRetainLinksToOutput, bool shouldTakeParamManagerWith) {
+	if (residentOwner_)
+		residentOwner_->clipDeleted(this);
 	// detaching from output, so don't need it anymore
 	unassignVoiceSample(true);
 
@@ -1319,6 +1374,8 @@ void AudioClip::loadSample(bool mayActuallyReadFile) {
 
 // Keeps same ParamManager
 Error AudioClip::changeOutput(ModelStackWithTimelineCounter* modelStack, Output* newOutput) {
+	if (hasResidentAudio())
+		return Error::UNSPECIFIED;
 	detachAudioClipFromOutput(modelStack->song, false, true);
 
 	return setOutput(modelStack, newOutput);
@@ -1513,7 +1570,7 @@ ParamManagerForTimeline* AudioClip::getCurrentParamManager() {
 }
 
 bool AudioClip::isEmpty(bool displayPopup) {
-	if (sampleHolder.audioFile) {
+	if (hasResidentAudio() || sampleHolder.audioFile) {
 		return false;
 	}
 	return true;

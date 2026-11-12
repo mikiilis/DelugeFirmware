@@ -17,6 +17,7 @@
 
 #include "gui/ui/load/load_song_ui.h"
 #include "definitions_cxx.hpp"
+#include "deluge/loop_station/song_model.h"
 #include "extern.h"
 #include "gui/colour/colour.h"
 #include "gui/l10n/l10n.h"
@@ -319,6 +320,47 @@ void LoadSongUI::performLoad() {
 		performingLoad = false;
 		return;
 	}
+	if (currentSong && currentSong->loopStation()) {
+		auto* loopModel = currentSong->loopStation();
+		const bool discardUnsaved = loopModel->hasUnsavedAudio();
+		std::array<loop_station::Generation, loop_station::kTrackCount> revisions{};
+		for (loop_station::SlotId slot = 0; slot < loop_station::kTrackCount; ++slot)
+			revisions[slot] = loopModel->contentRevision(slot);
+		const auto captureMask = loopModel->captureActivityMask();
+		if (discardUnsaved) {
+			bool confirmationMatches =
+			    loopDiscardConfirmedFile == currentFileItem && loopDiscardConfirmedCaptureMask == captureMask;
+			for (loop_station::SlotId slot = 0; slot < loop_station::kTrackCount; ++slot)
+				confirmationMatches &= revisions[slot] == loopDiscardConfirmedRevisions[slot];
+			if (!confirmationMatches) {
+				loopDiscardConfirmedFile = currentFileItem;
+				loopDiscardConfirmedCaptureMask = captureMask;
+				for (loop_station::SlotId slot = 0; slot < loop_station::kTrackCount; ++slot)
+					loopDiscardConfirmedRevisions[slot] = revisions[slot];
+				display->displayPopup("Unsaved loops: press LOAD again to discard");
+				performingLoad = false;
+				return;
+			}
+		}
+		const auto status = discardUnsaved ? loopModel->requestSongReplacement(true, revisions, captureMask)
+		                                   : loopModel->requestSongReplacement(false);
+		if (status != loop_station::Status::Ok) {
+			if (status == loop_station::Status::Cancelled && discardUnsaved) {
+				loopDiscardConfirmedFile = currentFileItem;
+				loopDiscardConfirmedCaptureMask = loopModel->captureActivityMask();
+				for (loop_station::SlotId slot = 0; slot < loop_station::kTrackCount; ++slot)
+					loopDiscardConfirmedRevisions[slot] = loopModel->contentRevision(slot);
+				display->displayPopup("Loop audio changed; press LOAD again to discard");
+				performingLoad = false;
+				return;
+			}
+			display->displayPopup(status == loop_station::Status::Busy ? "Loop cleanup pending; press LOAD again"
+			                                                           : "Loop replacement cancelled");
+			performingLoad = false;
+			return;
+		}
+		loopDiscardConfirmedFile = nullptr;
+	}
 
 	actionLogger.deleteAllLogs();
 
@@ -410,6 +452,16 @@ gotErrorAfterCreatingSong:
 	error = preLoadedSong->readFromFile(*activeDeserializer);
 	if (error != Error::NONE) {
 		goto gotErrorAfterCreatingSong;
+	}
+	const auto loopAdmission =
+	    preLoadedSong->loopStationPersistence().prepareLoadAdmission(loop_station::kConfiguredMemoryProfile);
+	if (loopAdmission != loop_station::Status::Ok) {
+		// Keep the Song load usable, but leave all loop references unbound if the
+		// manifest cannot be admitted as a complete, bounded set.
+		display->displayPopup("Loop data unavailable; loaded without loops");
+	}
+	else if (preLoadedSong->loopStationPersistence().loadAdmission().omittedCount) {
+		display->displayPopup("Some saved loops could not be restored");
 	}
 	AudioEngine::logAction("read new song from file");
 
@@ -695,6 +747,9 @@ ignoring the file extension.
 */
 
 void LoadSongUI::currentFileChanged(int32_t movementDirection) {
+	loopDiscardConfirmedFile = nullptr;
+	loopDiscardConfirmedRevisions = {};
+	loopDiscardConfirmedCaptureMask = 0;
 
 	if (movementDirection && !qwertyAlwaysVisible) {
 		qwertyVisible = false;

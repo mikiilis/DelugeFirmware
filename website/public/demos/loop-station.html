@@ -1,0 +1,991 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Deluge · Eight-track Loop Station</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --ink: #e9ece8;
+        --muted: #929b9c;
+        --accent: #c5e79e;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: #101415;
+        color: var(--ink);
+        font:
+          15px/1.5 -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          sans-serif;
+      }
+      button {
+        font: inherit;
+        cursor: pointer;
+        touch-action: manipulation;
+      }
+      button:focus-visible,
+      input:focus-visible {
+        outline: 2px solid #ecf7b8;
+        outline-offset: 4px;
+      }
+      .page {
+        max-width: 1160px;
+        margin: auto;
+        padding: 38px 32px 28px;
+      }
+      .eyebrow {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.18em;
+        font-size: 10px;
+        color: var(--accent);
+      }
+      .eyebrow:before {
+        content: "";
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: var(--accent);
+      }
+      h1 {
+        font-size: clamp(28px, 3.5vw, 42px);
+        font-weight: 500;
+        line-height: 1.15;
+        letter-spacing: -0.045em;
+        margin: 12px 0 10px;
+      }
+      .intro {
+        margin: 0;
+        color: var(--muted);
+        font-size: 14px;
+      }
+      .toolbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 20px;
+        margin: 25px 0 18px;
+        flex-wrap: wrap;
+      }
+      .animation-mode {
+        display: inline-block;
+        padding: 8px 14px;
+        border-radius: 5px;
+        color: #1b2217;
+        background: var(--accent);
+        font-size: 12px;
+      }
+      .toolbar-label {
+        color: #a6afad;
+        font-size: 12px;
+        margin-right: 12px;
+      }
+      .toolbar-left {
+        display: flex;
+        align-items: center;
+      }
+      .text-button {
+        background: none;
+        color: #a5aeab;
+        border: 0;
+        font-size: 12px;
+        padding: 8px;
+      }
+      .device-viewport {
+        overflow-x: auto;
+        padding: 4px 0 20px;
+      }
+      .device {
+        position: relative;
+        min-width: 640px;
+        border: 1px solid #4a4e4d;
+        border-radius: 13px;
+        padding: 25px 34px 19px;
+        background: linear-gradient(120deg, #303535, #252a2a 60%, #303534);
+        box-shadow:
+          0 28px 65px #0007,
+          inset 0 1px #ffffff1a,
+          inset 0 -3px #0006;
+      }
+      .device:before,
+      .device:after {
+        position: absolute;
+        content: "";
+        top: 3px;
+        bottom: 3px;
+        width: 13px;
+        background: repeating-linear-gradient(
+          92deg,
+          #694d36,
+          #78563d 2px,
+          #77583e 3px,
+          #644833 6px
+        );
+      }
+      .device:before {
+        left: 0;
+        border-radius: 10px 0 0 10px;
+      }
+      .device:after {
+        right: 0;
+        border-radius: 0 10px 10px 0;
+      }
+      .screw {
+        position: absolute;
+        width: 6px;
+        height: 6px;
+        background: #161a19;
+        border: 1px solid #565c59;
+        border-radius: 50%;
+      }
+      .screw.tl {
+        left: 21px;
+        top: 12px;
+      }
+      .screw.tr {
+        right: 21px;
+        top: 12px;
+      }
+      .screw.bl {
+        left: 21px;
+        bottom: 11px;
+      }
+      .screw.br {
+        right: 21px;
+        bottom: 11px;
+      }
+      .device-top {
+        display: grid;
+        grid-template-columns: 1fr 242px 1fr;
+        gap: 25px;
+        align-items: center;
+        margin-bottom: 22px;
+      }
+      .brand {
+        font-size: 27px;
+        letter-spacing: -0.07em;
+        font-weight: 650;
+      }
+      .brand-sub {
+        font-size: 8px;
+        color: #a6acaa;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        margin-top: 1px;
+      }
+      .mode-label {
+        margin-top: 17px;
+        display: flex;
+        gap: 7px;
+        align-items: center;
+        font-size: 9px;
+        text-transform: uppercase;
+        letter-spacing: 0.12em;
+        color: #c7ceca;
+      }
+      .mode-label i {
+        display: block;
+        height: 4px;
+        width: 4px;
+        border-radius: 50%;
+        background: #c5e79e;
+        box-shadow: 0 0 7px #c5e79e88;
+      }
+      .display-bezel {
+        padding: 9px;
+        background: #151a19;
+        border: 1px solid #444b47;
+        border-radius: 6px;
+        box-shadow: inset 0 2px 6px #0008;
+      }
+      .oled {
+        background: #040a09;
+        padding: 10px 11px;
+        height: 96px;
+        color: #c9ebd6;
+        font:
+          11px/1.5 ui-monospace,
+          SFMono-Regular,
+          Menlo,
+          monospace;
+        text-shadow: 0 0 5px #77ffb244;
+      }
+      .oled-title {
+        display: flex;
+        justify-content: space-between;
+        border-bottom: 1px solid #6a9d7a66;
+        padding-bottom: 5px;
+        margin-bottom: 6px;
+        font-size: 10px;
+      }
+      .oled-row {
+        display: flex;
+        justify-content: space-between;
+      }
+      .oled-bottom {
+        margin-top: 5px;
+        color: #6c9e83;
+        font-size: 9px;
+      }
+      .knobs {
+        display: flex;
+        gap: 19px;
+        justify-content: flex-end;
+      }
+      .knob-wrap {
+        text-align: center;
+        font-size: 7px;
+        text-transform: uppercase;
+        letter-spacing: 0.12em;
+        color: #b1b7b3;
+      }
+      .knob {
+        position: relative;
+        width: 35px;
+        height: 35px;
+        margin: 0 auto 7px;
+        background: conic-gradient(#333936, #0e1210, #363b38, #101412, #333936);
+        border: 2px solid #141916;
+        border-radius: 50%;
+        box-shadow:
+          0 4px 5px #0008,
+          0 0 0 2px #434a45;
+      }
+      .knob:after {
+        content: "";
+        position: absolute;
+        top: 3px;
+        left: 14px;
+        width: 3px;
+        height: 9px;
+        background: #c0c9c1;
+        border-radius: 2px;
+        transform: rotate(-25deg);
+        transform-origin: 50% 13px;
+      }
+      .physical-grid {
+        display: grid;
+        grid-template-columns: repeat(16, minmax(0, 1fr)) 9px repeat(
+            2,
+            minmax(0, 1fr)
+          );
+        grid-template-rows: repeat(8, 1fr);
+        gap: 6px;
+        user-select: none;
+        -webkit-user-select: none;
+      }
+      .pad {
+        position: relative;
+        border: 1px solid #ffffff16;
+        border-radius: 4px;
+        background: #242b28;
+        aspect-ratio: 1;
+        padding: 0;
+        box-shadow:
+          inset 0 1px 2px #ffffff08,
+          0 2px 2px #0006;
+        transition:
+          background 70ms linear,
+          box-shadow 70ms linear;
+        -webkit-tap-highlight-color: transparent;
+      }
+      .pad:hover {
+        outline: 1px solid #ffffff90;
+        outline-offset: 1px;
+        z-index: 1;
+      }
+      .pad.selected-border {
+        border-color: #ffffff44;
+      }
+      .pad.center {
+        border-color: #0003;
+      }
+      .pad-label {
+        position: relative;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        pointer-events: none;
+        z-index: 2;
+        font-size: clamp(10px, 1.2vw, 14px);
+        color: #101c14;
+        font-weight: 700;
+        line-height: 1.25;
+      }
+      .pad-label small {
+        font-size: 7px;
+        text-transform: uppercase;
+        letter-spacing: 0.12em;
+      }
+      .pad-label.dim {
+        color: #b8c9bb;
+      }
+      .side-icon {
+        font-size: 12px;
+        color: #08170c;
+      }
+      .device-bottom {
+        display: flex;
+        justify-content: space-between;
+        font-size: 8px;
+        letter-spacing: 0.13em;
+        text-transform: uppercase;
+        color: #929e96;
+        margin-top: 12px;
+      }
+      .track-strip {
+        display: grid;
+        grid-template-columns: repeat(8, 1fr);
+        gap: 10px;
+        margin-top: 7px;
+      }
+      .track-status {
+        padding: 10px 8px;
+        border-top: 2px solid #35423b;
+        min-width: 0;
+      }
+      .track-status strong {
+        font-weight: 500;
+        font-size: 11px;
+        display: block;
+        color: #c0cac4;
+      }
+      .track-status span {
+        color: #7e8e86;
+        display: block;
+        font-size: 10px;
+        margin-top: 3px;
+        white-space: nowrap;
+      }
+      .foot {
+        display: flex;
+        justify-content: space-between;
+        gap: 20px;
+        flex-wrap: wrap;
+        padding: 21px 0 0;
+        border-top: 1px solid #2c3431;
+        margin-top: 19px;
+      }
+      .legend {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 18px;
+        align-items: center;
+        font-size: 11px;
+        color: #9eaaa2;
+      }
+      .legend span {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+      }
+      .legend i {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+      }
+      .silent {
+        font-size: 10px;
+        color: #758079;
+      }
+      .instructions {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 20px;
+        margin-top: 23px;
+      }
+      .instructions b {
+        font-size: 11px;
+        color: #cbd3ce;
+        font-weight: 500;
+      }
+      .instructions p {
+        color: #89978e;
+        font-size: 11px;
+        margin: 4px 0 0;
+      }
+      .hint {
+        color: #a2b29f;
+        font-size: 12px;
+        margin: 23px 0 0;
+      }
+      @media (max-width: 750px) {
+        .page {
+          padding: 24px 18px;
+        }
+        .track-strip {
+          grid-template-columns: repeat(4, 1fr);
+        }
+        .instructions {
+          grid-template-columns: repeat(2, 1fr);
+          gap: 16px;
+        }
+        .device {
+          padding-left: 28px;
+          padding-right: 28px;
+        }
+        .device-top {
+          grid-template-columns: 1fr 210px 1fr;
+          gap: 12px;
+        }
+        .knobs {
+          gap: 12px;
+        }
+        .physical-grid {
+          gap: 4px;
+        }
+        .toolbar-label {
+          display: none;
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .pad {
+          transition: none;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="page">
+      <div class="eyebrow">Deluge / Interactive Loop Station guide</div>
+      <h1>Eight loops. One instrument.</h1>
+      <p class="intro">
+        Explore all eight tracks and their filling rings on the Deluge’s
+        physical 16 × 8 pad grid.
+      </p>
+      <div class="toolbar">
+        <div class="toolbar-left">
+          <span class="toolbar-label">Progress animation</span>
+          <span class="animation-mode">Clockwise filling ring</span>
+        </div>
+        <div>
+          <button type="button" class="text-button" id="freeze">
+            Pause animation</button
+          ><button type="button" class="text-button" id="reset">
+            Reset demo ↺
+          </button>
+        </div>
+      </div>
+      <div class="device-viewport">
+        <section class="device" aria-label="Deluge control surface mockup">
+          <i class="screw tl"></i><i class="screw tr"></i
+          ><i class="screw bl"></i><i class="screw br"></i>
+          <div class="device-top">
+            <div>
+              <div class="brand">deluge</div>
+              <div class="brand-sub">Synthstrom Audible</div>
+              <div class="mode-label"><i></i> Loop Station</div>
+            </div>
+            <div class="display-bezel">
+              <div class="oled" role="status" aria-label="Selected loop">
+                <div class="oled-title">
+                  <span>LOOP STATION</span><span>112 BPM</span>
+                </div>
+                <div class="oled-row">
+                  <span id="oled-track">TRACK 1</span
+                  ><span id="oled-state">PLAYING</span>
+                </div>
+                <div class="oled-row">
+                  <span id="oled-source">IN: LEFT</span
+                  ><span id="oled-bars">4 BARS</span>
+                </div>
+                <div class="oled-bottom" id="oled-hint">
+                  BORDER SELECTS TRACK / FX
+                </div>
+              </div>
+            </div>
+            <div class="knobs" aria-hidden="true">
+              <div class="knob-wrap">
+                <div class="knob"></div>
+                Select
+              </div>
+              <div class="knob-wrap">
+                <div class="knob"></div>
+                FX 1
+              </div>
+              <div class="knob-wrap">
+                <div class="knob"></div>
+                FX 2
+              </div>
+            </div>
+          </div>
+          <div
+            class="physical-grid"
+            id="grid"
+            aria-label="Eight loop tracks and sidebar"
+          ></div>
+          <div class="device-bottom">
+            <span>1—4 · upper row &nbsp; / &nbsp; 5—8 · lower row</span
+            ><span>Sidebar · start all / stop all</span>
+          </div>
+        </section>
+      </div>
+      <div class="track-strip" id="track-strip" aria-label="Track states"></div>
+      <div class="foot">
+        <div class="legend">
+          <span><i style="background: #fa5153"></i>Record</span
+          ><span><i style="background: #71de85"></i>Play</span
+          ><span><i style="background: #f5a052"></i>Overdub</span
+          ><span><i style="background: #3c6149"></i>Stopped</span
+          ><span><i style="background: #737f78"></i>Empty</span>
+        </div>
+        <span class="silent"
+          >Silent interactive mockup · timing is illustrative</span
+        >
+      </div>
+      <div class="instructions">
+        <div>
+          <b>Tap the centre</b>
+          <p>
+            Record → play → overdub → play. Empty tracks are ready to record.
+          </p>
+        </div>
+        <div>
+          <b>Double-tap to stop</b>
+          <p>Stops that loop. Tap a stopped loop to restart it.</p>
+        </div>
+        <div>
+          <b>Hold a stopped centre</b>
+          <p>The border fills red. Release after two seconds to clear.</p>
+        </div>
+        <div>
+          <b>Tap the outer border</b>
+          <p>Select a track for its input, level and effects controls.</p>
+        </div>
+      </div>
+      <p class="hint">
+        Filling ring selected. Try the centre-pad gestures and sidebar controls.
+      </p>
+    </main>
+    <script>
+      ;(() => {
+        "use strict"
+        const colors = [
+          "#e9d65c",
+          "#71d6d7",
+          "#6098e8",
+          "#ab85e3",
+          "#dd7abd",
+          "#e1e7dc",
+          "#dbac55",
+          "#afd662",
+        ]
+        const labels = {
+          empty: "EMPTY",
+          recording: "RECORDING",
+          playing: "PLAYING",
+          overdubbing: "OVERDUB",
+          stopped: "STOPPED",
+        }
+        const stateColors = {
+          empty: "#647068",
+          recording: "#fa5153",
+          playing: "#71de85",
+          overdubbing: "#f5a052",
+          stopped: "#3c6149",
+        }
+        const ring = [
+          [0, 0],
+          [1, 0],
+          [2, 0],
+          [3, 0],
+          [3, 1],
+          [3, 2],
+          [3, 3],
+          [2, 3],
+          [1, 3],
+          [0, 3],
+          [0, 2],
+          [0, 1],
+        ]
+        const grid = document.getElementById("grid")
+        const pads = [],
+          titles = [],
+          summaries = []
+        let tracks,
+          selected = 0,
+          style = "fill",
+          frozen = false,
+          virtualTime = 0,
+          lastTime = performance.now(),
+          lastPaint = -1
+        let hold = null
+        const pulsePeriod = 60 / 112
+        function initialTracks() {
+          return [
+            "playing",
+            "recording",
+            "overdubbing",
+            "stopped",
+            "playing",
+            "empty",
+            "playing",
+            "empty",
+          ].map((state, i) => ({
+            state,
+            length: [4, 2, 4, 8, 2, 4, 8, 4][i] * 4 * pulsePeriod,
+            position: [0.13, 0.06, 0.54, 0, 0.76, 0, 0.35, 0][i],
+            recordStart: -0.8,
+            passes: i === 2 ? 3 : 1,
+            lastTap: -Infinity,
+            beforeTap: null,
+          }))
+        }
+        function reset() {
+          tracks = initialTracks()
+          selected = 0
+          virtualTime = 0
+          hold = null
+          updateUI()
+        }
+        function dim(hex, level) {
+          const rgb = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16))
+          return (
+            "rgb(" +
+            rgb.map((v) => Math.round(17 + (v - 17) * level)).join(",") +
+            ")"
+          )
+        }
+        function stateOf(i) {
+          return tracks[i].state
+        }
+        function updateUI() {
+          const t = tracks[selected]
+          document.getElementById("oled-track").textContent =
+            "TRACK " + (selected + 1)
+          document.getElementById("oled-state").textContent = labels[t.state]
+          document.getElementById("oled-source").textContent =
+            "IN: " + (selected === 1 ? "STEREO" : "LEFT")
+          document.getElementById("oled-bars").textContent =
+            t.state === "empty"
+              ? "READY"
+              : t.state === "recording"
+                ? "FREE REC"
+                : Math.round(t.length / (4 * pulsePeriod)) + " BARS"
+          for (let i = 0; i < 8; i++) {
+            const s = tracks[i].state
+            titles[i].innerHTML =
+              i +
+              1 +
+              "<small>" +
+              {
+                recording: "REC",
+                playing: "PLAY",
+                overdubbing: "DUB",
+                stopped: "STOP",
+                empty: "EMPTY",
+              }[s] +
+              "</small>"
+            titles[i].classList.toggle("dim", s === "empty" || s === "stopped")
+            summaries[i].querySelector("span").textContent =
+              labels[s].toLowerCase() +
+              (s === "empty"
+                ? ""
+                : s === "recording"
+                  ? " · live"
+                  : " · " +
+                    Math.round(tracks[i].length / (4 * pulsePeriod)) +
+                    " bars")
+            summaries[i].style.borderTopColor =
+              i === selected ? colors[i] : "#35423b"
+            summaries[i].querySelector("strong").textContent =
+              "TRACK " + (i + 1) + (i === selected ? " · selected" : "")
+            for (const p of pads[i]) {
+              const name =
+                "Track " +
+                (i + 1) +
+                " " +
+                labels[s].toLowerCase() +
+                ": " +
+                (p.center ? "action" : "select")
+              if (p.element.getAttribute("aria-label") !== name)
+                p.element.setAttribute("aria-label", name)
+            }
+          }
+          lastPaint = -1
+        }
+        function selectTrack(i) {
+          selected = i
+          updateUI()
+        }
+        function press(i) {
+          const t = tracks[i],
+            stamp = performance.now()
+          // Only a playing/overdubbing first tap is eligible to become the stop gesture.
+          if (
+            stamp - t.lastTap <= 350 &&
+            ["playing", "overdubbing"].includes(t.beforeTap)
+          ) {
+            t.state = "stopped"
+            t.lastTap = -Infinity
+            t.beforeTap = null
+            updateUI()
+            return
+          }
+          t.beforeTap = t.state
+          t.lastTap = ["playing", "overdubbing"].includes(t.state)
+            ? stamp
+            : -Infinity
+          if (t.state === "empty") {
+            t.state = "recording"
+            t.recordStart = virtualTime
+            t.position = 0
+          } else if (t.state === "recording") {
+            t.length = Math.max(0.25, virtualTime - t.recordStart)
+            t.state = "playing"
+            t.position = 0
+          } else if (t.state === "playing") {
+            t.state = "overdubbing"
+            t.passes++
+          } else if (t.state === "overdubbing") t.state = "playing"
+          else if (t.state === "stopped") {
+            t.state = "playing"
+            t.position = 0
+          }
+          updateUI()
+        }
+        function releaseHold(cancelled = false) {
+          if (!hold) return
+          const saved = hold
+          hold = null
+          if (!cancelled) {
+            const t = tracks[saved.track]
+            if (performance.now() - saved.start >= 2000) {
+              t.state = "empty"
+              t.position = 0
+              t.lastTap = -Infinity
+            } else press(saved.track)
+          }
+          updateUI()
+        }
+        function bindPad(el, i, center) {
+          if (!center) {
+            el.addEventListener("click", () => selectTrack(i))
+            return
+          }
+          el.addEventListener("pointerdown", (e) => {
+            if (e.button !== 0 || hold) return
+            e.preventDefault()
+            if (stateOf(i) === "stopped") {
+              hold = {
+                track: i,
+                start: performance.now(),
+                pointer: e.pointerId,
+              }
+              el.setPointerCapture(e.pointerId)
+            } else press(i)
+          })
+          el.addEventListener("pointerup", () => {
+            if (hold?.track === i) releaseHold()
+          })
+          el.addEventListener("pointercancel", () => {
+            if (hold?.track === i) releaseHold(true)
+          })
+          el.addEventListener("keydown", (e) => {
+            if ((e.key === "Enter" || e.key === " ") && !e.repeat) {
+              e.preventDefault()
+              press(i)
+            }
+          })
+        }
+        for (let i = 0; i < 8; i++) {
+          const originX = (i % 4) * 4,
+            originY = Math.floor(i / 4) * 4
+          pads[i] = []
+          for (let y = 0; y < 4; y++)
+            for (let x = 0; x < 4; x++) {
+              const center = x > 0 && x < 3 && y > 0 && y < 3
+              const el = document.createElement("button")
+              el.type = "button"
+              el.className = "pad" + (center ? " center" : "")
+              el.style.gridColumn = String(originX + x + 1)
+              el.style.gridRow = String(originY + y + 1)
+              el.dataset.track = String(i + 1)
+              el.dataset.part = center ? "center" : "border"
+              bindPad(el, i, center)
+              grid.appendChild(el)
+              pads[i].push({
+                element: el,
+                center,
+                ringIndex: center
+                  ? -1
+                  : ring.findIndex((p) => p[0] === x && p[1] === y),
+                paint: "",
+              })
+            }
+          const title = document.createElement("div")
+          title.className = "pad-label"
+          title.style.gridColumn = originX + 2 + " / span 2"
+          title.style.gridRow = originY + 2 + " / span 2"
+          grid.appendChild(title)
+          titles.push(title)
+          const summary = document.createElement("div")
+          summary.className = "track-status"
+          summary.innerHTML = "<strong></strong><span></span>"
+          document.getElementById("track-strip").appendChild(summary)
+          summaries.push(summary)
+        }
+        for (let y = 0; y < 8; y++)
+          for (let x = 0; x < 2; x++) {
+            const el = document.createElement("button")
+            el.type = "button"
+            el.className = "pad"
+            el.style.gridColumn = String(18 + x)
+            el.style.gridRow = String(y + 1)
+            if (y === 0) {
+              el.style.background = x ? "#bc4545" : "#60c779"
+              el.innerHTML =
+                '<span class="side-icon">' + (x ? "■" : "▶") + "</span>"
+              el.setAttribute(
+                "aria-label",
+                x ? "Stop all loops" : "Start all loops",
+              )
+              el.addEventListener("click", () => {
+                releaseHold(true)
+                tracks.forEach((t) => {
+                  t.lastTap = -Infinity
+                  t.beforeTap = null
+                  if (x && t.state === "recording") {
+                    t.length = Math.max(0.25, virtualTime - t.recordStart)
+                    t.state = "stopped"
+                  } else if (x && ["playing", "overdubbing"].includes(t.state))
+                    t.state = "stopped"
+                  else if (!x && t.state === "stopped") {
+                    t.state = "playing"
+                    t.position = 0
+                  }
+                })
+                updateUI()
+              })
+            } else {
+              el.disabled = true
+              el.style.opacity = ".32"
+              el.setAttribute("aria-label", "Unused sidebar pad")
+            }
+            grid.appendChild(el)
+          }
+        document.getElementById("reset").addEventListener("click", reset)
+        document.getElementById("freeze").addEventListener("click", (e) => {
+          frozen = !frozen
+          e.currentTarget.textContent = frozen
+            ? "Resume animation"
+            : "Pause animation"
+        })
+        function animate(now) {
+          const dt = Math.min((now - lastTime) / 1000, 0.1)
+          lastTime = now
+          if (!frozen) {
+            virtualTime += dt
+            tracks.forEach((t) => {
+              if (["playing", "overdubbing"].includes(t.state))
+                t.position = (t.position + dt / t.length) % 1
+            })
+          }
+          // LEDs update at 30 fps; each loop has its own actual demo length and phase.
+          if (now - lastPaint >= 32 || lastPaint === -1) {
+            lastPaint = now
+            tracks.forEach((t, i) => {
+              const s = t.state
+              const phase =
+                s === "recording"
+                  ? ((virtualTime - t.recordStart) / (4 * pulsePeriod)) % 1
+                  : t.position
+              const head = Math.floor(phase * 12) % 12
+              const pulse =
+                0.55 + 0.3 * Math.sin((virtualTime * 2 * Math.PI) / pulsePeriod)
+              const progress =
+                hold?.track === i ? Math.min(1, (now - hold.start) / 2000) : 0
+              pads[i].forEach((p) => {
+                let color
+                if (p.center)
+                  color = dim(
+                    stateColors[s],
+                    s === "empty" ? 0.46 : s === "stopped" ? 0.7 : 0.92,
+                  )
+                else if (progress > 0)
+                  color =
+                    p.ringIndex < Math.floor(progress * 12)
+                      ? "#ed4e51"
+                      : dim(colors[i], 0.14)
+                else if (s === "recording" || s === "overdubbing")
+                  color = dim(stateColors[s], pulse)
+                else if (s === "playing") {
+                  const intensity = p.ringIndex <= head ? 0.95 : 0.13
+                  color = dim(colors[i], intensity)
+                } else color = dim(colors[i], s === "empty" ? 0.1 : 0.2)
+                if (color !== p.paint) {
+                  p.element.style.background = color
+                  p.element.style.boxShadow =
+                    "inset 0 0 6px " + color + ",0 2px 2px #0006"
+                  p.paint = color
+                }
+                p.element.classList.toggle(
+                  "selected-border",
+                  !p.center && selected === i,
+                )
+              })
+            })
+            if (hold)
+              document.getElementById("oled-hint").textContent =
+                progressText(now)
+            else
+              document.getElementById("oled-hint").textContent =
+                "BORDER SELECTS TRACK / FX"
+          }
+          requestAnimationFrame(animate)
+        }
+        function progressText(now) {
+          return now - hold.start >= 2000
+            ? "RELEASE TO CLEAR TRACK " + (hold.track + 1)
+            : "HOLD TO CLEAR TRACK " + (hold.track + 1) + "..."
+        }
+        window.loopStationDemo = {
+          snapshot: () => ({
+            style,
+            selected: selected + 1,
+            frozen,
+            tracks: tracks.map((t) => ({
+              state: t.state,
+              position: t.position,
+              length: t.length,
+            })),
+          }),
+        }
+        const page = document.querySelector(".page")
+        function reportHeight() {
+          if (window.parent !== window) {
+            window.parent.postMessage(
+              {
+                type: "loop-station-demo-size",
+                height: Math.ceil(page.getBoundingClientRect().height),
+              },
+              window.location.origin,
+            )
+          }
+        }
+        window.addEventListener("message", (event) => {
+          if (
+            event.source === window.parent &&
+            event.origin === window.location.origin &&
+            event.data?.type === "loop-station-demo-request-size"
+          ) {
+            reportHeight()
+          }
+        })
+        new ResizeObserver(reportHeight).observe(page)
+        window.addEventListener("load", reportHeight)
+        reset()
+        requestAnimationFrame(animate)
+      })()
+    </script>
+  </body>
+</html>

@@ -839,6 +839,8 @@ Error SampleBrowser::claimAudioFileForInstrument(bool makeWaveTableWorkAtAllCost
 }
 
 Error SampleBrowser::claimAudioFileForAudioClip() {
+	if (getCurrentAudioClip()->hasResidentAudio())
+		return Error::UNSPECIFIED;
 	soundEditor.cutSound();
 
 	AudioFileHolder* holder = soundEditor.getCurrentAudioFileHolder();
@@ -863,6 +865,10 @@ Error SampleBrowser::claimAudioFileForAudioClip() {
 // For the "may" arguments, 0 means no; 1 means auto; 2 means do definitely as the user has specifically requested it.
 bool SampleBrowser::claimCurrentFile(int32_t mayDoPitchDetection, int32_t mayDoSingleCycle, int32_t mayDoWaveTable,
                                      bool loadWithoutExiting) {
+	if (getCurrentClip()->type == ClipType::AUDIO && getCurrentAudioClip()->hasResidentAudio()) {
+		display->displayPopup("Stop and unbind loop");
+		return false;
+	}
 
 	if (getCurrentClip()->type == ClipType::AUDIO) {
 		if (getCurrentClip()->getCurrentlyRecordingLinearly()) {

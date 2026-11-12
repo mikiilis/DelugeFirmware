@@ -505,6 +505,10 @@ ActionResult AudioClipView::padAction(int32_t x, int32_t y, int32_t on) {
 				if (!clip) {
 					return ActionResult::DEALT_WITH;
 				}
+				if (clip->hasResidentAudio()) {
+					display->displayPopup("Stop and unbind loop");
+					return ActionResult::DEALT_WITH;
+				}
 				AudioClip& clipRef = *clip;
 
 				int32_t endSquareDisplay =
@@ -746,6 +750,10 @@ void AudioClipView::selectEncoderAction(int8_t offset) {
 }
 
 void AudioClipView::setClipLengthEqualToSampleLength() {
+	if (getCurrentAudioClip()->hasResidentAudio()) {
+		display->displayPopup("Stop and unbind loop");
+		return;
+	}
 	AudioClip& audioClip = *getCurrentAudioClip();
 	SamplePlaybackGuide guide = audioClip.guide;
 	SampleHolder* sampleHolder = (SampleHolder*)guide.audioFileHolder;
@@ -805,6 +813,10 @@ ActionResult AudioClipView::horizontalEncoderAction(int32_t offset) {
 }
 
 ActionResult AudioClipView::editClipLengthWithoutTimestretching(int32_t offset) {
+	if (getCurrentAudioClip()->hasResidentAudio()) {
+		display->displayPopup("Stop and unbind loop");
+		return ActionResult::DEALT_WITH;
+	}
 	// If tempoless recording, don't allow
 	if (!getCurrentClip()->currentlyScrollableAndZoomable()) {
 		display->displayPopup(deluge::l10n::get(deluge::l10n::String::STRING_FOR_CANT_EDIT_LENGTH));

@@ -18,6 +18,7 @@
 #include "gui/menu_item/sample/utils.h"
 #include "gui/menu_item/selection.h"
 #include "gui/ui/sound_editor.h"
+#include "model/clip/audio_clip.h"
 #include "model/drum/drum.h"
 #include "model/instrument/kit.h"
 #include "model/song/song.h"
@@ -42,6 +43,11 @@ public:
 	}
 
 	void writeCurrentValue() override {
+		if (auto* clip = getCurrentAudioClip(); clip && clip->hasResidentAudio()) {
+			display->displayPopup("Stop and unbind loop");
+			readCurrentValue();
+			return;
+		}
 		// If affect-entire button held, do whole kit
 		if (currentUIMode == UI_MODE_HOLDING_AFFECT_ENTIRE_IN_SOUND_EDITOR && soundEditor.editingKitRow()) {
 

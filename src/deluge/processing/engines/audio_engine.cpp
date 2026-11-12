@@ -16,6 +16,12 @@
  */
 
 #include "processing/engines/audio_engine.h"
+#include "loop_station/audio_adapter.h"
+#include "loop_station/song_model.h"
+
+#if LOOP_STATION_TEST_MODE
+#include "../../../../tests/hardware/loop_station/fixture.h"
+#endif
 
 #include "chrono"
 #include "definitions.h"
@@ -173,6 +179,26 @@ bool renderInStereo = true;
 bool bypassCulling = false;
 bool audioRoutineLocked = false;
 uint32_t audioSampleTimer = 0;
+// Detached unless the default-Off runtime feature's SongModel installs its owner.
+static loop_station::AudioAdapter* loopStationAudioAdapter = nullptr;
+static const loop_station::ClockMap* loopStationClock = nullptr;
+static loop_station::SampleClockExtender loopStationClockExtender;
+void serviceLoopStationArchive() {
+	if (currentSong)
+		currentSong->serviceLoopStationArchive(4096);
+}
+void serviceLoopStationRetirement() {
+	if (currentSong && currentSong->loopStation())
+		currentSong->loopStation()->serviceRetirement();
+}
+uint64_t loopStationSampleClock() {
+	return loopStationClockExtender.observe(audioSampleTimer);
+}
+void setLoopStationAudioAdapter(loop_station::AudioAdapter* adapter, const loop_station::ClockMap* clock) {
+	loopStationAudioAdapter = clock ? adapter : nullptr;
+	loopStationClock = adapter ? clock : nullptr;
+}
+
 bool inputMonitoringWarmedUp = false;
 bool usbInputMonitoredByTrack = false;
 // ~500ms after power-on for the codec ADC to settle before we start monitoring its input (see inputMonitoringWarmedUp),
@@ -213,6 +239,9 @@ TaskID routine_task_id = -1;
 
 // You must set up dynamic memory allocation before calling this, because of its call to setupWithPatching()
 void init() {
+#if LOOP_STATION_TEST_MODE
+	loop_station::feasibility::firmwareInitialize();
+#endif
 	paramManagerForSamplePreview = new ((void*)paramManagerForSamplePreviewMemory) ParamManagerForTimeline();
 	paramManagerForSamplePreview->setupWithPatching(); // Shouldn't be an error at init time...
 	Sound::initParams(paramManagerForSamplePreview);
@@ -849,6 +878,9 @@ int32_t* getInputReadPos(AudioInputChannel channel) {
 }
 
 void renderAudio(size_t numSamples) {
+#if LOOP_STATION_TEST_MODE
+	loop_station::feasibility::firmwareCallback(numSamples);
+#endif
 	std::span renderingBuffer{renderingMemory.data(), numSamples};
 	std::span reverbBuffer{reverbMemory.data(), numSamples};
 
@@ -947,6 +979,7 @@ void flushMIDIGateBuffers() {
 }
 
 void tickSongFinalizeWindows(size_t& numSamples) {
+	const auto loopNow = loopStationSampleClock();
 	// If a timer-tick is due during or directly after this window of audio samples...
 	if (playbackHandler.isEitherClockActive()) {
 
@@ -992,6 +1025,14 @@ startAgain:
 			numSamples = timeTilNextTick;
 		}
 
+		// Due ticks may have changed the song/owner. Finalize resident deadlines and
+		// the ONE shared admission round before scheduling outgoing clocks: those
+		// events must use the final window, including any loop/capacity split.
+		if (currentSong)
+			currentSong->updateLoopStationClock();
+		if (loopStationAudioAdapter && loopStationClock)
+			loopStationAudioAdapter->finalizeWindow(loopNow, numSamples, *loopStationClock);
+
 		// And now we know how long the window's definitely going to be, see if we want to do any trigger clock or
 		// MIDI clock out ticks during it
 		if (!stemExport.renderingOffline()) {
@@ -1027,6 +1068,12 @@ startAgain:
 				}
 			}
 		}
+	}
+	else if (loopStationAudioAdapter && loopStationClock) {
+		// Resident actions/phrases also run with ordinary transport stopped.
+		if (currentSong)
+			currentSong->updateLoopStationClock();
+		loopStationAudioAdapter->finalizeWindow(loopNow, numSamples, *loopStationClock);
 	}
 }
 
@@ -1149,6 +1196,11 @@ void renderSongFX(size_t numSamples) { // LPF and stutter for song (must happen 
 }
 void setMonitoringMode() { // Monitoring setup
 	doMonitoring = false;
+	if (loopStationAudioAdapter && loopStationAudioAdapter->consumesPhysicalInput()
+	    && audioRecorder.recordingSource != AudioInputChannel::USB) {
+		monitoringAction = MonitoringAction::NONE;
+		return;
+	}
 	if (audioRecorder.recordingSource == AudioInputChannel::USB) {
 		// No risk of feedback from the internal mic here, so "conditional" means on. Unless it's already being sent
 		// straight to the outputs - then we'd hear it twice

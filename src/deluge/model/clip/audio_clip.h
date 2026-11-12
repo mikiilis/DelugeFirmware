@@ -20,6 +20,7 @@
 #include "definitions_cxx.hpp"
 #include "gui/views/audio_clip_view.h"
 #include "gui/waveform/waveform_render_data.h"
+#include "loop_station/types.h"
 #include "model/clip/clip.h"
 #include "model/sample/sample_controls.h"
 #include "model/sample/sample_holder_for_clip.h"
@@ -28,13 +29,31 @@
 #include "processing/audio_output.h"
 #include "util/d_string.h"
 
+namespace loop_station {
+class AudioAdapter;
+}
+
 class VoiceSample;
 class SampleRecorder;
 class ModelStackWithTimelineCounter;
 
+namespace loop_station {
+class SongModel;
+}
+
 class AudioClip final : public Clip {
 public:
 	AudioClip();
+	// Serialized non-owning binding. SongModel detaches before releasing adapter
+	// or storage; ordinary clones intentionally start unbound. No SampleRecorder.
+	loop_station::Status bindResidentAudio(loop_station::AudioAdapter* adapter, loop_station::SlotId slot);
+	void setResidentOwner(loop_station::SongModel* owner) { residentOwner_ = owner; }
+	// Explicit destructive path for ordinary sample editing; UI must request it.
+	loop_station::Status stopAndUnbindResident();
+	bool hasResidentAudio() const { return residentAudio_ != nullptr; }
+	loop_station::FrameIndex residentAudioPhase() const;
+	void renderResidentAudio(std::span<StereoSample> output);
+
 	~AudioClip() override;
 	void processCurrentPos(ModelStackWithTimelineCounter* modelStack, uint32_t ticksSinceLast) override;
 	void expectNoFurtherTicks(Song* song, bool actuallySoundChange = true) override;
@@ -140,4 +159,8 @@ private:
 	void clearSample(Action* action);
 	/// Priority for loading our Clusters - see ClusterPriority::forAudioClip()
 	[[nodiscard]] int32_t getClusterPriority() const;
+
+	loop_station::SongModel* residentOwner_ = nullptr;
+	loop_station::AudioAdapter* residentAudio_ = nullptr;
+	loop_station::SlotId residentSlot_ = loop_station::kInvalidSlot;
 };

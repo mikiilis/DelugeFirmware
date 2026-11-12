@@ -26,6 +26,8 @@
 #include "model/sample/sample.h"
 #include "model/settings/runtime_feature_settings.h"
 #include "model/song/song.h"
+#include "processing/engines/audio_engine.h"
+#include "scheduler_api.h"
 #include "storage/audio/audio_file_manager.h"
 #include "storage/flash_storage.h"
 #include "storage/storage_manager.h"
@@ -42,6 +44,19 @@ using namespace deluge;
 using namespace gui;
 
 extern uint8_t currentlyAccessingCard;
+
+extern "C" {
+void routineForSD(void);
+}
+
+namespace {
+bool loopStationSaveFinished() {
+	if (!currentSong)
+		return true;
+	const auto& persistence = currentSong->loopStationPersistence();
+	return persistence.saveState() != loop_station::SaveState::Pending || persistence.pendingReady();
+}
+} // namespace
 
 PLACE_SDRAM_BSS SaveSongUI saveSongUI{};
 
@@ -129,12 +144,23 @@ bool SaveSongUI::performSave(bool mayOverwrite) {
 	}
 
 	display->displayLoadingAnimationText("Saving");
+	bool loopSaveStarted = false;
+	bool loopStationFailure = false;
 
 	String filePath;
 	Error error = getCurrentFilePath(&filePath);
 	if (error != Error::NONE) {
 gotError:
+		if (loopSaveStarted && currentSong) {
+			currentSong->failLoopStationSave();
+			loopSaveStarted = false;
+			loopStationFailure = true;
+		}
 		display->removeLoadingAnimation();
+		if (loopStationFailure) {
+			display->displayPopup("Loop data was not saved");
+			return false;
+		}
 		display->displayError(error);
 		return false;
 	}
@@ -156,6 +182,20 @@ gotError:
 			error = Error::UNSPECIFIED;
 			goto gotError;
 		}
+	}
+
+	// Capture the loop snapshot before collecting or writing the Song document.
+	// The registered SD service owns all checkpoint I/O while this foreground
+	// screen yields below; no SD resource lock is held across that yield.
+	if (currentSong) {
+		const auto loopStatus = currentSong->beginLoopStationSave();
+		if (loopStatus != loop_station::Status::Ok) {
+			currentSong->failLoopStationSave();
+			loopStationFailure = true;
+			error = Error::UNSPECIFIED;
+			goto gotError;
+		}
+		loopSaveStarted = true;
 	}
 
 	// We might want to copy some samples around - either because we're "collecting" them to a folder, or because they
@@ -413,6 +453,11 @@ gotError:
 	for (int32_t i = 0; i < audioFileManager.audioFiles.getNumElements(); i++) {
 		AudioFile* audioFile = (AudioFile*)audioFileManager.audioFiles.getElement(i);
 		if (!saveAudioFile(audioFile)) {
+			if (loopSaveStarted && currentSong) {
+				currentSong->failLoopStationSave();
+				loopSaveStarted = false;
+				display->displayPopup("Loop data was not saved");
+			}
 			return false;
 		}
 	}
@@ -452,6 +497,24 @@ gotError:
 	}
 	else {
 		filePathDuringWrite.set(&filePath);
+	}
+
+	if (loopSaveStarted) {
+#ifdef USE_TASK_MANAGER
+		const bool resolved = yieldWithTimeout(loopStationSaveFinished, 60.0);
+#else
+		const double timeoutAt = getSystemTime() + 60.0;
+		while (!loopStationSaveFinished() && getSystemTime() < timeoutAt) {
+			routineForSD();
+			AudioEngine::serviceLoopStationArchive();
+		}
+		const bool resolved = loopStationSaveFinished();
+#endif
+		if (!resolved || !currentSong || !currentSong->loopStationPersistence().pendingReady()) {
+			loopStationFailure = true;
+			error = Error::UNSPECIFIED;
+			goto gotError;
+		}
 	}
 
 	D_PRINTLN("creating:  %s", filePathDuringWrite.get());
@@ -498,6 +561,14 @@ cardError:
 		if (result != FR_OK) {
 			goto cardError;
 		}
+	}
+
+	if (loopSaveStarted) {
+		if (currentSong->commitLoopStationSave() != loop_station::Status::Ok) {
+			error = Error::UNSPECIFIED;
+			goto gotError;
+		}
+		loopSaveStarted = false;
 	}
 
 	display->removeWorkingAnimation();

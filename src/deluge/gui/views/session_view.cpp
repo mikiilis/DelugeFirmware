@@ -17,6 +17,7 @@
 
 #include "gui/views/session_view.h"
 #include "definitions_cxx.hpp"
+#include "deluge/loop_station/geometry.h"
 #include "dsp/compressor/rms_feedback.h"
 #include "extern.h"
 #include "gui/colour/colour.h"
@@ -39,6 +40,7 @@
 #include "gui/views/audio_clip_view.h"
 #include "gui/views/automation_view.h"
 #include "gui/views/instrument_clip_view.h"
+#include "gui/views/loop_station_view.h"
 #include "gui/views/performance_view.h"
 #include "gui/views/view.h"
 #include "gui/waveform/waveform_renderer.h"
@@ -221,6 +223,32 @@ ActionResult SessionView::buttonAction(deluge::hid::Button b, bool on, bool inCa
 			return ActionResult::REMIND_ME_OUTSIDE_CARD_ROUTINE;
 		}
 		return clipCreationButtonPressed(b, on, inCardRoutine);
+	}
+
+	// Keep this shortcut at the idle Song/Session root. A pad hold, editor, or
+	// Arrangement playback retains its current context.
+	const auto loopEntry = loop_station::crossScreenEntryDecision(
+	    b == CROSS_SCREEN_EDIT && on, currentUIMode == UI_MODE_NONE, Buttons::isShiftButtonPressed(),
+	    playbackHandler.recording == RecordingMode::ARRANGEMENT
+	        || (playbackHandler.playbackState && currentSong->lastClipInstanceEnteredStartPos != -1),
+	    runtimeFeatureSettings.isOn(RuntimeFeatureSettingType::EnableLoopStation));
+	if (loopEntry != loop_station::EntryDecision::Ignore) {
+		if (inCardRoutine)
+			return ActionResult::REMIND_ME_OUTSIDE_CARD_ROUTINE;
+		if (loopEntry == loop_station::EntryDecision::ArrangementActive) {
+			display->displayPopup("STOP ARRANGEMENT");
+			return ActionResult::DEALT_WITH;
+		}
+		if (loopEntry == loop_station::EntryDecision::FeatureDisabled) {
+			display->displayPopup(l10n::get(l10n::String::STRING_FOR_COMMUNITY_FEATURE_LOOP_STATION));
+			return ActionResult::DEALT_WITH;
+		}
+		if (currentSong->ensureLoopStation(true) != loop_station::Status::Ok) {
+			display->displayPopup(l10n::get(l10n::String::STRING_FOR_ERROR_INSUFFICIENT_RAM));
+			return ActionResult::DEALT_WITH;
+		}
+		changeRootUI(&loopStationView);
+		return ActionResult::DEALT_WITH;
 	}
 
 	// Clip-view button
