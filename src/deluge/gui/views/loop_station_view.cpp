@@ -51,7 +51,7 @@ RGB colourFor(Colour c) {
 	case Colour::Magenta:
 		return deluge::gui::colours::magenta_full;
 	case Colour::Pink:
-		return deluge::gui::colours::pink_full;
+		return RGB(255, 0, 128);
 	case Colour::White:
 		return deluge::gui::colours::white_full;
 	}

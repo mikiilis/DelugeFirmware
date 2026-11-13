@@ -139,6 +139,53 @@ TEST(LoopPersistence, defaultsAndStableIdsRoundTripIncludingImmediateMode) {
 	CHECK_EQUAL(int(Interval::BarTriplet), encoded.startAction.interval);
 }
 
+TEST(LoopPersistence, CustomWhiteAndDuplicateColoursKeepTheirSlots) {
+	auto settings = defaultSettings();
+	Manifest manifest{};
+	manifest.generation = 42;
+	manifest.phraseCount = kTrackCount;
+	for (SlotId slot = 0; slot < kTrackCount; ++slot) {
+		auto& track = settings.tracks[slot];
+		track.source = static_cast<Source>(slot % 4);
+		track.monitoring = static_cast<Monitoring>(slot % 2);
+		track.recordDurationBars = 10 + slot;
+		track.playback = static_cast<loop_station::PlaybackMode>(slot % 2);
+		track.transposeCents = -1234 + slot * 200;
+		char path[16]{};
+		std::snprintf(path, sizeof(path), "L%1X000000.WAV", unsigned(slot + 1));
+		manifest.phrases[slot] = savedPhrase(slot, 1000 + slot, 44100 + slot, path);
+	}
+	settings.tracks[0].colour = settings.tracks[5].colour = Colour::White;
+	settings.tracks[2].colour = settings.tracks[7].colour = Colour::Sky;
+	SettingsDocument document{};
+	CHECK(Status::Ok == Persistence::encode(settings, manifest, document));
+	CHECK_EQUAL(0, document.tracks[0].id);
+	CHECK_EQUAL(5, document.tracks[5].id);
+	CHECK_EQUAL(int(Colour::White), document.tracks[0].colour);
+	CHECK_EQUAL(int(Colour::White), document.tracks[5].colour);
+	std::swap(document.tracks[0], document.tracks[5]); // Logical IDs, not row positions, own the colour.
+	Settings restored{};
+	Manifest restoredManifest{};
+	CHECK(Status::Ok == Persistence::decode(document, restored, restoredManifest));
+	CHECK_EQUAL(manifest.generation, restoredManifest.generation);
+	CHECK_EQUAL(manifest.phraseCount, restoredManifest.phraseCount);
+	for (SlotId slot = 0; slot < kTrackCount; ++slot) {
+		const auto& expected = settings.tracks[slot];
+		const auto& actual = restored.tracks[slot];
+		CHECK_EQUAL(int(expected.source), int(actual.source));
+		CHECK_EQUAL(int(expected.monitoring), int(actual.monitoring));
+		CHECK_EQUAL(expected.recordDurationBars, actual.recordDurationBars);
+		CHECK_EQUAL(int(expected.playback), int(actual.playback));
+		CHECK_EQUAL(int(expected.colour), int(actual.colour));
+		CHECK_EQUAL(expected.transposeCents, actual.transposeCents);
+		const auto& phrase = restoredManifest.phrases[slot];
+		CHECK_EQUAL(slot, phrase.slot);
+		CHECK_EQUAL(1000 + slot, phrase.identity);
+		CHECK_EQUAL(44100 + slot, phrase.frames);
+		STRCMP_EQUAL(manifest.phrases[slot].path.data(), phrase.path.data());
+	}
+}
+
 TEST(LoopPersistence, invalidValuesAndUnknownLegacyFieldsUseSafeDefaults) {
 	auto document = validDocument();
 	document.recordAction = 99;

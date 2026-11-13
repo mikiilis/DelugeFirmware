@@ -1,3 +1,4 @@
+#include "deluge/loop_station/persistence.h"
 #include "fixture.h"
 
 using namespace loop_station;
@@ -6,6 +7,149 @@ using deluge::gui::menu_item::loop_station::loopStationSettingsMenu;
 using loop_ui_test::Fixture;
 
 TEST_GROUP(LoopUi){};
+
+namespace {
+// Physical centres, not derived from padAddress (the input mapping under test).
+constexpr int32_t centres[8][2] = {{1, 6}, {5, 6}, {9, 6}, {13, 6}, {1, 2}, {5, 2}, {9, 2}, {13, 2}};
+
+void openColour(Fixture& f, SlotId slot) {
+	f.sharedShift(f.view, true);
+	CHECK(f.view.padAction(centres[slot][0], centres[slot][1], 100) == ActionResult::DEALT_WITH);
+	POINTERS_EQUAL(&loopStationSettingsMenu, getCurrentUI());
+	CHECK_EQUAL(slot, loopStationSettingsMenu.slot_);
+	f.sharedShift(loopStationSettingsMenu, false);
+	CHECK_TRUE(loopStationSettingsMenu.fields_.contains(MenuField::Colour));
+	for (unsigned i = 0; i < loopStationSettingsMenu.fields_.count
+	                     && loopStationSettingsMenu.fields_.rows[loopStationSettingsMenu.row_] != MenuField::Colour;
+	     ++i)
+		loopStationSettingsMenu.selectEncoderAction(1);
+	CHECK(MenuField::Colour == loopStationSettingsMenu.fields_.rows[loopStationSettingsMenu.row_]);
+	loopStationSettingsMenu.buttonAction(SELECT_ENC, true, false);
+	CHECK_TRUE(loopStationSettingsMenu.editing_);
+}
+
+void expectTrackSettings(const TrackSettings& expected, const TrackSettings& actual) {
+	CHECK_EQUAL(int(expected.source), int(actual.source));
+	CHECK_EQUAL(int(expected.monitoring), int(actual.monitoring));
+	CHECK_EQUAL(expected.recordDurationBars, actual.recordDurationBars);
+	CHECK_EQUAL(int(expected.playback), int(actual.playback));
+	CHECK_EQUAL(int(expected.colour), int(actual.colour));
+	CHECK_EQUAL(expected.transposeCents, actual.transposeCents);
+}
+
+struct RenderedPads {
+	RGB image[kDisplayHeight][kDisplayWidth + kSideBarWidth]{};
+	uint8_t mask[kDisplayHeight][kDisplayWidth + kSideBarWidth]{};
+	explicit RenderedPads(Fixture& f) { CHECK_TRUE(f.view.renderMainPads(0xff, image, mask, false)); }
+};
+} // namespace
+
+// Catches wrong-track edits and menu-only invalidation that leaves the root ring stale.
+TEST(LoopUi, EveryTrackConfigOffersColourAndChangesOnlyItsRing) {
+	constexpr Colour next[] = {Colour::Lime, Colour::Sky,   Colour::Purple, Colour::Magenta,
+	                           Colour::Pink, Colour::White, Colour::Yellow, Colour::Turquoise};
+	for (SlotId slot = 0; slot < 8; ++slot) {
+		Fixture f;
+		openColour(f, slot);
+		f.onlyBound(slot); // Opening config retains lazy per-track binding and never captures.
+		CHECK_FALSE(f.model->engine().state(slot).capture);
+		std::array<AudioClip*, 8> clips{};
+		for (SlotId other = 0; other < 8; ++other) {
+			CHECK(Status::Ok == f.model->ensureBound(other));
+			clips[other] = f.model->clip(other);
+		}
+		auto expected = f.model->engine().settings();
+		expected.tracks[slot].colour = next[slot];
+		const RenderedPads before(f);
+		probeRenderTargets.clear();
+		probeOledRequests = 0;
+		loopStationSettingsMenu.selectEncoderAction(1);
+		expectTrackSettings(expected.tracks[slot], f.model->engine().settings().tracks[slot]);
+		const RenderedPads after(f);
+		for (int32_t y = 0; y < 8; ++y) {
+			for (int32_t x = 0; x < 16; ++x) {
+				const int32_t left = centres[slot][0] - 1, bottom = centres[slot][1] - 2;
+				const bool tile = x >= left && x < left + 4 && y >= bottom && y < bottom + 4;
+				const bool border = tile && (x == left || x == left + 3 || y == bottom || y == bottom + 3);
+				CHECK_EQUAL(!border, before.image[y][x] == after.image[y][x]);
+			}
+		}
+		CHECK(std::find(probeRenderTargets.begin(), probeRenderTargets.end(), &f.view) != probeRenderTargets.end());
+		CHECK(probeOledRequests > 0);
+		loopStationSettingsMenu.buttonAction(SELECT_ENC, true, false);
+		CHECK_FALSE(loopStationSettingsMenu.editing_);
+		loopStationSettingsMenu.buttonAction(BACK, true, false);
+		POINTERS_EQUAL(&f.view, getCurrentUI());
+		for (SlotId other = 0; other < 8; ++other) {
+			expectTrackSettings(expected.tracks[other], f.model->engine().settings().tracks[other]);
+			POINTERS_EQUAL(clips[other], f.model->clip(other));
+		}
+		CHECK_EQUAL(8, f.host.allocationAttempts);
+	}
+}
+
+TEST(LoopUi, ColourPaletteWrapsAndBackKeepsChoice) {
+	Fixture f;
+	openColour(f, 6); // Gold is the seventh track's default.
+	CHECK(Colour::Gold == f.model->engine().settings().tracks[6].colour);
+	loopStationSettingsMenu.selectEncoderAction(-1);
+	CHECK(Colour::White == f.model->engine().settings().tracks[6].colour);
+	loopStationSettingsMenu.selectEncoderAction(1);
+	CHECK(Colour::Gold == f.model->engine().settings().tracks[6].colour);
+	loopStationSettingsMenu.selectEncoderAction(-1);
+	loopStationSettingsMenu.buttonAction(SELECT_ENC, true, false);
+	loopStationSettingsMenu.buttonAction(BACK, true, false);
+	POINTERS_EQUAL(&f.view, getCurrentUI());
+	CHECK(Colour::White == f.model->engine().settings().tracks[6].colour);
+	const RenderedPads pads(f);
+	CHECK(pads.image[3][8] == RGB(255, 255, 255).dim(3));
+}
+
+TEST(LoopUi, ColourEditingKeepsRecordingAndErrorOverrides) {
+	Fixture f;
+	f.view.padAction(5, 2, 100);
+	CHECK_TRUE(f.model->engine().state(5).capture);
+	openColour(f, 5);
+	loopStationSettingsMenu.selectEncoderAction(1);
+	probeSampleClock = 11025; // Recording pulse and error flash are on.
+	const RenderedPads recording(f);
+	CHECK(recording.image[3][4] == RGB(255, 0, 0));
+	CHECK(recording.image[2][5] == RGB(255, 0, 0));
+	Command error{CommandType::CaptureError, 5};
+	error.status = Status::SourceUnavailable;
+	CHECK(Status::SourceUnavailable == f.model->dispatch(error));
+	loopStationSettingsMenu.selectEncoderAction(1);
+	CHECK(Status::SourceUnavailable == f.model->engine().state(5).error);
+	const RenderedPads failed(f);
+	CHECK(failed.image[3][4] == RGB(255, 0, 0).dim(3));
+	CHECK(failed.image[2][5] == RGB(255, 0, 0));
+}
+
+TEST(LoopUi, ConfiguredTrackColoursRoundTripAfterEditing) {
+	Fixture f;
+	constexpr Colour chosen[] = {Colour::White, Colour::Gold,  Colour::Turquoise, Colour::Sky,
+	                             Colour::Lime,  Colour::White, Colour::Pink,      Colour::Cyan};
+	for (SlotId slot = 0; slot < 8; ++slot) {
+		openColour(f, slot);
+		// Navigate the real picker; assert against literal choices, not the picker result itself.
+		const auto current = f.model->engine().settings().tracks[slot].colour;
+		const auto from = std::find(kTrackColours.begin(), kTrackColours.end(), current);
+		const auto to = std::find(kTrackColours.begin(), kTrackColours.end(), chosen[slot]);
+		loopStationSettingsMenu.selectEncoderAction(static_cast<int8_t>(to - from));
+		CHECK(chosen[slot] == f.model->engine().settings().tracks[slot].colour);
+		loopStationSettingsMenu.buttonAction(SELECT_ENC, true, false);
+		loopStationSettingsMenu.buttonAction(BACK, true, false);
+	}
+	SettingsDocument document{};
+	CHECK(Status::Ok == Persistence::encode(f.model->engine().settings(), Manifest{}, document));
+	Settings restored{};
+	Manifest manifest{};
+	CHECK(Status::Ok == Persistence::decode(document, restored, manifest));
+	for (SlotId slot = 0; slot < 8; ++slot) {
+		CHECK(chosen[slot] == restored.tracks[slot].colour);
+		expectTrackSettings(f.model->engine().settings().tracks[slot], restored.tracks[slot]);
+	}
+}
 
 // Missing preparation must fail through real SongModel bindings and Engine state,
 // not merely through a call count on a stand-in model.

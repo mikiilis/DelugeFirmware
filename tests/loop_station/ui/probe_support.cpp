@@ -4,7 +4,9 @@ Song* currentSong = nullptr;
 bool sdRoutineLock = false;
 ProbeDisplay* display = nullptr;
 ProbeUI* probeCurrentUI = nullptr;
+ProbeUI* probeRootUI = nullptr;
 unsigned probeRenderRequests = 0;
+std::vector<ProbeUI*> probeRenderTargets;
 unsigned probeOledRequests = 0;
 uint64_t probeSampleClock = 0;
 namespace AudioEngine {
@@ -23,19 +25,26 @@ bool openUI(ProbeUI* ui) {
 	if (!ui->opened())
 		return false;
 	probeCurrentUI = ui;
+	if (!probeRootUI)
+		probeRootUI = ui;
 	return true;
 }
 void changeRootUI(ProbeUI* ui) {
 	probeCurrentUI = ui;
+	probeRootUI = ui;
 }
 ProbeUI* getCurrentUI() {
 	return probeCurrentUI;
 }
-void ProbeUI::close() {
-	probeCurrentUI = nullptr;
+ProbeUI* getRootUI() {
+	return probeRootUI;
 }
-void uiNeedsRendering(ProbeUI*) {
+void ProbeUI::close() {
+	probeCurrentUI = this == probeRootUI ? nullptr : probeRootUI;
+}
+void uiNeedsRendering(ProbeUI* ui) {
 	++probeRenderRequests;
+	probeRenderTargets.push_back(ui);
 }
 void renderUIsForOled() {
 	++probeOledRequests;

@@ -22,7 +22,9 @@ public:
 	void close();
 };
 extern ProbeUI* probeCurrentUI;
+extern ProbeUI* probeRootUI;
 extern unsigned probeRenderRequests;
+extern std::vector<ProbeUI*> probeRenderTargets;
 extern unsigned probeOledRequests;
 extern uint64_t probeSampleClock;
 namespace AudioEngine {
@@ -31,6 +33,7 @@ uint64_t loopStationSampleClock();
 bool openUI(ProbeUI* ui);
 void changeRootUI(ProbeUI* ui);
 ProbeUI* getCurrentUI();
+ProbeUI* getRootUI();
 void uiNeedsRendering(ProbeUI* ui);
 void renderUIsForOled();
 

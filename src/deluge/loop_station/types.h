@@ -123,8 +123,8 @@ constexpr bool validSlot(SlotId slot) {
 }
 
 constexpr TrackSettings defaultTrackSettings(SlotId slot) {
-	constexpr std::array<Colour, kTrackCount> colours = {Colour::Yellow,  Colour::Cyan,  Colour::Blue, Colour::Purple,
-	                                                     Colour::Magenta, Colour::White, Colour::Gold, Colour::Lime};
+	constexpr std::array<Colour, kTrackCount> colours = {Colour::Yellow,  Colour::Cyan, Colour::Blue, Colour::Purple,
+	                                                     Colour::Magenta, Colour::Pink, Colour::Gold, Colour::Lime};
 	TrackSettings settings{};
 	if (validSlot(slot))
 		settings.colour = colours[slot];

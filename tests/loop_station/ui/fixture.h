@@ -68,6 +68,7 @@ struct Fixture {
 		sdRoutineLock = false;
 		Buttons::shiftPressed = false;
 		probeRenderRequests = 0;
+		probeRenderTargets.clear();
 		probeOledRequests = 0;
 		probeSampleClock = host.time;
 		deluge::gui::menu_item::loop_station::loopStationSettingsMenu = {};
@@ -87,6 +88,8 @@ struct Fixture {
 		currentSong = nullptr;
 		display = nullptr;
 		probeCurrentUI = nullptr;
+		probeRootUI = nullptr;
+		probeRenderTargets.clear();
 		sdRoutineLock = false;
 		Buttons::shiftPressed = false;
 	}

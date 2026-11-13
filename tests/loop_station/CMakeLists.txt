@@ -63,6 +63,8 @@ target_compile_definitions(LoopStationTests PRIVATE CPPUTEST_MEM_LEAK_DETECTION_
 target_link_libraries(LoopStationTests PRIVATE CppUTest etl::etl)
 set_target_properties(LoopStationTests PROPERTIES CXX_STANDARD 23 CXX_STANDARD_REQUIRED ON)
 add_test(NAME LoopStationTests COMMAND LoopStationTests)
+add_test(NAME LoopStationDemoContract
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/ui/demo_contract_test.py")
 
 add_executable(LoopPageAllocationGuard page_pool_allocation_guard.cpp ../../src/deluge/loop_station/page_pool.cpp)
 target_include_directories(LoopPageAllocationGuard PRIVATE ../../src)

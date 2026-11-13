@@ -34,9 +34,9 @@ struct Pads {
 
 // Keep renderer setup independent of the mapping under test. Capture actual audio,
 // not a fabricated engine state, and explicitly choose a stable test colour.
-void record120Frames(Fixture& f, SlotId slot) {
+void record120Frames(Fixture& f, SlotId slot, Colour colour = Colour::Yellow) {
 	auto settings = f.model->engine().settings();
-	settings.tracks[slot].colour = Colour::Yellow;
+	settings.tracks[slot].colour = colour;
 	CHECK(Status::Ok == f.model->dispatch(Command::configure(settings)));
 	CHECK(Status::Ok == f.model->ensureBound(slot));
 	CHECK(Status::Ok == f.model->dispatch({CommandType::Press, slot}));
@@ -56,6 +56,87 @@ void expectRing(const Pads& pads, const int32_t (&ring)[12][2], uint8_t brightPa
 } // namespace
 
 TEST_GROUP(LoopPadRender){};
+
+// Catches achromatic/duplicate default identities in the real rendered borders.
+TEST(LoopPadRender, DefaultRenderedRingsAreDistinctAndChromatic) {
+	Fixture f;
+	Pads pads;
+	CHECK_TRUE(f.view.renderMainPads(0xff, pads.image, pads.mask, false));
+	RGB identities[8]{};
+	for (SlotId slot = 0; slot < 8; ++slot) {
+		const int32_t x = (slot % 4) * 4;
+		const int32_t y = slot < 4 ? 7 : 3;
+		const auto colour = pads.image[y][x];
+		CHECK(std::max({colour.r, colour.g, colour.b}) - std::min({colour.r, colour.g, colour.b}) > 0);
+		for (SlotId other = 0; other < slot; ++other)
+			CHECK_FALSE(colour == identities[other]);
+		identities[slot] = colour;
+		const auto& ring = slot < 4 ? topRing : bottomRing;
+		for (const auto& pad : ring)
+			pads.expect(x + pad[0], pad[1], colour);
+		for (int32_t dx : {1, 2})
+			for (int32_t dy : {1, 2})
+				pads.expect(x + dx, y - dy, RGB(40, 40, 40));
+	}
+	pads.expect(4, 3, RGB(255, 0, 128).dim(3));
+}
+
+// Explicit Pink selection isolates display mapping from the default-setting test.
+TEST(LoopPadRender, PinkTrackUsesSaturatedIdentityAndKeepsStateColours) {
+	Fixture f;
+	record120Frames(f, 5, Colour::Pink);
+	Pads pads;
+	CHECK_TRUE(f.view.renderMainPads(0xff, pads.image, pads.mask, false));
+	pads.expect(4, 3, RGB(255, 0, 128));
+	pads.expect(5, 3, RGB(255, 0, 128).dim(3));
+	pads.expect(5, 2, colours::green);
+	CHECK(Status::Ok == f.model->dispatch({CommandType::StopAll}));
+	CHECK_TRUE(f.view.renderMainPads(0xff, pads.image, pads.mask, false));
+	pads.expect(4, 3, RGB(255, 0, 128).dim(3));
+	pads.expect(5, 2, colours::green.dim(3));
+}
+
+TEST(LoopPadRender, ConfigurablePaletteKeepsExistingMappingsAndWhite) {
+	Fixture f;
+	constexpr RGB expected[] = {{255, 128, 0}, {255, 255, 0}, {128, 255, 0},  {0, 255, 128},
+	                            {0, 255, 255}, {0, 128, 255}, {0, 0, 255},    {128, 0, 255},
+	                            {255, 0, 255}, {255, 0, 128}, {255, 255, 255}};
+	for (unsigned i = 0; i < kTrackColourCount; ++i) {
+		auto settings = f.model->engine().settings();
+		settings.tracks[5].colour = trackColourAt(i);
+		CHECK(Status::Ok == f.model->dispatch(Command::configure(settings)));
+		Pads pads;
+		CHECK_TRUE(f.view.renderMainPads(0xff, pads.image, pads.mask, false));
+		pads.expect(4, 3, expected[i].dim(3));
+		pads.expect(5, 2, RGB(40, 40, 40));
+	}
+}
+
+TEST(LoopPadRender, PinkIdentityDoesNotReplaceTemporaryRingOverrides) {
+	Fixture f;
+	auto settings = f.model->engine().settings();
+	settings.tracks[5].colour = Colour::Pink;
+	settings.startAction.mode = ActionMode::Synced;
+	CHECK(Status::Ok == f.model->dispatch(Command::configure(settings)));
+	CHECK(Status::Ok == f.model->ensureBound(5));
+	CHECK(Status::Ok == f.model->dispatch({CommandType::Press, 5}));
+	CHECK_TRUE(f.model->engine().state(5).pending);
+	Pads pads;
+	probeSampleClock = 11025; // On half of the visual pulse; independent of engine/audio time.
+	CHECK_TRUE(f.view.renderMainPads(0xff, pads.image, pads.mask, false));
+	pads.expect(4, 3, colours::red);
+	pads.expect(5, 2, colours::red);
+	CHECK(Status::Ok == f.model->dispatch({CommandType::Press, 5})); // Cancel pending capture.
+	settings.startAction.mode = ActionMode::Immediate;
+	CHECK(Status::Ok == f.model->dispatch(Command::configure(settings)));
+	record120Frames(f, 5, Colour::Pink);
+	CHECK(Status::Ok == f.model->dispatch({CommandType::Press, 5}));
+	CHECK_TRUE(f.model->engine().state(5).capture);
+	probeSampleClock = 11025;
+	CHECK_TRUE(f.view.renderMainPads(0xff, pads.image, pads.mask, false));
+	pads.expect(4, 3, colours::orange);
+	pads.expect(5, 2, colours::orange);
+}
 
 TEST(LoopPadRender, TopLeftSlotAndInputAgree) {
 	Fixture f;

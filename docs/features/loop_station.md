@@ -39,11 +39,11 @@ The Deluge's 16×8 pad grid is divided into eight 4×4 tiles: tracks 1–4 acros
 2. Press the center again to finish the take. **Record Action** decides whether the phrase starts playing or moves directly into overdub.
 3. Press the center of a playing track to begin overdubbing; press it again to close the capture gate. A quick double press on a playing track stops it.
 4. Press a track's outer ring to select it. While it plays, the ring fills clockwise from the upper-left pad and resets each time the phrase loops.
-5. Press **PLAY** to Start All and **RECORD** to record on the selected track. The sidebar also provides Start All and Stop All.
+5. Press **PLAY** to Start All and **RECORD** to record on the selected track. The physical top row of the sidebar provides Start All (left) and Stop All (right); the other sidebar rows are inactive.
 6. Stop a track, then hold its center for two seconds and release to clear it. A red sweep shows hold progress.
 7. Press **BACK** on a track with available history to request undo. The display indicates when undo is unavailable or still pending.
 
-Track colors distinguish tracks. Center pads and rings show empty, recording, overdubbing, playing and stopped states. A capture error appears on the affected track; press its center to acknowledge it.
+Track colors distinguish tracks. New tracks default to **Yellow, Cyan, Blue, Purple, Magenta, Pink, Gold and Lime** for tracks 1–8 respectively. Center pads and rings show empty, recording, overdubbing, playing and stopped states. These temporary state colors take priority over the chosen identity color. A capture error appears on the affected track; press its center to acknowledge it.
 
 ## Change settings
 
@@ -52,6 +52,8 @@ Track colors distinguish tracks. Center pads and rings show empty, recording, ov
 - Turn the Select encoder to move through rows, press Select to edit, and press **BACK** to return.
 
 Global settings include Record Action, Start Mode/Interval and Stop Mode/Interval. Interval settings are shown when the related mode is Synced. Per-track settings include input source, monitoring, record duration, Loop or One Shot playback, transpose, color and Copy To Track. Transpose range is ±24.50 semitones in one-cent steps. Copy To Track copies settings only; it leaves the destination audio, name, output, effects and history intact.
+
+To change a ring's identity color: **SHIFT + track centre → Colour → SELECT to edit → turn SELECT → SELECT to finish → BACK**. The ring updates live and the menu shows the chosen color. White remains available, and multiple tracks may use the same color. Colors are saved and restored with normal Song **Save/load**; editing does not write to the SD card on each turn. Existing saved/custom colors are preserved, including White and copied or duplicate choices; the new defaults do not recolor saved Songs.
 
 Press **CLIP VIEW** to open the selected track's ordinary Audio Clip view and menus. Loop tracks use normal Song outputs and effects.
 

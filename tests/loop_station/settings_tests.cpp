@@ -29,8 +29,8 @@ TEST(LoopSettings, defaultsUseSyncedSixteenthAndIndependentActions) {
 
 TEST(LoopSettings, trackDefaultsAndSlots) {
 	const auto settings = defaultSettings();
-	constexpr Colour expected[] = {Colour::Yellow,  Colour::Cyan,  Colour::Blue, Colour::Purple,
-	                               Colour::Magenta, Colour::White, Colour::Gold, Colour::Lime};
+	constexpr Colour expected[] = {Colour::Yellow,  Colour::Cyan, Colour::Blue, Colour::Purple,
+	                               Colour::Magenta, Colour::Pink, Colour::Gold, Colour::Lime};
 	for (SlotId slot = 0; slot < 8; ++slot) {
 		const auto track = defaultTrackSettings(slot);
 		CHECK_EQUAL(static_cast<int>(Source::Left), static_cast<int>(track.source));

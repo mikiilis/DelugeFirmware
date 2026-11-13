@@ -266,7 +266,9 @@ void SettingsMenu::changeValue(int32_t offset) {
 	case MenuField::CopyToTrack:
 		return;
 	}
-	(void)model->dispatch(Command::configure(settings));
+	const auto status = model->dispatch(Command::configure(settings));
+	if (status == Status::Ok && field == MenuField::Colour)
+		uiNeedsRendering(getRootUI());
 	fields_ = visibleMenuFields(scope_, model->engine().settings());
 	if (row_ >= fields_.count)
 		row_ = fields_.count ? fields_.count - 1 : 0;
