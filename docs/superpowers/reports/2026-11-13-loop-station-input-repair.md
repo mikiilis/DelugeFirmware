@@ -1,7 +1,7 @@
 # Loop Station input repair — verification
 
 Date: 2026-11-13. Verified firmware source: `32088f411151544db217a61e7e9b0073c1967da0`.
-Host verification and Release linking passed. Final independent review is pending with the controller. Physical acceptance: **NOT_RUN**.
+Host verification and Release linking passed. Final whole-change independent review approved the targeted repair (`41433f5b..139167ae`) with no change-specific findings. Physical acceptance: **NOT_RUN**.
 
 ## Root causes and repair
 
@@ -10,7 +10,9 @@ Host verification and Release linking passed. Final independent review is pendin
 - Both views consumed SHIFT instead of letting shared button handling update it. Both edges now propagate only SHIFT, preserving other button handling.
 - Settings changed state but returned without OLED invalidation; pad invalidation is a separate boundary. `32088f41` requests OLED refresh for settings and relevant performance actions/the existing graphics timer path, without drawing in audio callbacks. The seven-segment branch is preserved.
 
-Reviewed final production diff and the input/SD/error paths, model binding/dispatch guards, shared Shift routing, and encoder deferral. No new actionable finding; this is self-review, not final independent review. Task implementation reports and independent task approvals are retained in `.superpowers/sdd/2026-11-13-loop-station-input-repair/`.
+Reviewed final production diff and the input/SD/error paths, model binding/dispatch guards, shared Shift routing, and encoder deferral. Independent task reviews and a final integration review approved this repair. The final review additionally checked cooperative yielding, real input replay and surrounding UI scheduling. This report retains the verification summary independently of temporary workflow artifacts.
+
+TDD evidence: Task 1 ran 15 new interaction tests against unchanged product code and observed 12 expected behavioral failures, then all 15 passed after repair. Task 2 added 18 tests and observed 15 missing-OLED-invalidation failures after real state assertions succeeded, then all 33 interaction tests passed. Compilation/scaffolding failures were not counted as RED evidence.
 
 ## Commands and results
 
@@ -64,4 +66,25 @@ All items remain pending on the device; host tests and firmware linking do not e
 - [ ] Capture/play/stop/group actions and asynchronous status remain visible and responsive under audio load; verify audio and no crash/freeze.
 - [ ] On seven-segment hardware, confirm navigation/edit/copy text and popup feedback remain correct.
 
-No device was flashed or exercised during this task. Final whole-change independent review remains pending; no hardware success is claimed.
+No device was flashed or exercised during this task; no hardware success is claimed.
+
+## Review boundaries and follow-up
+
+The final review approved the targeted change, not the full inherited Loop Station implementation. The controller accepted these as follow-up boundaries rather than silently expanding this repair:
+
+- Stopped-phrase RECORD restart/release and held-centre ownership across multiple pads or menu transitions: inherited event mapping, not changed here. Add physical-event-sequence regressions before modifying gestures.
+- Large negative encoder offsets: inherited modulo arithmetic can produce an invalid slot; fast reverse scrolling needs a separate regression/fix.
+- Copy To Track confirmed by a settings pad during SD activity: the unchanged overlay can prepare a destination without its own SD guard. Track as an allocation-safety follow-up; performance-pad deferral does not certify it.
+- Pending exit/undo UI timer arming/service: unchanged scheduling is not certified by the OLED refresh repair.
+- Physical Shift, SD replay latency, audio/memory headroom and display/DSP cost: must be tested on hardware; remain NOT_RUN.
+- Existing RWX linker warning and broader engine/archive/persistence correctness: unchanged and outside this repair review.
+
+Costs of these scope decisions: the inherited edge cases may still misbehave, so this repair must not be described as full feature qualification. They are recorded as project follow-ups; no additional behavior change was made without authorization.
+
+## Execution decisions
+
+- Used the current feature checkout by explicit user choice; no isolated worktree.
+- Used harness-default subagent models because no particular model was requested.
+- Used bundled CMake/CTest because bare tools were absent on PATH; no dependency/configuration change.
+- Kept build/test execution and independent review in separate agent roles.
+- Reviewed the complete repair from `41433f5b`, rather than treating earlier feature implementation as newly authored work.

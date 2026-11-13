@@ -62,10 +62,10 @@
 - [x] Run `cmake --build build/tests --target LoopStationTests OledCanvasTests LoopStationOledTests LoopAudioAllocationGuard LoopGestureAllocationGuard LoopHistorySnapshotAllocationGuard -j4`.
 - [x] Run `ctest --test-dir build/tests -R '^(LoopStationTests|OledCanvasTests|LoopStationOledTests|LoopAudioAllocationGuard|LoopGestureAllocationGuard|LoopHistorySnapshotAllocationGuard)$' --output-on-failure`; require all selected tests pass.
 - [x] Build firmware with `DBT_NO_SYNC=1 ./dbt build Release` using the existing toolchain/configuration; record blockers rather than claiming an unrun build passed.
-- [ ] Run `git diff --check` and review the final input/SD/error paths. Obtain a whole-change independent review if the selected execution method calls for it; resolve actionable findings and rerun affected tests.
+- [x] Run `git diff --check` and review the final input/SD/error paths. Obtain a whole-change independent review if the selected execution method calls for it; resolve actionable findings and rerun affected tests.
 - [x] Mark plan checkboxes accurately, record evidence, and provide the firmware output path and short physical acceptance checklist. Leave device acceptance explicitly pending until the user tries it.
 
-Evidence: [verification report](../reports/2026-11-13-loop-station-input-repair.md). Tasks 1–2 are checked from their implementation reports and approved task reviews (`ab5852b7`, `32088f41`). Task 3 host tests, Release build, artifact inspection, diff check, and input/SD/error-path self-review are complete. The combined review step remains unchecked until the controller obtains the final whole-change independent review; device acceptance is **NOT_RUN**.
+Evidence: [verification report](../reports/2026-11-13-loop-station-input-repair.md). Tasks 1–2 are checked from their implementation reports and approved task reviews (`ab5852b7`, `32088f41`). Task 3 host tests, Release build, artifact inspection, diff check, input/SD/error-path self-review and final whole-change independent review are complete. The final review approved the targeted repair with no change-specific findings; inherited edge cases are recorded for follow-up in the report. Device acceptance is **NOT_RUN**.
 
 ## Plan self-review
 
