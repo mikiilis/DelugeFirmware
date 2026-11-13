@@ -17,6 +17,7 @@ add_executable(LoopStationTests
     ui/input_tests.cpp
     main.cpp
     view_tests.cpp
+    pad_render_tests.cpp
     menu_tests.cpp
     ../../src/deluge/loop_station/menu_model.cpp
     ../../src/deluge/loop_station/geometry.cpp

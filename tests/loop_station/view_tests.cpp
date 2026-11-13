@@ -71,28 +71,52 @@ TEST(LoopView, PendingActionShowsItsRecordActionDependentDestination) {
 	            static_cast<int>(pendingDestination(PendingAction::None, RecordAction::REC_PLAY_DUB)));
 }
 
-TEST(LoopView, PadsMapToEightTilesAndClockwiseBorder) {
-	const auto topLeft = padAddress(0, 0);
-	CHECK_TRUE(topLeft.valid);
-	CHECK_EQUAL(0, topLeft.slot);
-	CHECK_EQUAL(static_cast<int>(PadRegion::Border), static_cast<int>(topLeft.region));
-	CHECK_EQUAL(0, topLeft.borderIndex);
+TEST(LoopView, PhysicalRowsMapToHtmlTrackOrder) {
+	constexpr int32_t origins[8][2] = {{0, 7}, {4, 7}, {8, 7}, {12, 7}, {0, 3}, {4, 3}, {8, 3}, {12, 3}};
+	constexpr int32_t centres[4][2] = {{1, -1}, {2, -1}, {1, -2}, {2, -2}};
+	for (SlotId slot = 0; slot < 8; ++slot) {
+		CHECK_EQUAL(slot, padAddress(origins[slot][0], origins[slot][1]).slot);
+		for (const auto& centre : centres) {
+			const auto pad = padAddress(origins[slot][0] + centre[0], origins[slot][1] + centre[1]);
+			CHECK_TRUE(pad.valid);
+			CHECK_EQUAL(slot, pad.slot);
+			CHECK(PadRegion::Centre == pad.region);
+		}
+	}
+	CHECK_EQUAL(0, padAddress(0, 7).slot);
+	CHECK_EQUAL(4, padAddress(0, 3).slot);
+	CHECK_EQUAL(7, padAddress(12, 0).slot);
+}
 
-	const auto firstCentre = padAddress(1, 1);
-	CHECK_EQUAL(0, firstCentre.slot);
-	CHECK_EQUAL(static_cast<int>(PadRegion::Centre), static_cast<int>(firstCentre.region));
-	CHECK_EQUAL(1, padAddress(4, 0).slot);
-	CHECK_EQUAL(3, padAddress(12, 0).slot);
-	CHECK_EQUAL(4, padAddress(0, 4).slot);
-	CHECK_EQUAL(7, padAddress(12, 4).slot);
-	CHECK_EQUAL(1, padAddress(1, 0).borderIndex);
-	CHECK_EQUAL(4, padAddress(3, 1).borderIndex);
-	CHECK_EQUAL(7, padAddress(2, 3).borderIndex);
-	CHECK_EQUAL(10, padAddress(0, 2).borderIndex);
-	CHECK_FALSE(padAddress(16, 0).valid);
-	CHECK_FALSE(padAddress(0, 8).valid);
-	const int32_t clockwise[12][2] = {{0, 0}, {1, 0}, {2, 0}, {3, 0}, {3, 1}, {3, 2},
-	                                  {3, 3}, {2, 3}, {1, 3}, {0, 3}, {0, 2}, {0, 1}};
-	for (uint8_t i = 0; i < 12; ++i)
-		CHECK_EQUAL(i, padAddress(clockwise[i][0], clockwise[i][1]).borderIndex);
+TEST(LoopView, EveryTileRingStartsTopLeftAndRunsClockwise) {
+	constexpr int32_t origins[8][2] = {{0, 7}, {4, 7}, {8, 7}, {12, 7}, {0, 3}, {4, 3}, {8, 3}, {12, 3}};
+	constexpr int32_t clockwiseOffsets[12][2] = {{0, 0},  {1, 0},  {2, 0},  {3, 0},  {3, -1}, {3, -2},
+	                                             {3, -3}, {2, -3}, {1, -3}, {0, -3}, {0, -2}, {0, -1}};
+	for (SlotId slot = 0; slot < 8; ++slot) {
+		for (uint8_t i = 0; i < 12; ++i) {
+			const auto pad =
+			    padAddress(origins[slot][0] + clockwiseOffsets[i][0], origins[slot][1] + clockwiseOffsets[i][1]);
+			CHECK_TRUE(pad.valid);
+			CHECK_EQUAL(slot, pad.slot);
+			CHECK(PadRegion::Border == pad.region);
+			CHECK_EQUAL(i, pad.borderIndex);
+		}
+	}
+}
+
+TEST(LoopView, InvalidPhysicalCoordinatesStayInvalid) {
+	constexpr int32_t invalid[][2] = {{-1, 7},
+	                                  {0, 8},
+	                                  {16, 0},
+	                                  {0, -1},
+	                                  {-1, -1},
+	                                  {16, 8},
+	                                  {std::numeric_limits<int32_t>::min(), 0},
+	                                  {0, std::numeric_limits<int32_t>::max()}};
+	for (const auto& coordinate : invalid) {
+		const auto pad = padAddress(coordinate[0], coordinate[1]);
+		CHECK_FALSE(pad.valid);
+		CHECK_EQUAL(kInvalidSlot, pad.slot);
+		CHECK(PadRegion::Invalid == pad.region);
+	}
 }

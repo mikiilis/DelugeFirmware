@@ -28,13 +28,11 @@ def main() -> None:
         [
             f'#include "{args.support.as_posix()}"',
             "using namespace deluge::hid::button;\nusing namespace loop_station;",
-            "namespace {",
-            section(loop, "SongModel* model()", "RGB colourFor("),
-            "}",
+            section(loop, "namespace {", "bool LoopStationView::opened()"),
             section(
                 loop,
                 "bool LoopStationView::opened()",
-                "bool LoopStationView::renderMainPads(",
+                "void LoopStationView::renderOLED(",
             ),
             loop[loop.index(encoder_marker) :],
             "namespace deluge::gui::menu_item::loop_station {",

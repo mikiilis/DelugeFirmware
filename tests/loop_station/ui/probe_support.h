@@ -4,6 +4,8 @@
 #include "deluge/loop_station/geometry.h"
 #include "deluge/loop_station/menu_model.h"
 #include "deluge/loop_station/song_model.h"
+#include "deluge/loop_station/view_state.h"
+#include "gui/colour/palette.h"
 #include "hid/button.h"
 #include <algorithm>
 #include <array>
@@ -22,6 +24,10 @@ public:
 extern ProbeUI* probeCurrentUI;
 extern unsigned probeRenderRequests;
 extern unsigned probeOledRequests;
+extern uint64_t probeSampleClock;
+namespace AudioEngine {
+uint64_t loopStationSampleClock();
+}
 bool openUI(ProbeUI* ui);
 void changeRootUI(ProbeUI* ui);
 ProbeUI* getCurrentUI();
@@ -109,6 +115,8 @@ public:
 	ActionResult timerCallback();
 	ActionResult padAction(int32_t, int32_t, int32_t);
 	ActionResult buttonAction(deluge::hid::Button, bool, bool);
+	bool renderMainPads(uint32_t, RGB[][kDisplayWidth + kSideBarWidth], uint8_t[][kDisplayWidth + kSideBarWidth], bool);
+	bool renderSidebar(uint32_t, RGB[][kDisplayWidth + kSideBarWidth], uint8_t[][kDisplayWidth + kSideBarWidth]);
 	void selectEncoderAction(int8_t);
 	bool prepareTrack(loop_station::SlotId);
 	void updateLed();

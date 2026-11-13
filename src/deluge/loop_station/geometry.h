@@ -23,7 +23,8 @@ constexpr EntryDecision crossScreenEntryDecision(bool pressed, bool idleSongRoot
 	return featureEnabled ? EntryDecision::Enter : EntryDecision::FeatureDisabled;
 }
 
-// x/y use the physical 16 by 8 pad coordinates. Each 4 by 4 tile is one track.
+// Physical 16 by 8 coordinates: y=0 is bottom, y=7 is top. Each 4 by 4 tile is one track,
+// numbered left-to-right across the top row, then the bottom row.
 PadAddress padAddress(int32_t x, int32_t y);
 
 // Number of clockwise border pads filled for the current native sample frame.

@@ -6,6 +6,12 @@ ProbeDisplay* display = nullptr;
 ProbeUI* probeCurrentUI = nullptr;
 unsigned probeRenderRequests = 0;
 unsigned probeOledRequests = 0;
+uint64_t probeSampleClock = 0;
+namespace AudioEngine {
+uint64_t loopStationSampleClock() {
+	return probeSampleClock;
+}
+} // namespace AudioEngine
 ProbeSessionView sessionView;
 namespace Buttons {
 bool shiftPressed = false;

@@ -12,20 +12,20 @@ TEST_GROUP(LoopUi){};
 TEST(LoopUi, FreshCentrePressBindsOnlyItsSlotAndStartsCapture) {
 	Fixture f;
 	CHECK_EQUAL(0, f.host.allocationAttempts);
-	CHECK(f.view.padAction(9, 5, 100) == ActionResult::DEALT_WITH);
+	CHECK(f.view.padAction(9, 2, 100) == ActionResult::DEALT_WITH);
 	f.onlyBound(6);
 	CHECK_TRUE(f.model->engine().state(6).capture);
 }
 
 TEST(LoopUi, BorderPreparesAndTogglesSelectionWithoutCapture) {
 	Fixture f;
-	f.view.padAction(12, 4, 100);
+	f.view.padAction(12, 3, 100);
 	f.onlyBound(7);
 	CHECK_EQUAL(7, f.model->engine().selected());
 	CHECK_FALSE(f.model->engine().state(7).capture);
-	f.view.padAction(12, 4, 0);
+	f.view.padAction(12, 3, 0);
 	CHECK_EQUAL(7, f.model->engine().selected());
-	f.view.padAction(12, 4, 100);
+	f.view.padAction(12, 3, 100);
 	CHECK_EQUAL(kInvalidSlot, f.model->engine().selected());
 	CHECK_EQUAL(1, f.host.allocationAttempts);
 }
@@ -55,21 +55,21 @@ TEST(LoopUi, RecordPreparesAnUnboundSelectedTrack) {
 
 TEST(LoopUi, RepeatedCentreUseKeepsClipIdentity) {
 	Fixture f;
-	f.view.padAction(1, 1, 100);
+	f.view.padAction(1, 6, 100);
 	f.onlyBound(0);
 	auto* clip = f.model->clip(0);
-	f.view.padAction(1, 1, 0);
-	f.view.padAction(1, 1, 100);
+	f.view.padAction(1, 6, 0);
+	f.view.padAction(1, 6, 100);
 	POINTERS_EQUAL(clip, f.model->clip(0));
 	CHECK_EQUAL(1, f.host.allocationAttempts);
 }
 
 TEST(LoopUi, UnboundReleaseAndGroupControlsAllocateNothing) {
 	Fixture f;
-	f.view.padAction(5, 1, 0);
-	f.view.padAction(4, 0, 0);
-	f.view.padAction(16, 0, 100);
-	f.view.padAction(17, 0, 100);
+	f.view.padAction(5, 6, 0);
+	f.view.padAction(4, 7, 0);
+	f.view.padAction(16, 7, 100);
+	f.view.padAction(17, 7, 100);
 	f.view.buttonAction(PLAY, true, false);
 	f.view.buttonAction(RECORD, false, false);
 	CHECK_EQUAL(0, f.host.allocationAttempts);
@@ -79,14 +79,14 @@ TEST(LoopUi, UnboundReleaseAndGroupControlsAllocateNothing) {
 TEST(LoopUi, PreparationFailureShowsPopupAndCentreRetryCaptures) {
 	Fixture f;
 	f.host.failAllocation = true;
-	f.view.padAction(5, 5, 100);
+	f.view.padAction(5, 2, 100);
 	CHECK_EQUAL(1, f.host.allocationAttempts);
 	CHECK_FALSE(f.model->clip(5));
 	CHECK_FALSE(f.model->engine().state(5).capture);
 	CHECK_EQUAL(1, f.screen.popups.size());
 	STRCMP_EQUAL("Track unavailable", f.screen.popups.back().c_str());
 	f.host.failAllocation = false;
-	f.view.padAction(5, 5, 100);
+	f.view.padAction(5, 2, 100);
 	f.onlyBound(5);
 	CHECK_TRUE(f.model->engine().state(5).capture);
 }
@@ -94,11 +94,11 @@ TEST(LoopUi, PreparationFailureShowsPopupAndCentreRetryCaptures) {
 TEST(LoopUi, FailedSelectionDoesNotChangeSelectionAndRetries) {
 	Fixture f;
 	f.host.failAllocation = true;
-	f.view.padAction(4, 0, 100);
+	f.view.padAction(4, 7, 100);
 	CHECK_EQUAL(1, f.screen.popups.size());
 	CHECK_EQUAL(kInvalidSlot, f.model->engine().selected());
 	f.host.failAllocation = false;
-	f.view.padAction(4, 0, 100);
+	f.view.padAction(4, 7, 100);
 	f.onlyBound(1);
 	CHECK_EQUAL(1, f.model->engine().selected());
 }
@@ -106,10 +106,10 @@ TEST(LoopUi, FailedSelectionDoesNotChangeSelectionAndRetries) {
 TEST(LoopUi, LockedCentreDefersAllocationThenRetryCaptures) {
 	Fixture f;
 	sdRoutineLock = true;
-	CHECK(f.view.padAction(1, 1, 100) == ActionResult::REMIND_ME_OUTSIDE_CARD_ROUTINE);
+	CHECK(f.view.padAction(1, 6, 100) == ActionResult::REMIND_ME_OUTSIDE_CARD_ROUTINE);
 	CHECK_EQUAL(0, f.host.allocationAttempts);
 	sdRoutineLock = false;
-	f.view.padAction(1, 1, 100);
+	f.view.padAction(1, 6, 100);
 	f.onlyBound(0);
 	CHECK_TRUE(f.model->engine().state(0).capture);
 }
@@ -117,11 +117,11 @@ TEST(LoopUi, LockedCentreDefersAllocationThenRetryCaptures) {
 TEST(LoopUi, LockedBorderDefersSelectionThenRetryPrepares) {
 	Fixture f;
 	sdRoutineLock = true;
-	CHECK(f.view.padAction(8, 4, 100) == ActionResult::REMIND_ME_OUTSIDE_CARD_ROUTINE);
+	CHECK(f.view.padAction(8, 3, 100) == ActionResult::REMIND_ME_OUTSIDE_CARD_ROUTINE);
 	CHECK_EQUAL(0, f.host.allocationAttempts);
 	CHECK_EQUAL(kInvalidSlot, f.model->engine().selected());
 	sdRoutineLock = false;
-	f.view.padAction(8, 4, 100);
+	f.view.padAction(8, 3, 100);
 	f.onlyBound(6);
 	CHECK_EQUAL(6, f.model->engine().selected());
 }
@@ -130,11 +130,11 @@ TEST(LoopUi, LockedShiftCentreDefersMenuAndAllocationThenRetryOpensTrack) {
 	Fixture f;
 	Buttons::shiftPressed = true;
 	sdRoutineLock = true;
-	CHECK(f.view.padAction(13, 1, 100) == ActionResult::REMIND_ME_OUTSIDE_CARD_ROUTINE);
+	CHECK(f.view.padAction(13, 6, 100) == ActionResult::REMIND_ME_OUTSIDE_CARD_ROUTINE);
 	CHECK_EQUAL(0, f.host.allocationAttempts);
 	POINTERS_EQUAL(&f.view, getCurrentUI());
 	sdRoutineLock = false;
-	f.view.padAction(13, 1, 100);
+	f.view.padAction(13, 6, 100);
 	f.onlyBound(3);
 	POINTERS_EQUAL(&loopStationSettingsMenu, getCurrentUI());
 	CHECK_EQUAL(3, loopStationSettingsMenu.slot_);
@@ -144,7 +144,7 @@ TEST(LoopUi, LockedShiftCentreDefersMenuAndAllocationThenRetryOpensTrack) {
 TEST(LoopUi, LockedUnboundReleaseDoesNotAllocateOrDefer) {
 	Fixture f;
 	sdRoutineLock = true;
-	CHECK(f.view.padAction(1, 1, 0) == ActionResult::DEALT_WITH);
+	CHECK(f.view.padAction(1, 6, 0) == ActionResult::DEALT_WITH);
 	CHECK_EQUAL(0, f.host.allocationAttempts);
 }
 
@@ -152,7 +152,7 @@ TEST(LoopUi, PerformanceShiftEdgesReachSharedProcessingAndOpenTrackSettings) {
 	Fixture f;
 	CHECK(f.sharedShift(f.view, true) == ActionResult::NOT_DEALT_WITH);
 	CHECK_TRUE(Buttons::shiftPressed);
-	f.view.padAction(5, 1, 100);
+	f.view.padAction(5, 6, 100);
 	POINTERS_EQUAL(&loopStationSettingsMenu, getCurrentUI());
 	f.onlyBound(1);
 	CHECK_FALSE(f.model->engine().state(1).capture);
@@ -313,7 +313,7 @@ TEST(LoopUi, SevenSegmentCopyTargetRefreshesAndConfirmationRestoresTrackText) {
 TEST(LoopUi, PerformanceCentreCaptureInvalidatesOled) {
 	Fixture f;
 	probeOledRequests = 0;
-	f.view.padAction(1, 1, 100);
+	f.view.padAction(1, 6, 100);
 	CHECK_TRUE(f.model->engine().state(0).capture);
 	CHECK(probeOledRequests > 0);
 }
@@ -321,7 +321,7 @@ TEST(LoopUi, PerformanceCentreCaptureInvalidatesOled) {
 TEST(LoopUi, PerformanceBorderSelectionInvalidatesOled) {
 	Fixture f;
 	probeOledRequests = 0;
-	f.view.padAction(4, 0, 100);
+	f.view.padAction(4, 7, 100);
 	CHECK_EQUAL(1, f.model->engine().selected());
 	CHECK(probeOledRequests > 0);
 }
@@ -347,7 +347,7 @@ TEST(LoopUi, PerformanceGroupStopInvalidatesOled) {
 	Fixture f;
 	f.recordPhrase();
 	probeOledRequests = 0;
-	f.view.padAction(17, 0, 100);
+	f.view.padAction(17, 7, 100);
 	CHECK_FALSE(f.model->engine().state(0).playing);
 	CHECK(probeOledRequests > 0);
 }
@@ -355,9 +355,9 @@ TEST(LoopUi, PerformanceGroupStopInvalidatesOled) {
 TEST(LoopUi, PerformanceGroupStartInvalidatesOled) {
 	Fixture f;
 	f.recordPhrase();
-	f.view.padAction(17, 0, 100);
+	f.view.padAction(17, 7, 100);
 	probeOledRequests = 0;
-	f.view.padAction(16, 0, 100);
+	f.view.padAction(16, 7, 100);
 	CHECK_TRUE(f.model->engine().state(0).playing);
 	CHECK(probeOledRequests > 0);
 }
@@ -365,11 +365,42 @@ TEST(LoopUi, PerformanceGroupStartInvalidatesOled) {
 TEST(LoopUi, PerformancePlayButtonInvalidatesOled) {
 	Fixture f;
 	f.recordPhrase();
-	f.view.padAction(17, 0, 100);
+	f.view.padAction(17, 7, 100);
 	probeOledRequests = 0;
 	f.view.buttonAction(PLAY, true, false);
 	CHECK_TRUE(f.model->engine().state(0).playing);
 	CHECK(probeOledRequests > 0);
+}
+
+TEST(LoopUi, OnlyPhysicalTopSidebarControlsDispatch) {
+	Fixture f;
+	// Use real commands for setup so a mirrored centre cannot mask sidebar failures.
+	CHECK(Status::Ok == f.model->ensureBound(0));
+	CHECK(Status::Ok == f.model->dispatch({CommandType::Press, 0}));
+	f.renderAudio();
+	CHECK(Status::Ok == f.model->dispatch({CommandType::Release, 0}));
+	CHECK(Status::Ok == f.model->dispatch({CommandType::Press, 0}));
+	CHECK_TRUE(f.model->engine().state(0).playing);
+	for (int32_t y = 0; y < 7; ++y) {
+		f.view.padAction(16, y, 100);
+		f.view.padAction(17, y, 100);
+		CHECK_TRUE(f.model->engine().state(0).playing);
+		CHECK_EQUAL(1, f.host.allocationAttempts);
+	}
+	f.view.padAction(17, 7, 0);
+	CHECK_TRUE(f.model->engine().state(0).playing);
+	f.view.padAction(17, 7, 100);
+	CHECK_FALSE(f.model->engine().state(0).playing);
+	for (int32_t y = 0; y < 7; ++y) {
+		f.view.padAction(16, y, 100);
+		f.view.padAction(17, y, 100);
+		CHECK_FALSE(f.model->engine().state(0).playing);
+	}
+	f.view.padAction(16, 7, 0);
+	CHECK_FALSE(f.model->engine().state(0).playing);
+	f.view.padAction(16, 7, 100);
+	CHECK_TRUE(f.model->engine().state(0).playing);
+	CHECK_EQUAL(1, f.host.allocationAttempts);
 }
 
 TEST(LoopUi, PerformanceGraphicsRefreshInvalidatesOledAfterModelAndAudioStateChanges) {

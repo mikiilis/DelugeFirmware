@@ -69,6 +69,7 @@ struct Fixture {
 		Buttons::shiftPressed = false;
 		probeRenderRequests = 0;
 		probeOledRequests = 0;
+		probeSampleClock = host.time;
 		deluge::gui::menu_item::loop_station::loopStationSettingsMenu = {};
 		CHECK_TRUE(openUI(&view));
 		auto settings = loop_station::defaultSettings();
@@ -94,21 +95,23 @@ struct Fixture {
 			CHECK_EQUAL(id == slot, model->clip(id) != nullptr);
 		CHECK_EQUAL(1, host.published.size());
 	}
-	void renderAudio() {
-		std::array<loop_station::Frame, 8> input{}, output{};
+	void renderAudio(size_t frames = 8) {
+		std::array<loop_station::Frame, loop_station::AudioAdapter::kMaxWindowFrames> input{}, output{};
+		CHECK(frames <= input.size());
 		input.fill({100, -100});
-		size_t count = input.size();
+		size_t count = frames;
 		model->adapter().finalizeWindow(host.time, count, model->clock());
 		for (loop_station::SlotId slot = 0; slot < 8; ++slot)
 			if (model->clip(slot))
 				model->adapter().renderDry(slot, std::span(input).first(count), std::span(output).first(count));
 		host.time += count;
+		probeSampleClock = host.time;
 	}
 	void recordPhrase() {
-		view.padAction(1, 1, 100);
+		view.padAction(1, 6, 100);
 		renderAudio();
-		view.padAction(1, 1, 0);
-		view.padAction(1, 1, 100);
+		view.padAction(1, 6, 0);
+		view.padAction(1, 6, 100);
 		CHECK_TRUE(model->engine().state(0).hasPhrase);
 		CHECK_TRUE(model->engine().state(0).playing);
 	}

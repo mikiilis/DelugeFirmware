@@ -6,9 +6,10 @@ PadAddress padAddress(int32_t x, int32_t y) {
 	if (x < 0 || x >= 16 || y < 0 || y >= 8)
 		return {};
 
+	const int32_t visualY = 7 - y;
 	const auto localX = static_cast<uint8_t>(x % 4);
-	const auto localY = static_cast<uint8_t>(y % 4);
-	const auto slot = static_cast<SlotId>((y / 4) * 4 + x / 4);
+	const auto localY = static_cast<uint8_t>(visualY % 4);
+	const auto slot = static_cast<SlotId>((visualY / 4) * 4 + x / 4);
 	if (localX >= 1 && localX <= 2 && localY >= 1 && localY <= 2)
 		return {slot, PadRegion::Centre, 0, true};
 

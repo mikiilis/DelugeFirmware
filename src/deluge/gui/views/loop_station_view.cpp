@@ -25,6 +25,8 @@ using namespace loop_station;
 PLACE_SDRAM_BSS LoopStationView loopStationView{};
 
 namespace {
+constexpr int32_t kSidebarControlY = kDisplayHeight - 1;
+
 SongModel* model() {
 	return currentSong ? currentSong->loopStation() : nullptr;
 }
@@ -188,7 +190,7 @@ ActionResult LoopStationView::padAction(int32_t x, int32_t y, int32_t velocity) 
 	if (!m || !m->ready())
 		return ActionResult::DEALT_WITH;
 	if (x >= kDisplayWidth) {
-		if (velocity > 0 && y == 0) {
+		if (velocity > 0 && y == kSidebarControlY) {
 			if (x == kDisplayWidth)
 				(void)m->dispatch({CommandType::StartAll});
 			else if (x == kDisplayWidth + 1)
@@ -359,13 +361,13 @@ bool LoopStationView::renderSidebar(uint32_t rows, RGB image[][kDisplayWidth + k
 			continue;
 		for (int32_t x = kDisplayWidth; x < kDisplayWidth + kSideBarWidth; ++x) {
 			image[y][x] = deluge::gui::colours::black;
-			if (y == 0 && x == kDisplayWidth) {
+			if (y == kSidebarControlY && x == kDisplayWidth) {
 				const RGB active = deluge::gui::colours::green;
 				image[y][x] = groups.pendingStart && pulse ? deluge::gui::colours::white_full
 				              : groups.start               ? active
 				                                           : active.dim(3);
 			}
-			else if (y == 0 && x == kDisplayWidth + 1) {
+			else if (y == kSidebarControlY && x == kDisplayWidth + 1) {
 				const RGB active = deluge::gui::colours::red;
 				image[y][x] = groups.pendingStop && pulse ? deluge::gui::colours::white_full
 				              : groups.stop               ? active
