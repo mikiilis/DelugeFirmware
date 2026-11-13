@@ -134,6 +134,8 @@ bool SettingsMenu::opened() {
 ActionResult SettingsMenu::buttonAction(deluge::hid::Button button, bool on, bool inCardRoutine) {
 	if (inCardRoutine)
 		return ActionResult::REMIND_ME_OUTSIDE_CARD_ROUTINE;
+	if (button == SHIFT)
+		return ActionResult::NOT_DEALT_WITH;
 	if (!on)
 		return ActionResult::DEALT_WITH;
 	if (shouldCloseSettingsMenu(button == BACK, button == SESSION_VIEW, Buttons::isShiftButtonPressed())) {

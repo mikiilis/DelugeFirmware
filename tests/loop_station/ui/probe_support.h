@@ -1,0 +1,143 @@
+#pragma once
+
+#include "definitions_cxx.hpp"
+#include "deluge/loop_station/geometry.h"
+#include "deluge/loop_station/menu_model.h"
+#include "deluge/loop_station/song_model.h"
+#include "hid/button.h"
+#include <algorithm>
+#include <array>
+#include <cstdio>
+#include <string>
+#include <string_view>
+#include <vector>
+
+// Only firmware boundaries are replaced: handlers, menu logic, model and engine are real.
+class ProbeUI {
+public:
+	virtual ~ProbeUI() = default;
+	virtual bool opened() { return true; }
+	void close();
+};
+extern ProbeUI* probeCurrentUI;
+extern unsigned probeRenderRequests;
+bool openUI(ProbeUI* ui);
+void changeRootUI(ProbeUI* ui);
+ProbeUI* getCurrentUI();
+void uiNeedsRendering(ProbeUI* ui);
+
+class Song {
+public:
+	loop_station::SongModel* model = nullptr;
+	loop_station::SongModel* loopStation() { return model; }
+	loop_station::Status ensureLoopStation(bool) {
+		if (!model)
+			return loop_station::Status::Unavailable;
+		return model->ready() ? loop_station::Status::Ok : model->start();
+	}
+};
+extern Song* currentSong;
+extern bool sdRoutineLock;
+struct ProbeDisplay {
+	bool oled = true;
+	std::string text;
+	std::vector<std::string> popups;
+	bool haveOLED() const { return oled; }
+	void setText(const char* value) { text = value; }
+	void displayPopup(const char* value) { popups.emplace_back(value); }
+};
+extern ProbeDisplay* display;
+namespace Buttons {
+extern bool shiftPressed;
+inline bool isShiftButtonPressed() {
+	return shiftPressed;
+}
+} // namespace Buttons
+enum class IndicatorLED { CROSS_SCREEN_EDIT, SESSION_VIEW };
+namespace indicator_leds {
+inline void setLedState(IndicatorLED, bool) {
+}
+inline void blinkLed(IndicatorLED) {
+}
+} // namespace indicator_leds
+namespace deluge::l10n {
+enum class String {
+	STRING_FOR_LOOP_STATION_GLOBAL_SETTINGS,
+	STRING_FOR_LOOP_STATION_TRACK_SETTINGS,
+	STRING_FOR_LOOP_STATION_RECORD_ACTION,
+	STRING_FOR_LOOP_STATION_START_MODE,
+	STRING_FOR_LOOP_STATION_START_INTERVAL,
+	STRING_FOR_LOOP_STATION_STOP_MODE,
+	STRING_FOR_LOOP_STATION_STOP_INTERVAL,
+	STRING_FOR_LOOP_STATION_INPUT_SOURCE,
+	STRING_FOR_LOOP_STATION_MONITORING,
+	STRING_FOR_LOOP_STATION_DURATION,
+	STRING_FOR_LOOP_STATION_PLAYBACK,
+	STRING_FOR_LOOP_STATION_TRANSPOSE,
+	STRING_FOR_LOOP_STATION_TRACK_COLOUR,
+	STRING_FOR_LOOP_STATION_COPY_TO_TRACK,
+	STRING_FOR_LOOP_STATION_TRACK_UNAVAILABLE,
+	STRING_FOR_LOOP_STATION_COPIED,
+	STRING_FOR_LOOP_STATION_COPY_BUSY,
+};
+const char* get(String);
+} // namespace deluge::l10n
+struct ProbeSessionView : ProbeUI {
+	AudioClip* viewedClip = nullptr;
+	void transitionToViewForClip(AudioClip* clip) { viewedClip = clip; }
+};
+extern ProbeSessionView sessionView;
+
+namespace deluge::hid::display::oled_canvas {
+class Canvas {
+public:
+	std::vector<std::string> lines;
+	void clear() { lines.clear(); }
+	void drawString(std::string_view text, int32_t, int32_t, int32_t, int32_t) { lines.emplace_back(text); }
+};
+} // namespace deluge::hid::display::oled_canvas
+
+// Probe declarations avoid firmware RootUI dependencies. Firmware compilation separately
+// checks production declarations; all method bodies are extracted verbatim.
+class LoopStationView : public ProbeUI {
+public:
+	bool opened() override;
+	void focusRegained();
+	void graphicsRoutine();
+	ActionResult timerCallback();
+	ActionResult padAction(int32_t, int32_t, int32_t);
+	ActionResult buttonAction(deluge::hid::Button, bool, bool);
+	void selectEncoderAction(int8_t);
+	bool prepareTrack(loop_station::SlotId);
+	void updateLed();
+	void attemptExit();
+	loop_station::RestoreId pendingRestore_{};
+	loop_station::SlotId pendingRestoreSlot_ = loop_station::kInvalidSlot;
+	bool pendingExit_ = false;
+};
+namespace deluge::gui::menu_item::loop_station {
+class SettingsMenu : public ProbeUI {
+public:
+	bool openGlobal();
+	bool openTrack(::loop_station::SlotId);
+	bool opened() override;
+	ActionResult buttonAction(deluge::hid::Button, bool, bool);
+	ActionResult padAction(int32_t, int32_t, int32_t);
+	ActionResult horizontalEncoderAction(int32_t);
+	void selectEncoderAction(int8_t);
+	void renderOLED(deluge::hid::display::oled_canvas::Canvas&);
+	bool open(::loop_station::MenuScope, ::loop_station::SlotId);
+	void changeValue(int32_t);
+	void selectCurrent();
+	void closeMenu();
+	void refreshDisplay();
+	::loop_station::MenuFields fields_{};
+	::loop_station::MenuScope scope_ = ::loop_station::MenuScope::Global;
+	::loop_station::SlotId slot_ = 0;
+	::loop_station::SlotId copyTarget_ = 1;
+	uint8_t row_ = 0;
+	bool editing_ = false;
+	bool choosingCopyTarget_ = false;
+};
+extern SettingsMenu loopStationSettingsMenu;
+} // namespace deluge::gui::menu_item::loop_station

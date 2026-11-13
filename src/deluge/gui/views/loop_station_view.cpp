@@ -5,6 +5,8 @@
 #include "deluge/loop_station/view_state.h"
 #include "extern.h"
 #include "gui/colour/palette.h"
+#include "gui/l10n/l10n.h"
+#include "gui/l10n/strings.h"
 #include "gui/menu_item/loop_station/settings.h"
 #include "gui/ui/ui.h"
 #include "gui/views/session_view.h"
@@ -168,6 +170,17 @@ ActionResult LoopStationView::timerCallback() {
 	return ActionResult::DEALT_WITH;
 }
 
+bool LoopStationView::prepareTrack(SlotId slot) {
+	auto* m = model();
+	if (!m || !m->ready())
+		return false;
+	if (m->ensureBound(slot) == Status::Ok)
+		return true;
+	if (display)
+		display->displayPopup(deluge::l10n::get(deluge::l10n::String::STRING_FOR_LOOP_STATION_TRACK_UNAVAILABLE));
+	return false;
+}
+
 ActionResult LoopStationView::padAction(int32_t x, int32_t y, int32_t velocity) {
 	auto* m = model();
 	if (!m || !m->ready())
@@ -183,6 +196,10 @@ ActionResult LoopStationView::padAction(int32_t x, int32_t y, int32_t velocity) 
 	}
 	const auto pad = padAddress(x, y);
 	if (!pad.valid)
+		return ActionResult::DEALT_WITH;
+	if (velocity > 0 && sdRoutineLock)
+		return ActionResult::REMIND_ME_OUTSIDE_CARD_ROUTINE;
+	if (velocity > 0 && !prepareTrack(pad.slot))
 		return ActionResult::DEALT_WITH;
 	if (pad.region == PadRegion::Border) {
 		if (velocity > 0)
@@ -209,6 +226,8 @@ ActionResult LoopStationView::padAction(int32_t x, int32_t y, int32_t velocity) 
 ActionResult LoopStationView::buttonAction(deluge::hid::Button b, bool on, bool inCardRoutine) {
 	if (inCardRoutine)
 		return ActionResult::REMIND_ME_OUTSIDE_CARD_ROUTINE;
+	if (b == SHIFT)
+		return ActionResult::NOT_DEALT_WITH;
 	auto* m = model();
 	if (b == CROSS_SCREEN_EDIT) {
 		if (on && !Buttons::isShiftButtonPressed())
@@ -233,7 +252,7 @@ ActionResult LoopStationView::buttonAction(deluge::hid::Button b, bool on, bool 
 	}
 	if (b == RECORD && on && m) {
 		const SlotId slot = m->engine().selected();
-		if (validSlot(slot))
+		if (validSlot(slot) && prepareTrack(slot))
 			(void)m->dispatch({CommandType::Press, slot});
 		return ActionResult::DEALT_WITH;
 	}
@@ -369,6 +388,8 @@ void LoopStationView::selectEncoderAction(int8_t offset) {
 		if (!validSlot(selected))
 			selected = 0;
 		selected = (selected + offset + kTrackCount) % kTrackCount;
-		(void)m->dispatch({CommandType::Select, static_cast<SlotId>(selected)});
+		const auto slot = static_cast<SlotId>(selected);
+		if (prepareTrack(slot))
+			(void)m->dispatch({CommandType::Select, slot});
 	}
 }

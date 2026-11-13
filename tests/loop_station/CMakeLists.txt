@@ -1,4 +1,20 @@
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+set(LOOP_UI_PROBE "${CMAKE_CURRENT_BINARY_DIR}/generated/production_ui.cpp")
+set(LOOP_UI_VIEW "${CMAKE_CURRENT_SOURCE_DIR}/../../src/deluge/gui/views/loop_station_view.cpp")
+set(LOOP_UI_SETTINGS "${CMAKE_CURRENT_SOURCE_DIR}/../../src/deluge/gui/menu_item/loop_station/settings.cpp")
+add_custom_command(
+    OUTPUT "${LOOP_UI_PROBE}"
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/ui/generate_probe.py"
+            --loop-view "${LOOP_UI_VIEW}" --settings-view "${LOOP_UI_SETTINGS}"
+            --support "${CMAKE_CURRENT_SOURCE_DIR}/ui/probe_support.h" --output "${LOOP_UI_PROBE}"
+    DEPENDS ui/generate_probe.py ui/probe_support.h "${LOOP_UI_VIEW}" "${LOOP_UI_SETTINGS}"
+    VERBATIM
+)
+
 add_executable(LoopStationTests
+    "${LOOP_UI_PROBE}"
+    ui/probe_support.cpp
+    ui/input_tests.cpp
     main.cpp
     view_tests.cpp
     menu_tests.cpp

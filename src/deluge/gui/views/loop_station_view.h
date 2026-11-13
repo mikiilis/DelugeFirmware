@@ -27,6 +27,7 @@ private:
 	bool pendingExit_ = false;
 	void updateLed();
 	void attemptExit();
+	bool prepareTrack(loop_station::SlotId slot);
 };
 
 extern LoopStationView loopStationView;
