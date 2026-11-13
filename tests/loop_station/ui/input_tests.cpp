@@ -179,3 +179,218 @@ TEST(LoopUi, OnlyShiftPropagatesAndCardRoutineButtonDeferralIsPreserved) {
 	CHECK(loopStationSettingsMenu.buttonAction(SELECT_ENC, true, true) == ActionResult::REMIND_ME_OUTSIDE_CARD_ROUTINE);
 	CHECK_EQUAL(0, f.host.allocationAttempts);
 }
+
+// Each regression pairs the real handler's state transition with its OLED request;
+// pad-only invalidation must not satisfy the display contract.
+TEST(LoopUi, SelectTurnMovesSettingsRowAndInvalidatesOled) {
+	Fixture f;
+	CHECK_TRUE(loopStationSettingsMenu.openGlobal());
+	probeOledRequests = 0;
+	loopStationSettingsMenu.selectEncoderAction(1);
+	CHECK_EQUAL(1, loopStationSettingsMenu.row_);
+	CHECK_FALSE(loopStationSettingsMenu.editing_);
+	CHECK(probeOledRequests > 0);
+}
+
+TEST(LoopUi, SelectClickEntersEditingAndInvalidatesOled) {
+	Fixture f;
+	CHECK_TRUE(loopStationSettingsMenu.openGlobal());
+	probeOledRequests = 0;
+	loopStationSettingsMenu.buttonAction(SELECT_ENC, true, false);
+	CHECK_TRUE(loopStationSettingsMenu.editing_);
+	CHECK_EQUAL(0, loopStationSettingsMenu.row_);
+	CHECK(probeOledRequests > 0);
+}
+
+TEST(LoopUi, SelectClickLeavesEditingAndInvalidatesOled) {
+	Fixture f;
+	CHECK_TRUE(loopStationSettingsMenu.openGlobal());
+	loopStationSettingsMenu.buttonAction(SELECT_ENC, true, false);
+	probeOledRequests = 0;
+	loopStationSettingsMenu.buttonAction(SELECT_ENC, true, false);
+	CHECK_FALSE(loopStationSettingsMenu.editing_);
+	CHECK(probeOledRequests > 0);
+}
+
+TEST(LoopUi, EditingSelectTurnChangesValueAndInvalidatesOled) {
+	Fixture f;
+	CHECK_TRUE(loopStationSettingsMenu.openTrack(2));
+	CHECK(Source::Left == f.model->engine().settings().tracks[2].source);
+	loopStationSettingsMenu.buttonAction(SELECT_ENC, true, false);
+	probeOledRequests = 0;
+	loopStationSettingsMenu.selectEncoderAction(1);
+	CHECK(Source::Right == f.model->engine().settings().tracks[2].source);
+	CHECK_TRUE(loopStationSettingsMenu.editing_);
+	CHECK_EQUAL(0, loopStationSettingsMenu.row_);
+	CHECK(probeOledRequests > 0);
+}
+
+TEST(LoopUi, CopyTargetEntryInvalidatesOled) {
+	Fixture f;
+	CHECK_TRUE(loopStationSettingsMenu.openTrack(2));
+	loopStationSettingsMenu.selectEncoderAction(6);
+	probeOledRequests = 0;
+	loopStationSettingsMenu.buttonAction(SELECT_ENC, true, false);
+	CHECK_TRUE(loopStationSettingsMenu.choosingCopyTarget_);
+	CHECK_EQUAL(3, loopStationSettingsMenu.copyTarget_);
+	CHECK(probeOledRequests > 0);
+}
+
+TEST(LoopUi, CopyTargetMovementInvalidatesOled) {
+	Fixture f;
+	CHECK_TRUE(loopStationSettingsMenu.openTrack(2));
+	loopStationSettingsMenu.selectEncoderAction(6);
+	loopStationSettingsMenu.buttonAction(SELECT_ENC, true, false);
+	probeOledRequests = 0;
+	loopStationSettingsMenu.selectEncoderAction(1);
+	CHECK_TRUE(loopStationSettingsMenu.choosingCopyTarget_);
+	CHECK_EQUAL(4, loopStationSettingsMenu.copyTarget_);
+	CHECK(probeOledRequests > 0);
+}
+
+TEST(LoopUi, CopyConfirmationCopiesSettingsAndInvalidatesOled) {
+	Fixture f;
+	CHECK_TRUE(loopStationSettingsMenu.openTrack(2));
+	loopStationSettingsMenu.buttonAction(SELECT_ENC, true, false);
+	loopStationSettingsMenu.selectEncoderAction(1);
+	loopStationSettingsMenu.buttonAction(SELECT_ENC, true, false);
+	loopStationSettingsMenu.selectEncoderAction(6);
+	loopStationSettingsMenu.buttonAction(SELECT_ENC, true, false);
+	probeOledRequests = 0;
+	loopStationSettingsMenu.buttonAction(SELECT_ENC, true, false);
+	CHECK_FALSE(loopStationSettingsMenu.choosingCopyTarget_);
+	CHECK(Source::Right == f.model->engine().settings().tracks[3].source);
+	CHECK_TRUE(f.model->clip(3));
+	STRCMP_EQUAL("Copied", f.screen.popups.back().c_str());
+	CHECK(probeOledRequests > 0);
+}
+
+TEST(LoopUi, SevenSegmentNavigationAndEditingRefreshTextAndPopup) {
+	Fixture f;
+	f.screen.oled = false;
+	CHECK_TRUE(loopStationSettingsMenu.openGlobal());
+	STRCMP_EQUAL("Loop Station Global", f.screen.text.c_str());
+	STRCMP_EQUAL("PLAY DUB", f.screen.popups.back().c_str());
+	f.screen.text.clear();
+	const auto before = f.screen.popups.size();
+	loopStationSettingsMenu.selectEncoderAction(1);
+	CHECK_EQUAL(1, loopStationSettingsMenu.row_);
+	STRCMP_EQUAL("Loop Station Global", f.screen.text.c_str());
+	STRCMP_EQUAL("IMM", f.screen.popups.back().c_str());
+	loopStationSettingsMenu.buttonAction(SELECT_ENC, true, false);
+	CHECK_TRUE(loopStationSettingsMenu.editing_);
+	CHECK_EQUAL(before + 2, f.screen.popups.size());
+	loopStationSettingsMenu.selectEncoderAction(1);
+	CHECK(ActionMode::Synced == f.model->engine().settings().startAction.mode);
+	STRCMP_EQUAL("SYNC", f.screen.popups.back().c_str());
+	CHECK_EQUAL(0, probeOledRequests);
+}
+
+TEST(LoopUi, SevenSegmentCopyTargetRefreshesAndConfirmationRestoresTrackText) {
+	Fixture f;
+	f.screen.oled = false;
+	CHECK_TRUE(loopStationSettingsMenu.openTrack(2));
+	STRCMP_EQUAL("Loop Station Track", f.screen.text.c_str());
+	STRCMP_EQUAL("SRC 1", f.screen.popups.back().c_str());
+	loopStationSettingsMenu.selectEncoderAction(6);
+	loopStationSettingsMenu.buttonAction(SELECT_ENC, true, false);
+	CHECK_TRUE(loopStationSettingsMenu.choosingCopyTarget_);
+	STRCMP_EQUAL("TO TR 4", f.screen.popups.back().c_str());
+	loopStationSettingsMenu.selectEncoderAction(1);
+	CHECK_EQUAL(4, loopStationSettingsMenu.copyTarget_);
+	STRCMP_EQUAL("TO TR 5", f.screen.popups.back().c_str());
+	f.screen.text.clear();
+	const auto before = f.screen.popups.size();
+	loopStationSettingsMenu.buttonAction(SELECT_ENC, true, false);
+	CHECK_FALSE(loopStationSettingsMenu.choosingCopyTarget_);
+	CHECK_TRUE(f.model->clip(4));
+	STRCMP_EQUAL("Copied", f.screen.popups[before].c_str());
+	STRCMP_EQUAL("TO TR 5", f.screen.popups.back().c_str());
+	STRCMP_EQUAL("Loop Station Track", f.screen.text.c_str());
+	CHECK_EQUAL(0, probeOledRequests);
+}
+
+TEST(LoopUi, PerformanceCentreCaptureInvalidatesOled) {
+	Fixture f;
+	probeOledRequests = 0;
+	f.view.padAction(1, 1, 100);
+	CHECK_TRUE(f.model->engine().state(0).capture);
+	CHECK(probeOledRequests > 0);
+}
+
+TEST(LoopUi, PerformanceBorderSelectionInvalidatesOled) {
+	Fixture f;
+	probeOledRequests = 0;
+	f.view.padAction(4, 0, 100);
+	CHECK_EQUAL(1, f.model->engine().selected());
+	CHECK(probeOledRequests > 0);
+}
+
+TEST(LoopUi, PerformanceEncoderSelectionInvalidatesOled) {
+	Fixture f;
+	probeOledRequests = 0;
+	f.view.selectEncoderAction(2);
+	CHECK_EQUAL(2, f.model->engine().selected());
+	CHECK(probeOledRequests > 0);
+}
+
+TEST(LoopUi, PerformanceRecordCaptureInvalidatesOled) {
+	Fixture f;
+	f.view.selectEncoderAction(2);
+	probeOledRequests = 0;
+	f.view.buttonAction(RECORD, true, false);
+	CHECK_TRUE(f.model->engine().state(2).capture);
+	CHECK(probeOledRequests > 0);
+}
+
+TEST(LoopUi, PerformanceGroupStopInvalidatesOled) {
+	Fixture f;
+	f.recordPhrase();
+	probeOledRequests = 0;
+	f.view.padAction(17, 0, 100);
+	CHECK_FALSE(f.model->engine().state(0).playing);
+	CHECK(probeOledRequests > 0);
+}
+
+TEST(LoopUi, PerformanceGroupStartInvalidatesOled) {
+	Fixture f;
+	f.recordPhrase();
+	f.view.padAction(17, 0, 100);
+	probeOledRequests = 0;
+	f.view.padAction(16, 0, 100);
+	CHECK_TRUE(f.model->engine().state(0).playing);
+	CHECK(probeOledRequests > 0);
+}
+
+TEST(LoopUi, PerformancePlayButtonInvalidatesOled) {
+	Fixture f;
+	f.recordPhrase();
+	f.view.padAction(17, 0, 100);
+	probeOledRequests = 0;
+	f.view.buttonAction(PLAY, true, false);
+	CHECK_TRUE(f.model->engine().state(0).playing);
+	CHECK(probeOledRequests > 0);
+}
+
+TEST(LoopUi, PerformanceGraphicsRefreshInvalidatesOledAfterModelAndAudioStateChanges) {
+	Fixture f;
+	CHECK_FALSE(f.model->hasUnsavedAudio());
+	CHECK(Status::Ok == f.model->ensureBound(0));
+	probeOledRequests = probeRenderRequests = 0;
+	CHECK(Status::Ok == f.model->dispatch({CommandType::Press, 0}));
+	f.renderAudio();
+	CHECK_TRUE(f.model->hasUnsavedAudio());
+	CHECK_EQUAL(0, probeOledRequests); // Audio rendering must not request UI work.
+	f.view.graphicsRoutine();
+	CHECK(probeRenderRequests > 0);
+	CHECK(probeOledRequests > 0);
+}
+
+TEST(LoopUi, SevenSegmentPerformanceGraphicsRefreshDoesNotRequestOled) {
+	Fixture f;
+	f.screen.oled = false;
+	probeOledRequests = probeRenderRequests = 0;
+	f.view.graphicsRoutine();
+	CHECK(probeRenderRequests > 0);
+	CHECK_EQUAL(0, probeOledRequests);
+}

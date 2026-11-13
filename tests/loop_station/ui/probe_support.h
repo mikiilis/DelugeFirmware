@@ -21,10 +21,12 @@ public:
 };
 extern ProbeUI* probeCurrentUI;
 extern unsigned probeRenderRequests;
+extern unsigned probeOledRequests;
 bool openUI(ProbeUI* ui);
 void changeRootUI(ProbeUI* ui);
 ProbeUI* getCurrentUI();
 void uiNeedsRendering(ProbeUI* ui);
+void renderUIsForOled();
 
 class Song {
 public:

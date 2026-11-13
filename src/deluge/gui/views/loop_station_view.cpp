@@ -148,6 +148,8 @@ void LoopStationView::attemptExit() {
 void LoopStationView::graphicsRoutine() {
 	updateLed();
 	uiNeedsRendering(this);
+	if (display && display->haveOLED())
+		renderUIsForOled();
 }
 ActionResult LoopStationView::timerCallback() {
 	if (pendingExit_) {
@@ -191,6 +193,7 @@ ActionResult LoopStationView::padAction(int32_t x, int32_t y, int32_t velocity) 
 				(void)m->dispatch({CommandType::StartAll});
 			else if (x == kDisplayWidth + 1)
 				(void)m->dispatch({CommandType::StopAll});
+			graphicsRoutine();
 		}
 		return ActionResult::DEALT_WITH;
 	}
@@ -202,8 +205,10 @@ ActionResult LoopStationView::padAction(int32_t x, int32_t y, int32_t velocity) 
 	if (velocity > 0 && !prepareTrack(pad.slot))
 		return ActionResult::DEALT_WITH;
 	if (pad.region == PadRegion::Border) {
-		if (velocity > 0)
+		if (velocity > 0) {
 			(void)m->dispatch({CommandType::Select, pad.slot});
+			graphicsRoutine();
+		}
 		return ActionResult::DEALT_WITH;
 	}
 	if (velocity > 0 && Buttons::isShiftButtonPressed()) {
@@ -220,6 +225,7 @@ ActionResult LoopStationView::padAction(int32_t x, int32_t y, int32_t velocity) 
 	else {
 		(void)m->dispatch({CommandType::Release, pad.slot});
 	}
+	graphicsRoutine();
 	return ActionResult::DEALT_WITH;
 }
 
@@ -252,12 +258,15 @@ ActionResult LoopStationView::buttonAction(deluge::hid::Button b, bool on, bool 
 	}
 	if (b == RECORD && on && m) {
 		const SlotId slot = m->engine().selected();
-		if (validSlot(slot) && prepareTrack(slot))
+		if (validSlot(slot) && prepareTrack(slot)) {
 			(void)m->dispatch({CommandType::Press, slot});
+			graphicsRoutine();
+		}
 		return ActionResult::DEALT_WITH;
 	}
 	if (b == PLAY && on && m) {
 		(void)m->dispatch({CommandType::StartAll});
+		graphicsRoutine();
 		return ActionResult::DEALT_WITH;
 	}
 	if (b == BACK && on && m) {
@@ -389,7 +398,9 @@ void LoopStationView::selectEncoderAction(int8_t offset) {
 			selected = 0;
 		selected = (selected + offset + kTrackCount) % kTrackCount;
 		const auto slot = static_cast<SlotId>(selected);
-		if (prepareTrack(slot))
+		if (prepareTrack(slot)) {
 			(void)m->dispatch({CommandType::Select, slot});
+			graphicsRoutine();
+		}
 	}
 }

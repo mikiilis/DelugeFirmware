@@ -274,8 +274,12 @@ void SettingsMenu::changeValue(int32_t offset) {
 }
 
 void SettingsMenu::refreshDisplay() {
-	if (!display || display->haveOLED())
+	if (!display)
 		return;
+	if (display->haveOLED()) {
+		renderUIsForOled();
+		return;
+	}
 	display->setText(deluge::l10n::get(scope_ == MenuScope::Global
 	                                       ? deluge::l10n::String::STRING_FOR_LOOP_STATION_GLOBAL_SETTINGS
 	                                       : deluge::l10n::String::STRING_FOR_LOOP_STATION_TRACK_SETTINGS));
