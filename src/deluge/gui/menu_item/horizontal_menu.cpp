@@ -437,24 +437,16 @@ void HorizontalMenu::handleInstrumentButtonPress(std::span<MenuItem*> visible_pa
 				return;
 			}
 
-			current_item_ = std::ranges::find(items, item);
-
 			// is the item already selected?
-			if (*current_item_ == previous) {
-				return handleItemAction(*current_item_);
+			if (item == previous) {
+				return handleItemAction(item);
 			}
 
-			// Update the currently selected item
-			const MenuPermission permission = initializeItem(*current_item_);
-
-			// Enter note range menu if we're selecting multi range item (e.g. sample transpose)
-			if (permission == MenuPermission::MUST_SELECT_RANGE
-			    && !(*current_item_)->allowToBeginSessionFromHorizontalMenu()) {
-				soundEditor.currentMultiRange = nullptr;
-				multiRangeMenu.menuItemHeadingTo = *current_item_;
-				soundEditor.enterSubmenu(&multiRangeMenu);
+			const MenuPermission permission = initializeItem(item);
+			if (!handleItemPermission(item, permission)) {
 				return;
 			}
+			current_item_ = std::ranges::find(items, item);
 
 			// The selected item was already initialized above; updateDisplay() would
 			// refocus it and dispatch the host permission callback a second time.
@@ -470,6 +462,21 @@ void HorizontalMenu::handleInstrumentButtonPress(std::span<MenuItem*> visible_pa
 
 		current_column += item->getOccupiedSlots();
 	}
+}
+
+bool HorizontalMenu::handleItemPermission(MenuItem* item, MenuPermission permission) {
+	if (permission == MenuPermission::NO) {
+		return false;
+	}
+	if (permission == MenuPermission::MUST_SELECT_RANGE && !item->allowToBeginSessionFromHorizontalMenu()) {
+		// Retain the editor's selected field while its range selector is open.
+		current_item_ = std::ranges::find(items, item);
+		soundEditor.currentMultiRange = nullptr;
+		multiRangeMenu.menuItemHeadingTo = item;
+		soundEditor.enterSubmenu(&multiRangeMenu);
+		return false;
+	}
+	return true;
 }
 
 void HorizontalMenu::selectMenuItem(int32_t page_number, int32_t item_pos) {

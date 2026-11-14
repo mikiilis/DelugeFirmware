@@ -68,6 +68,9 @@ protected:
 	virtual void beginHostSession(MenuItem* from);
 	virtual void endHostSession();
 	virtual MenuPermission initializeItem(MenuItem* item);
+	// Return true to accept inline selection. External hosts must override this
+	// editor permission-routing service as well as initialization and actions.
+	virtual bool handleItemPermission(MenuItem* item, MenuPermission permission);
 	virtual void handleItemAction(MenuItem* item);
 	virtual bool trySwitchHorizontalMenu(int32_t direction);
 	virtual double calcNextKnobSpeed(int8_t offset);

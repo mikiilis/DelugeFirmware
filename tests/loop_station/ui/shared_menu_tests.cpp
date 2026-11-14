@@ -13,9 +13,12 @@ struct ExternalMenu : HorizontalMenu {
 	}
 	void endHostSession() override { ++ends; }
 	bool isChildRelevant(MenuItem* item) const override { return item->relevant; }
-	MenuPermission initializeItem(MenuItem*) override {
+	MenuPermission initializeItem(MenuItem* item) override {
 		++initializations;
-		return MenuPermission::YES;
+		return item->permission;
+	}
+	bool handleItemPermission(MenuItem*, MenuPermission permission) override {
+		return permission == MenuPermission::YES;
 	}
 	void handleItemAction(MenuItem*) override { ++actions; }
 	bool trySwitchHorizontalMenu(int32_t) override {
@@ -50,7 +53,62 @@ TEST_GROUP(SharedHorizontalMenu) {
 		Buttons::shiftPressed = Buttons::selectPressed = Buttons::selectButtonPressUsedUp = false;
 		FlashStorage::accessibilityMenuHighlighting = MenuHighlighting::FULL_INVERSION;
 	}
+	void checkExternalPermissionRejected(MenuPermission permission) {
+		MenuItem a, b;
+		ExternalMenu menu({}, {&a, &b});
+		MultiRange range;
+		soundEditor.currentMultiRange = &range;
+		soundEditor.currentMultiRangeIndex = 4;
+		soundEditor.currentClip = &a;
+		soundEditor.currentModControllable = &b;
+		soundEditor.currentSourceIndex = 6;
+		soundEditor.numberEditPos = 7;
+		soundEditor.numberEditSize = 1000;
+		soundEditor.numberScrollAmount = 3;
+		soundEditor.navigationDepth = 9;
+		soundEditor.menuItemNavigationRecord[9] = &a;
+		soundEditor.currentParamShortcutX = 5;
+		soundEditor.currentParamShortcutY = 6;
+		multiRangeMenu.menuItemHeadingTo = &a;
+		menu.beginSession(nullptr);
+		menu.renderOLED();
+		const auto renders = probeOledRequests;
+		b.permission = permission;
+		// Unsupported range requests must be inert even for items allowed to open a session.
+		for (bool allowSession : {false, true}) {
+			b.enter = allowSession;
+			press(menu, KIT);
+			POINTERS_EQUAL(&range, soundEditor.currentMultiRange);
+			POINTERS_EQUAL(&a, menu.getCurrentItem());
+			POINTERS_EQUAL(&a, multiRangeMenu.menuItemHeadingTo);
+			CHECK_EQUAL(0, soundEditor.entries);
+			CHECK_EQUAL(0, soundEditor.exits);
+			CHECK_EQUAL(0, soundEditor.padUpdates);
+			CHECK_EQUAL(9, soundEditor.navigationDepth);
+			POINTERS_EQUAL(&a, soundEditor.menuItemNavigationRecord[9]);
+			CHECK_EQUAL(renders, probeOledRequests);
+			CHECK_FALSE(screen.notification);
+			CHECK_EQUAL(0, menu.actions);
+		}
+		CHECK_EQUAL(3, menu.initializations); // begin plus one permission check per press
+		CHECK_EQUAL(4, soundEditor.currentMultiRangeIndex);
+		POINTERS_EQUAL(&a, soundEditor.currentClip);
+		POINTERS_EQUAL(&b, soundEditor.currentModControllable);
+		CHECK_EQUAL(6, soundEditor.currentSourceIndex);
+		CHECK_EQUAL(7, soundEditor.numberEditPos);
+		CHECK_EQUAL(1000, soundEditor.numberEditSize);
+		CHECK_EQUAL(3, soundEditor.numberScrollAmount);
+		CHECK_EQUAL(5, soundEditor.currentParamShortcutX);
+		CHECK_EQUAL(6, soundEditor.currentParamShortcutY);
+		multiRangeMenu.menuItemHeadingTo = nullptr;
+	}
 };
+TEST(SharedHorizontalMenu, ExternalHostRejectsNoPermissionWithoutSelectionOrEditorServices) {
+	checkExternalPermissionRejected(MenuPermission::NO);
+}
+TEST(SharedHorizontalMenu, ExternalHostRejectsRangePermissionWithoutSelectionOrEditorServices) {
+	checkExternalPermissionRejected(MenuPermission::MUST_SELECT_RANGE);
+}
 TEST(SharedHorizontalMenu, ExternalHostDoesNotTouchEditorState) {
 	MenuItem a, b, c, d;
 	Decimal decimal;
@@ -156,6 +214,36 @@ TEST(SharedHorizontalMenu, DefaultHostClearsRangeAndRoutesRangePermission) {
 	CHECK_EQUAL(1, b.permissions);
 	POINTERS_EQUAL(&b, multiRangeMenu.menuItemHeadingTo);
 	POINTERS_EQUAL(&multiRangeMenu, soundEditor.menuItemNavigationRecord[1]);
+	POINTERS_EQUAL(&b, menu.getCurrentItem());
+}
+TEST(SharedHorizontalMenu, DefaultHostRejectsNoPermissionWithoutSelectionOrFeedback) {
+	MenuItem a, b;
+	HorizontalMenu menu({}, {&a, &b});
+	menu.beginSession(nullptr);
+	menu.renderOLED();
+	const auto renders = probeOledRequests;
+	b.permission = MenuPermission::NO;
+	press(menu, KIT);
+	POINTERS_EQUAL(&a, menu.getCurrentItem());
+	CHECK_EQUAL(1, b.permissions);
+	CHECK_EQUAL(0, soundEditor.entries);
+	CHECK_EQUAL(0, soundEditor.padUpdates);
+	CHECK_EQUAL(renders, probeOledRequests);
+	CHECK_FALSE(screen.notification);
+}
+TEST(SharedHorizontalMenu, DefaultHostRangePermissionAllowsInlineSessionItems) {
+	MenuItem a, b;
+	HorizontalMenu menu({}, {&a, &b});
+	menu.beginSession(nullptr);
+	menu.renderOLED();
+	b.permission = MenuPermission::MUST_SELECT_RANGE;
+	b.enter = true;
+	press(menu, KIT);
+	POINTERS_EQUAL(&b, menu.getCurrentItem());
+	CHECK_EQUAL(1, b.permissions);
+	CHECK_EQUAL(0, soundEditor.entries);
+	CHECK_EQUAL(1, soundEditor.padUpdates);
+	CHECK_TRUE(screen.notification);
 }
 TEST(SharedHorizontalMenu, DefaultHostShiftChainsAndUnshiftedPagesLocally) {
 	MenuItem a, b, c, d, e, target;
