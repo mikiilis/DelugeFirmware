@@ -57,11 +57,16 @@ TEST(LoopMenus, DurationAndTransposeRespectSupportedBounds) {
 	CHECK_EQUAL(2450, clampTransposeCents(3000));
 	CHECK_EQUAL(-2450, clampTransposeCents(-3000));
 	CHECK_EQUAL(100, clampTransposeCents(100));
-	CHECK_EQUAL(1, stepTransposeCents(0, 1));
-	CHECK_EQUAL(100, stepTransposeCents(99, 1));
-	CHECK_EQUAL(-1, stepTransposeCents(0, -1));
+	CHECK_EQUAL(100, stepTransposeCents(0, 1));
+	CHECK_EQUAL(199, stepTransposeCents(99, 1));
+	CHECK_EQUAL(-100, stepTransposeCents(0, -1));
 	CHECK_EQUAL(2450, stepTransposeCents(2449, 1));
 	CHECK_EQUAL(-2450, stepTransposeCents(-2449, -1));
+}
+
+TEST(LoopMenus, TransposeCoarsePreservesFraction) {
+	CHECK_EQUAL(223, stepTransposeCents(123, 1));
+	CHECK_EQUAL(-123, stepTransposeCents(-23, -1));
 }
 
 TEST(LoopMenus, SettingsConfigurationRemainsUsableDuringCapture) {

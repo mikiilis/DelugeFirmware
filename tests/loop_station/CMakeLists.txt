@@ -3,7 +3,7 @@ set(LOOP_UI_PROBE "${CMAKE_CURRENT_BINARY_DIR}/generated/production_ui.cpp")
 set(LOOP_UI_VIEW "${CMAKE_CURRENT_SOURCE_DIR}/../../src/deluge/gui/views/loop_station_view.cpp")
 set(LOOP_UI_SETTINGS "${CMAKE_CURRENT_SOURCE_DIR}/../../src/deluge/gui/menu_item/loop_station/settings.cpp")
 add_custom_command(
-    OUTPUT "${LOOP_UI_PROBE}" "${CMAKE_CURRENT_BINARY_DIR}/generated/shared_menu.cpp" "${CMAKE_CURRENT_BINARY_DIR}/generated/shared_menu_declarations.h"
+    OUTPUT "${LOOP_UI_PROBE}" "${CMAKE_CURRENT_BINARY_DIR}/generated/shared_menu.cpp" "${CMAKE_CURRENT_BINARY_DIR}/generated/shared_menu_declarations.h" "${CMAKE_CURRENT_BINARY_DIR}/generated/settings_items.cpp" "${CMAKE_CURRENT_BINARY_DIR}/generated/settings_items_declarations.h"
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/ui/generate_probe.py"
             --loop-view "${LOOP_UI_VIEW}" --settings-view "${LOOP_UI_SETTINGS}"
             --support "${CMAKE_CURRENT_SOURCE_DIR}/ui/probe_support.h" --output "${LOOP_UI_PROBE}"
@@ -12,6 +12,8 @@ add_custom_command(
             ../../src/deluge/gui/menu_item/horizontal_menu.h ../../src/deluge/gui/menu_item/horizontal_menu.cpp
             ../../src/deluge/gui/menu_item/decimal.cpp
             ../../src/deluge/gui/menu_item/menu_item.cpp ../../src/deluge/gui/menu_item/value.h
+            ../../src/deluge/gui/menu_item/loop_station/settings_items.h
+            ../../src/deluge/gui/menu_item/loop_station/settings_items.cpp
     VERBATIM
 )
 
@@ -19,6 +21,8 @@ add_executable(LoopStationTests
     "${LOOP_UI_PROBE}"
     "${CMAKE_CURRENT_BINARY_DIR}/generated/shared_menu.cpp"
     ui/shared_menu_tests.cpp
+    ui/settings_items_tests.cpp
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/settings_items.cpp"
     ui/probe_support.cpp
     ui/input_tests.cpp
     main.cpp

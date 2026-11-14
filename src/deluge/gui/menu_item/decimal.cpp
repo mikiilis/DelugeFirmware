@@ -215,13 +215,16 @@ void Decimal::renderInHorizontalMenu(const SlotPosition& slot) {
 	DEF_STACK_STRING_BUF(valueBuf, 10);
 	const int32_t value = getValue();
 	valueBuf.appendFloat(value / 100.f, 2, 2);
-	if (value <= -1000) {
-		valueBuf.truncate(3);
-	}
+	// Signed two-digit values still need their fractional tuning. Fit the complete
+	// decimal in one slot rather than silently discarding its decimal places.
+	const int32_t textHeight =
+	    hid::display::OLED::main.getStringWidthInPixels(valueBuf.data(), kTextSpacingY) >= slot.width - 3
+	        ? kTextSmallSizeY
+	        : kTextSpacingY;
 
 	return hid::display::OLED::main.drawStringCentered(valueBuf.data(), slot.start_x,
 	                                                   slot.start_y + kHorizontalMenuSlotYOffset, kTextSpacingX,
-	                                                   kTextSpacingY, slot.width);
+	                                                   textHeight, slot.width);
 }
 
 void DecimalWithoutScrolling::selectEncoderAction(int32_t offset) {

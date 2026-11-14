@@ -51,8 +51,9 @@ int16_t clampTransposeCents(int32_t cents) {
 	return static_cast<int16_t>(std::clamp<int32_t>(cents, -2450, 2450));
 }
 
-int16_t stepTransposeCents(int16_t currentCents, int32_t encoderOffset) {
-	return clampTransposeCents(static_cast<int32_t>(currentCents) + encoderOffset);
+int16_t stepTransposeCents(int16_t currentCents, int32_t encoderOffset, bool fine) {
+	const int64_t next = int64_t(currentCents) + int64_t(encoderOffset) * (fine ? 1 : 100);
+	return static_cast<int16_t>(std::clamp<int64_t>(next, -2450, 2450));
 }
 
 } // namespace loop_station

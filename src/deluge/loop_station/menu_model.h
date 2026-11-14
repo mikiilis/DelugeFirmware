@@ -39,7 +39,7 @@ constexpr bool shouldCloseSettingsMenu(bool backPressed, bool sessionViewPressed
 uint16_t maxDurationBars(MemoryProfile profile, uint32_t framesPerBar);
 uint16_t maxDurationBarsForPages(uint32_t freePages, uint32_t framesPerBar);
 int16_t clampTransposeCents(int32_t cents);
-int16_t stepTransposeCents(int16_t currentCents, int32_t encoderOffset);
+int16_t stepTransposeCents(int16_t currentCents, int32_t encoderOffset, bool fine = false);
 inline constexpr std::array<Colour, 11> kTrackColours = {
     Colour::Gold, Colour::Yellow, Colour::Lime,    Colour::Turquoise, Colour::Cyan, Colour::Sky,
     Colour::Blue, Colour::Purple, Colour::Magenta, Colour::Pink,      Colour::White};

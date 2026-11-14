@@ -1,11 +1,14 @@
 #pragma once
 #include "hid/encoder_acceleration.h"
 #include "probe_support.h"
+#include <cassert>
 #include <cmath>
 #include <limits>
 #include <optional>
 #include <ranges>
 #include <span>
+
+using ModControllableAudio = void;
 
 constexpr int kShortStringBufferSize = 100;
 enum class PopupType { NOTIFICATION };
@@ -37,6 +40,7 @@ bool one_of(T v, std::initializer_list<T> values) {
 class StringBuf {
 public:
 	std::string value;
+	void append(std::string_view text) { value += text; }
 	void appendInt(int n) { value += std::to_string(n); }
 	void appendFloat(float n, int, int digits) {
 		char s[32];
@@ -79,17 +83,18 @@ public:
 	MenuPermission permission = MenuPermission::YES;
 	void* permissionMod = nullptr;
 	int permissionSource = -1;
-	int relevanceCalls = 0;
+	mutable int relevanceCalls = 0;
 	MenuItem(l10n::String = {}, l10n::String = {}) {}
 	virtual ~MenuItem() = default;
 	virtual void beginSession(MenuItem*) {}
 	virtual void endSession();
-	virtual bool isRelevant(void*, int) {
+	virtual bool isRelevant(void*, int) const {
 		++relevanceCalls;
 		return relevant;
 	}
 	virtual bool isRangeDependent() { return range; }
 	virtual void selectEncoderAction(int32_t offset) { edits += offset; }
+	virtual void horizontalEncoderAction(int32_t) {}
 	virtual MenuItem* selectButtonPress() {
 		++presses;
 		return nullptr;
@@ -126,11 +131,12 @@ public:
 	virtual void readCurrentValue() { ++reads; }
 	bool showColumnLabel() { return true; }
 	void getColumnLabel(StringBuf& s) { s.value = "Item"; }
-	void getNotificationValue(StringBuf& s) { s.value = "value"; }
+	virtual void getNotificationValue(StringBuf& s) { s.value = "value"; }
 	const char* getName() const { return "Item"; }
 	const char* getTitle() const { return "Menu"; }
 	void drawName() {}
 };
+#define NO_NAVIGATION ((MenuItem*)0xFFFFFFFF)
 } // namespace deluge::gui::menu_item
 struct ProbeSoundEditor {
 	MultiRange* currentMultiRange = nullptr;
@@ -199,27 +205,46 @@ inline std::vector<HorizontalMenuContainer*> horizontalMenuContainers;
 template <typename T>
 class Value : public MenuItem {
 public:
+	using MenuItem::MenuItem;
 	void selectEncoderAction(int32_t) override;
 	virtual void writeCurrentValue() = 0;
 	virtual void drawValue() {}
 };
 class Number : public Value<int32_t> {
 public:
+	using Value::Value;
 	int32_t value = 123, written = 0;
 	int32_t getValue() { return value; }
 	void setValue(int32_t n) { value = n; }
-	int32_t getMinValue() { return -2450; }
-	int32_t getMaxValue() { return 2450; }
+	virtual int32_t getMinValue() const { return -2450; }
+	virtual int32_t getMaxValue() const { return 2450; }
 	void writeCurrentValue() override { written = value; }
-	enum { NUMBER };
-	int getRenderingStyle() { return NUMBER; }
+	virtual int getRenderingStyle() const { return 0; }
 };
+using RenderingStyle = int;
+inline constexpr int NUMBER = 0;
 class Decimal : public Number {
 public:
-	int32_t getNumberEditSize();
+	using Number::Number;
+	virtual int32_t getNumberEditSize();
+	virtual int32_t getNumDecimalPlaces() const { return 2; }
+	void getNotificationValue(StringBuf& value) override { value.appendFloat(getValue() / 100.f, 2, 2); }
 	void selectEncoderAction(int32_t) override;
 	void scrollToGoodPos();
 	void renderInHorizontalMenu(const SlotPosition&) override;
+};
+class Integer : public Number {
+public:
+	using Number::Number;
+};
+class Selection : public Value<int32_t> {
+public:
+	using Value::Value;
+	int32_t value = 0;
+	void setValue(int32_t v) { value = v; }
+	int32_t getValue() { return value; }
+	enum class OptType { FULL, SHORT };
+	virtual deluge::vector<std::string_view> getOptions(OptType = OptType::FULL) = 0;
 };
 } // namespace deluge::gui::menu_item
 inline std::vector<deluge::gui::menu_item::HorizontalMenu*> probeChain;
