@@ -432,7 +432,7 @@ void SettingsMenu::refreshDisplay() {
 			         track.playback == ::loop_station::PlaybackMode::Loop ? "LOOP" : "1 SHOT");
 			break;
 		case MenuField::Transpose:
-			snprintf(value, sizeof(value), "%d C", track.transposeCents);
+			snprintf(value, sizeof(value), "%+.2f", track.transposeCents / 100.0);
 			break;
 		case MenuField::Colour:
 			snprintf(value, sizeof(value), "%s", colourName(track.colour));
@@ -475,10 +475,16 @@ void SettingsMenu::renderListOLED(deluge::hid::display::oled_canvas::Canvas& can
 	if (!model)
 		return;
 	if (copyReview_ || choosingCopyTarget_) {
-		char target[24];
-		snprintf(target, sizeof(target), "Copy to Track %u", (copyReview_ ? copyReviewTarget_ : copyTarget_) + 1);
-		canvas.drawString(target, 0, 22, kTextSpacingX, kTextSizeYUpdated);
-		canvas.drawString(copyReview_ ? "SELECT to copy" : "SELECT to review", 0, 38, kTextSpacingX, kTextSizeYUpdated);
+		using deluge::l10n::String;
+		char line[64];
+		snprintf(line, sizeof(line), deluge::l10n::get(String::STRING_FOR_LOOP_STATION_COPY_FROM), slot_ + 1);
+		canvas.drawString(line, 0, 19, kTextSpacingX, kTextSizeYUpdated);
+		snprintf(line, sizeof(line), deluge::l10n::get(String::STRING_FOR_LOOP_STATION_COPY_TARGET),
+		         (copyReview_ ? copyReviewTarget_ : copyTarget_) + 1);
+		canvas.drawString(line, 0, 28, kTextSpacingX, kTextSizeYUpdated);
+		canvas.drawString(deluge::l10n::get(copyReview_ ? String::STRING_FOR_LOOP_STATION_COPY_CONFIRM
+		                                                : String::STRING_FOR_LOOP_STATION_COPY_REVIEW),
+		                  0, 39, kTextSpacingX, kTextSmallSizeY);
 		return;
 	}
 	fields_ = visibleMenuFields(scope_, model->engine().settings());

@@ -1,6 +1,7 @@
 """Compile checked, unmodified UI source sections against firmware boundary stubs."""
 
 import argparse
+import json
 from pathlib import Path
 
 
@@ -51,6 +52,21 @@ def main() -> None:
         ]
     )
     args.output.parent.mkdir(parents=True, exist_ok=True)
+    strings = (args.settings_view.parents[2] / "l10n/strings.h").read_text()
+    (args.output.parent / "strings_declarations.h").write_text(
+        "#pragma once\n#include <cstddef>\nnamespace deluge::l10n {\n"
+        + section(strings, "enum class String : size_t {", "};")
+        + "};\n}\n"
+    )
+    translations = json.loads(
+        (args.settings_view.parents[2] / "l10n/english.json").read_text()
+    )["strings"]
+    (args.output.parent / "english_cases.h").write_text(
+        "\n".join(
+            f"case String::{key}: return {json.dumps(value)};"
+            for key, value in translations.items()
+        )
+    )
     args.output.write_text(text)
 
     # Shared-menu declarations and bodies are taken from production, never reimplemented.
@@ -74,6 +90,21 @@ def main() -> None:
     menu_item = (menu_dir / "menu_item.cpp").read_text()
     value = (menu_dir / "value.h").read_text()
     bodies = [
+        section(
+            (menu_dir / "number.cpp").read_text(),
+            "void Number::renderInHorizontalMenu",
+            "void Number::drawPercent",
+        ),
+        section(
+            (menu_dir / "selection.cpp").read_text(),
+            "void Selection::getShortOption",
+            "void Selection::getNotificationValue",
+        ),
+        section(
+            (menu_dir / "enumeration.cpp").read_text(),
+            "void Enumeration::renderInHorizontalMenu",
+            "} // namespace deluge::gui::menu_item",
+        ),
         section(
             menu_item + "\n// probe end", "void MenuItem::endSession", "// probe end"
         ),

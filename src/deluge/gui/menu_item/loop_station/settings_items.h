@@ -13,6 +13,7 @@ class SongModel;
 
 namespace deluge::gui::menu_item::loop_station {
 namespace ls = ::loop_station;
+const char* compactSettingLabel(ls::MenuField field);
 
 // Resolves the current song lazily. The host owns allocation, binding and failure feedback.
 struct SettingsContext {
@@ -37,6 +38,7 @@ public:
 	MenuItem* selectButtonPress() override { return NO_NAVIGATION; }
 	deluge::vector<std::string_view> getOptions(OptType = OptType::FULL) override;
 	void getNotificationValue(StringBuf& value) override;
+	void getColumnLabel(StringBuf& label) override { label.append(compactSettingLabel(field_)); }
 
 private:
 	SettingsContext& context_;
@@ -55,6 +57,7 @@ public:
 	void selectEncoderAction(int32_t offset) override;
 	MenuItem* selectButtonPress() override { return NO_NAVIGATION; }
 	void getNotificationValue(StringBuf& value) override;
+	void getColumnLabel(StringBuf& label) override { label.append(compactSettingLabel(ls::MenuField::Duration)); }
 
 protected:
 	int32_t getMaxValue() const override { return context_.maxDurationBars(); }
@@ -76,6 +79,7 @@ public:
 	void selectEncoderAction(int32_t offset) override;
 	void horizontalEncoderAction(int32_t) override {} // No sound-editor decimal cursor in this host.
 	MenuItem* selectButtonPress() override { return NO_NAVIGATION; }
+	void getColumnLabel(StringBuf& label) override { label.append(compactSettingLabel(ls::MenuField::Transpose)); }
 
 protected:
 	int32_t getMinValue() const override { return -2450; }
@@ -91,6 +95,7 @@ class CopySetting final : public MenuItem {
 public:
 	explicit CopySetting(SettingsContext& context);
 	void setTarget(ls::SlotId target) { target_ = target; }
+	void getColumnLabel(StringBuf& label) override { label.append(compactSettingLabel(ls::MenuField::CopyToTrack)); }
 	void renderInHorizontalMenu(const SlotPosition& slot) override;
 	bool isRelevant(ModControllableAudio*, int32_t) const override {
 		return context_.relevant(ls::MenuField::CopyToTrack);

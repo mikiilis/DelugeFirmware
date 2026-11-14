@@ -56,16 +56,13 @@ void renderUIsForOled() {
 }
 namespace deluge::l10n {
 const char* get(String string) {
-	if (string == String::STRING_FOR_LOOP_STATION_TRACK_UNAVAILABLE)
-		return "Track unavailable";
-	if (string == String::STRING_FOR_LOOP_STATION_GLOBAL_SETTINGS)
-		return "Loop Station Global";
-	if (string == String::STRING_FOR_LOOP_STATION_TRACK_SETTINGS)
-		return "Loop Station Track";
-	if (string == String::STRING_FOR_LOOP_STATION_COPIED)
-		return "Copied";
-	if (string == String::STRING_FOR_LOOP_STATION_COPY_BUSY)
-		return "Copy busy";
+	if (auto it = probeTranslations.find(string); it != probeTranslations.end())
+		return it->second.c_str();
+	switch (string) {
+#include "english_cases.h"
+	default:
+		break;
+	}
 	return "Loop setting";
 }
 } // namespace deluge::l10n

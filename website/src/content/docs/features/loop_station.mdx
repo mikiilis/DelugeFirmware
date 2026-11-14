@@ -8,6 +8,8 @@ The Loop Station is an eight-track, RAM-resident performance looper. It records 
 
 <LoopStationDemo />
 
+The silent browser preview does not capture audio. Timing, audio and memory readouts are illustrative, not device measurements. Its **Track settings** shortcut and **SHIFT** toggle are browser-only conveniences. Edits are temporary; **Reset Demo** restores the examples and **Pause Animation** freezes the illustration. Any selected/settings-focused ring pulse shown is illustrative and **not implemented in firmware**; that feature is deferred. The shared settings controls below are implemented and host-tested, not hardware-accepted.
+
 ## Enable and enter
 
 1. Open **Settings → Community Features** and turn on **Enable Loop Station**.
@@ -30,11 +32,13 @@ Track colours identify tracks. New tracks default to **Yellow, Cyan, Blue, Purpl
 
 ## Settings and ordinary clip access
 
-Press **SELECT** for global settings. Hold **SHIFT** and press a track’s centre to open its settings. Turn the Select encoder to move through rows, press Select to edit, and press **BACK** to return.
+Press **SELECT** for global settings. Hold **SHIFT** and press a track’s centre to open its settings. On OLED with **Horizontal Menus** enabled, **SYNTH / KIT / MIDI / CV** select the four columns; turn **SELECT** to edit directly without an edit toggle. **SCALE / CROSS-SCREEN** page backwards/forwards, including with SHIFT held. Empty columns and the horizontal encoder are inert. With Horizontal Menus disabled, or on seven-segment hardware, turn SELECT to navigate rows and press SELECT to start/finish editing; the horizontal encoder retains its list alias. **BACK** or unshifted **SONG** returns and retains in-memory edits. Pads cannot trigger loop actions while settings is open.
 
-Global settings include Record Action, Start Mode/Interval and Stop Mode/Interval. Interval rows appear only when the corresponding mode is Synced. Track settings include input source, monitoring, record duration, Loop or One Shot playback, transpose, colour and Copy To Track. Transpose is adjustable in cents within ±24.50 semitones. Copy To Track copies settings only; the destination keeps its audio, name, output, effects and history. A busy or unavailable destination is left unchanged.
+Global settings include Record Action, Start Mode/Interval and Stop Mode/Interval. Intervals appear only when the corresponding mode is Synced. Track settings include input source, monitoring, record duration, Loop or One Shot playback, transpose, colour and Copy To Track. Duration offers Manual or a current memory-dependent bar limit, not a fixed eight-bar maximum. Transpose spans ±24.50 semitones: normal detents change one semitone; **SHIFT + turn SELECT** changes one cent (holding SELECT also enables fine editing). Coarse changes preserve fractional tuning: +1.23 becomes +2.23.
 
-Change a ring's identity colour with **SHIFT + track centre → Colour → SELECT to edit → turn SELECT → SELECT to finish → BACK**. The ring updates live while the menu shows the chosen colour. White remains selectable, and tracks may share colours. Return to Song/Session View and use normal Song **SAVE** to store changes; normal Song load restores them. Editing does not write to SD on each encoder turn. Existing saved/custom colours, including White and copied or duplicate choices, are preserved; new defaults do not recolour saved Songs.
+On **Copy To Track**, turn SELECT to choose a destination, then press SELECT to review source and target. Release and press SELECT again to confirm; BACK cancels review without closing settings. In fallback, first press SELECT on Copy to enter the chooser, then press to review and again to confirm. Copy changes settings only; the destination keeps its audio, name, output, effects and history. A busy or unavailable destination is left unchanged.
+
+Change a ring's identity colour in horizontal mode with **SHIFT + track centre → page to Color → select its instrument button → turn SELECT → BACK**. In fallback, use SELECT to start/finish editing Colour. The ring updates live while the menu shows the chosen colour. White remains selectable, and tracks may share colours. Return to Song/Session View and use normal Song **SAVE** to store changes; normal Song load restores them. Editing does not write to SD on each encoder turn. Existing saved/custom colours, including White and copied or duplicate choices, are preserved; new defaults do not recolour saved Songs.
 
 Press **CLIP VIEW** to open the selected track’s ordinary Audio Clip view and menus. Loop tracks use normal song outputs and effects. Loop Station does not replace the normal clip, Song or Arranger workflows.
 

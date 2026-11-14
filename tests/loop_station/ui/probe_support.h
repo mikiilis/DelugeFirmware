@@ -7,6 +7,7 @@
 #include "deluge/loop_station/view_state.h"
 #include "gui/colour/palette.h"
 #include "hid/button.h"
+#include "strings_declarations.h"
 #include <algorithm>
 #include <array>
 #include <cstdio>
@@ -59,9 +60,14 @@ struct ProbeDisplay {
 	bool haveOLED() const { return oled; }
 	bool have7SEG() const { return !oled; }
 	bool notification = false;
+	std::string notificationName, notificationValue;
 	bool hasPopupOfType(auto) const { return notification; }
 	void cancelPopup() { notification = false; }
-	void displayNotification(const char*, const char*) { notification = true; }
+	void displayNotification(const char* name, const char* value) {
+		notification = true;
+		notificationName = name;
+		notificationValue = value;
+	}
 	void setText(const char* value) { text = value; }
 	void displayPopup(const char* value) { popups.emplace_back(value); }
 };
@@ -89,25 +95,7 @@ inline void blinkLed(IndicatorLED) {
 }
 } // namespace indicator_leds
 namespace deluge::l10n {
-enum class String {
-	STRING_FOR_LOOP_STATION_GLOBAL_SETTINGS,
-	STRING_FOR_LOOP_STATION_TRACK_SETTINGS,
-	STRING_FOR_LOOP_STATION_RECORD_ACTION,
-	STRING_FOR_LOOP_STATION_START_MODE,
-	STRING_FOR_LOOP_STATION_START_INTERVAL,
-	STRING_FOR_LOOP_STATION_STOP_MODE,
-	STRING_FOR_LOOP_STATION_STOP_INTERVAL,
-	STRING_FOR_LOOP_STATION_INPUT_SOURCE,
-	STRING_FOR_LOOP_STATION_MONITORING,
-	STRING_FOR_LOOP_STATION_DURATION,
-	STRING_FOR_LOOP_STATION_PLAYBACK,
-	STRING_FOR_LOOP_STATION_TRANSPOSE,
-	STRING_FOR_LOOP_STATION_TRACK_COLOUR,
-	STRING_FOR_LOOP_STATION_COPY_TO_TRACK,
-	STRING_FOR_LOOP_STATION_TRACK_UNAVAILABLE,
-	STRING_FOR_LOOP_STATION_COPIED,
-	STRING_FOR_LOOP_STATION_COPY_BUSY,
-};
+inline std::map<String, std::string> probeTranslations;
 const char* get(String);
 } // namespace deluge::l10n
 struct ProbeSessionView : ProbeUI {
@@ -116,35 +104,7 @@ struct ProbeSessionView : ProbeUI {
 };
 extern ProbeSessionView sessionView;
 
-namespace deluge::hid::display::oled_canvas {
-class Canvas {
-public:
-	std::vector<std::string> lines;
-	std::vector<int> textY;
-	void clear() {
-		lines.clear();
-		textY.clear();
-	}
-	void drawString(std::string_view text, int32_t, int32_t y, int32_t, int32_t) {
-		lines.emplace_back(text);
-		textY.push_back(y);
-	}
-	int inversions = 0, underlines = 0, pixels = 0;
-	int getStringWidthInPixels(const char* text, int) { return std::string_view(text).size() * 6; }
-	void drawScreenTitle(std::string_view text, bool) {
-		lines.emplace_back(text);
-		textY.push_back(0);
-	}
-	void drawLine(int, int, int, int) {}
-	void drawStringCentered(const char* text, int, int y, int, int, int) {
-		lines.emplace_back(text);
-		textY.push_back(y);
-	}
-	void invertAreaRounded(int, int, int, int) { ++inversions; }
-	void drawHorizontalLine(int, int, int) { ++underlines; }
-	void drawPixel(int, int) { ++pixels; }
-};
-} // namespace deluge::hid::display::oled_canvas
+#include "real_canvas.h"
 
 // Probe declarations avoid firmware RootUI dependencies. Firmware compilation separately
 // checks production declarations; all method bodies are extracted verbatim.

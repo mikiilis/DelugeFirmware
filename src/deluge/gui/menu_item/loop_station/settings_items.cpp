@@ -14,6 +14,17 @@ namespace deluge::gui::menu_item::loop_station {
 using l10n::String;
 using ls::MenuField;
 
+const char* compactSettingLabel(MenuField field) {
+	static constexpr std::array labels{
+	    String::STRING_FOR_LOOP_STATION_RECORD_SHORT,   String::STRING_FOR_LOOP_STATION_START_SHORT,
+	    String::STRING_FOR_LOOP_STATION_INTERVAL_SHORT, String::STRING_FOR_LOOP_STATION_STOP_SHORT,
+	    String::STRING_FOR_LOOP_STATION_INTERVAL_SHORT, String::STRING_FOR_LOOP_STATION_SOURCE_SHORT,
+	    String::STRING_FOR_LOOP_STATION_MONITOR_SHORT,  String::STRING_FOR_LOOP_STATION_DURATION_SHORT,
+	    String::STRING_FOR_LOOP_STATION_PLAYBACK_SHORT, String::STRING_FOR_LOOP_STATION_TRANSPOSE_SHORT,
+	    String::STRING_FOR_LOOP_STATION_COLOUR_SHORT,   String::STRING_FOR_LOOP_STATION_COPY_SHORT};
+	return l10n::get(labels[static_cast<size_t>(field)]);
+}
+
 ls::SongModel* SettingsContext::model() const {
 	return currentSong ? currentSong->loopStation() : nullptr;
 }
@@ -231,7 +242,7 @@ CopySetting::CopySetting(SettingsContext& context)
 
 void CopySetting::renderInHorizontalMenu(const SlotPosition& slot) {
 	char target[12];
-	snprintf(target, sizeof(target), "Track %u", target_ + 1);
+	snprintf(target, sizeof(target), l10n::get(String::STRING_FOR_LOOP_STATION_TRACK_NUMBER), target_ + 1);
 	hid::display::OLED::main.drawStringCentered(target, slot.start_x, slot.start_y + kHorizontalMenuSlotYOffset,
 	                                            kTextSpacingX, kTextSmallSizeY, slot.width);
 }

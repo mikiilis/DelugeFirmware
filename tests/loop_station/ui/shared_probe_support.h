@@ -86,7 +86,9 @@ public:
 	void* permissionMod = nullptr;
 	int permissionSource = -1;
 	mutable int relevanceCalls = 0;
-	MenuItem(l10n::String = {}, l10n::String = {}) {}
+	MenuItem(l10n::String name = {}, l10n::String heading = {})
+	    : title(heading == l10n::String{} ? name : heading), name_(name) {}
+	l10n::String name_{};
 	l10n::String title{};
 	virtual ~MenuItem() = default;
 	virtual void beginSession(MenuItem*) {}
@@ -133,10 +135,10 @@ public:
 	}
 	virtual void readCurrentValue() { ++reads; }
 	bool showColumnLabel() { return true; }
-	void getColumnLabel(StringBuf& s) { s.value = "Item"; }
+	virtual void getColumnLabel(StringBuf& s) { s.value = getName(); }
 	virtual void getNotificationValue(StringBuf& s) { s.value = "value"; }
-	const char* getName() const { return "Item"; }
-	const char* getTitle() const { return "Menu"; }
+	const char* getName() const { return l10n::get(name_); }
+	const char* getTitle() const { return l10n::get(title); }
 	void drawName() {}
 };
 #define NO_NAVIGATION ((MenuItem*)0xFFFFFFFF)
@@ -223,9 +225,28 @@ public:
 	virtual int32_t getMaxValue() const { return 2450; }
 	void writeCurrentValue() override { written = value; }
 	virtual int getRenderingStyle() const { return 0; }
+	void renderInHorizontalMenu(const SlotPosition&) override;
+	// These non-number styles are outside this native-settings probe. Fail loudly
+	// rather than silently substituting a renderer if a setting starts using one.
+#define UNSUPPORTED_STYLE(name)                                                                                        \
+	void name(const SlotPosition&) { assert(false); }
+	UNSUPPORTED_STYLE(drawPercent)
+	UNSUPPORTED_STYLE(drawKnob)
+	UNSUPPORTED_STYLE(drawBar)
+	UNSUPPORTED_STYLE(drawSlider)
+	UNSUPPORTED_STYLE(drawLengthSlider)
+	UNSUPPORTED_STYLE(drawPan)
+	UNSUPPORTED_STYLE(drawHpf)
+	UNSUPPORTED_STYLE(drawLpf)
+	UNSUPPORTED_STYLE(drawAttack)
+	UNSUPPORTED_STYLE(drawRelease)
+	UNSUPPORTED_STYLE(drawSidechainDucking)
+#undef UNSUPPORTED_STYLE
 };
 using RenderingStyle = int;
 inline constexpr int NUMBER = 0;
+inline constexpr int PERCENT = 1, KNOB = 2, BAR = 3, SLIDER = 4, LENGTH_SLIDER = 5, PAN = 6, HPF = 7, LPF = 8,
+                     ATTACK = 9, RELEASE = 10, SIDECHAIN_DUCKING = 11;
 class Decimal : public Number {
 public:
 	using Number::Number;
@@ -240,14 +261,21 @@ class Integer : public Number {
 public:
 	using Number::Number;
 };
-class Selection : public Value<int32_t> {
+class Enumeration : public Value<int32_t> {
 public:
 	using Value::Value;
 	int32_t value = 0;
 	void setValue(int32_t v) { value = v; }
 	int32_t getValue() { return value; }
+	virtual void getShortOption(StringBuf&) = 0;
+	void renderInHorizontalMenu(const SlotPosition&) override;
+};
+class Selection : public Enumeration {
+public:
+	using Enumeration::Enumeration;
 	enum class OptType { FULL, SHORT };
 	virtual deluge::vector<std::string_view> getOptions(OptType = OptType::FULL) = 0;
+	void getShortOption(StringBuf&) override;
 };
 } // namespace deluge::gui::menu_item
 inline std::vector<deluge::gui::menu_item::HorizontalMenu*> probeChain;

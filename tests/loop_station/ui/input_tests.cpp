@@ -236,7 +236,7 @@ TEST(LoopUi, PreparationFailureShowsPopupAndCentreRetryCaptures) {
 	CHECK_FALSE(f.model->clip(5));
 	CHECK_FALSE(f.model->engine().state(5).capture);
 	CHECK_EQUAL(1, f.screen.popups.size());
-	STRCMP_EQUAL("Track unavailable", f.screen.popups.back().c_str());
+	STRCMP_EQUAL("Track Unavailable", f.screen.popups.back().c_str());
 	f.host.failAllocation = false;
 	f.view.padAction(5, 2, 100);
 	f.onlyBound(5);
@@ -422,13 +422,13 @@ TEST(LoopUi, SevenSegmentNavigationAndEditingRefreshTextAndPopup) {
 	Fixture f;
 	f.screen.oled = false;
 	CHECK_TRUE(loopStationSettingsMenu.openGlobal());
-	STRCMP_EQUAL("Loop Station Global", f.screen.text.c_str());
+	STRCMP_EQUAL("Loop Global", f.screen.text.c_str());
 	STRCMP_EQUAL("PLAY DUB", f.screen.popups.back().c_str());
 	f.screen.text.clear();
 	const auto before = f.screen.popups.size();
 	loopStationSettingsMenu.selectEncoderAction(1);
 	CHECK_EQUAL(1, loopStationSettingsMenu.row_);
-	STRCMP_EQUAL("Loop Station Global", f.screen.text.c_str());
+	STRCMP_EQUAL("Loop Global", f.screen.text.c_str());
 	STRCMP_EQUAL("IMM", f.screen.popups.back().c_str());
 	selectClick();
 	CHECK_TRUE(loopStationSettingsMenu.editing_);
@@ -443,7 +443,7 @@ TEST(LoopUi, SevenSegmentCopyTargetRefreshesAndConfirmationRestoresTrackText) {
 	Fixture f;
 	f.screen.oled = false;
 	CHECK_TRUE(loopStationSettingsMenu.openTrack(2));
-	STRCMP_EQUAL("Loop Station Track", f.screen.text.c_str());
+	STRCMP_EQUAL("Loop Track", f.screen.text.c_str());
 	STRCMP_EQUAL("SRC 1", f.screen.popups.back().c_str());
 	loopStationSettingsMenu.selectEncoderAction(6);
 	selectClick();
@@ -461,7 +461,7 @@ TEST(LoopUi, SevenSegmentCopyTargetRefreshesAndConfirmationRestoresTrackText) {
 	CHECK_TRUE(f.model->clip(4));
 	STRCMP_EQUAL("TO TR 5", f.screen.popups[before].c_str());
 	STRCMP_EQUAL("Copied", f.screen.popups.back().c_str());
-	STRCMP_EQUAL("Loop Station Track", f.screen.text.c_str());
+	STRCMP_EQUAL("Loop Track", f.screen.text.c_str());
 	CHECK_EQUAL(0, probeOledRequests);
 }
 

@@ -50,6 +50,14 @@ const char* get(String string) {
 		return "Track Colour";
 	case String::STRING_FOR_LOOP_STATION_COPY_TO_TRACK:
 		return "Copy To Track";
+	case String::STRING_FOR_LOOP_STATION_COPY_FROM:
+		return "From Track %u";
+	case String::STRING_FOR_LOOP_STATION_COPY_TARGET:
+		return "To Track %u";
+	case String::STRING_FOR_LOOP_STATION_COPY_CONFIRM:
+		return "SELECT: copy BACK: cancel";
+	case String::STRING_FOR_LOOP_STATION_COPY_REVIEW:
+		return "SELECT to review";
 	}
 	return "Setting";
 }
@@ -248,10 +256,11 @@ void testCopyTargetAndConfirmationFit() {
 			expected.clear();
 			expected.drawString("Track Settings", 0, 6, kTextTitleSpacingX, kTextTitleSizeY);
 			char target[24];
-			std::snprintf(target, sizeof(target), "Copy to Track %u", slot + 1);
-			expected.drawString(target, 0, 22, kTextSpacingX, kTextSizeYUpdated);
-			expected.drawString(review ? "SELECT to copy" : "SELECT to review", 0, 38, kTextSpacingX,
-			                    kTextSizeYUpdated);
+			expected.drawString("From Track 1", 0, 19, kTextSpacingX, kTextSizeYUpdated);
+			std::snprintf(target, sizeof(target), "To Track %u", slot + 1);
+			expected.drawString(target, 0, 28, kTextSpacingX, kTextSizeYUpdated);
+			expected.drawString(review ? "SELECT: copy BACK: cancel" : "SELECT to review", 0, 39, kTextSpacingX,
+			                    kTextSmallSizeY);
 			menu.renderOLED(actual);
 			compareImages(actual, expected);
 			checkCanaries(actual);

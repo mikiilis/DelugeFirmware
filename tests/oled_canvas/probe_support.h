@@ -19,6 +19,7 @@ constexpr int32_t kTextSpacingY = 9;
 constexpr int32_t kTextSizeYUpdated = 7;
 constexpr int32_t kTextTitleSpacingX = 9;
 constexpr int32_t kTextTitleSizeY = 10;
+constexpr int32_t kTextSmallSizeY = 5;
 
 namespace deluge::hid::display::oled_canvas {
 class Canvas {
@@ -98,7 +99,11 @@ enum class String {
 	STRING_FOR_LOOP_STATION_PLAYBACK,
 	STRING_FOR_LOOP_STATION_TRANSPOSE,
 	STRING_FOR_LOOP_STATION_TRACK_COLOUR,
-	STRING_FOR_LOOP_STATION_COPY_TO_TRACK
+	STRING_FOR_LOOP_STATION_COPY_TO_TRACK,
+	STRING_FOR_LOOP_STATION_COPY_FROM,
+	STRING_FOR_LOOP_STATION_COPY_TARGET,
+	STRING_FOR_LOOP_STATION_COPY_CONFIRM,
+	STRING_FOR_LOOP_STATION_COPY_REVIEW
 };
 const char* get(String string);
 } // namespace deluge::l10n

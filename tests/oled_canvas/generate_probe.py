@@ -6,8 +6,8 @@ from pathlib import Path
 
 def section(source: str, begin: str, end: str) -> str:
     start = source.find(begin)
-    if start < 0:
-        raise SystemExit(f"production source marker not found: {begin!r}")
+    if start < 0 or source.find(begin, start + len(begin)) >= 0:
+        raise SystemExit(f"production source marker missing or ambiguous: {begin!r}")
     finish = source.find(end, start + len(begin))
     if finish < 0:
         raise SystemExit(f"production source end marker not found: {end!r}")

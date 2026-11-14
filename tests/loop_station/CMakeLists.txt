@@ -3,17 +3,20 @@ set(LOOP_UI_PROBE "${CMAKE_CURRENT_BINARY_DIR}/generated/production_ui.cpp")
 set(LOOP_UI_VIEW "${CMAKE_CURRENT_SOURCE_DIR}/../../src/deluge/gui/views/loop_station_view.cpp")
 set(LOOP_UI_SETTINGS "${CMAKE_CURRENT_SOURCE_DIR}/../../src/deluge/gui/menu_item/loop_station/settings.cpp")
 add_custom_command(
-    OUTPUT "${LOOP_UI_PROBE}" "${CMAKE_CURRENT_BINARY_DIR}/generated/shared_menu.cpp" "${CMAKE_CURRENT_BINARY_DIR}/generated/shared_menu_declarations.h" "${CMAKE_CURRENT_BINARY_DIR}/generated/settings_items.cpp" "${CMAKE_CURRENT_BINARY_DIR}/generated/settings_items_declarations.h" "${CMAKE_CURRENT_BINARY_DIR}/generated/horizontal_settings.cpp" "${CMAKE_CURRENT_BINARY_DIR}/generated/horizontal_settings_declarations.h"
+    OUTPUT "${LOOP_UI_PROBE}" "${CMAKE_CURRENT_BINARY_DIR}/generated/shared_menu.cpp" "${CMAKE_CURRENT_BINARY_DIR}/generated/shared_menu_declarations.h" "${CMAKE_CURRENT_BINARY_DIR}/generated/settings_items.cpp" "${CMAKE_CURRENT_BINARY_DIR}/generated/settings_items_declarations.h" "${CMAKE_CURRENT_BINARY_DIR}/generated/horizontal_settings.cpp" "${CMAKE_CURRENT_BINARY_DIR}/generated/horizontal_settings_declarations.h" "${CMAKE_CURRENT_BINARY_DIR}/generated/strings_declarations.h" "${CMAKE_CURRENT_BINARY_DIR}/generated/english_cases.h"
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/ui/generate_probe.py"
             --loop-view "${LOOP_UI_VIEW}" --settings-view "${LOOP_UI_SETTINGS}"
             --support "${CMAKE_CURRENT_SOURCE_DIR}/ui/probe_support.h" --output "${LOOP_UI_PROBE}"
     DEPENDS ui/generate_probe.py ui/probe_support.h "${LOOP_UI_VIEW}" "${LOOP_UI_SETTINGS}"
+            ../../src/deluge/gui/l10n/english.json ../../src/deluge/gui/l10n/strings.h
             ui/settings_probe_support.h
             ../../src/deluge/gui/menu_item/loop_station/horizontal_settings.h
             ../../src/deluge/gui/menu_item/loop_station/horizontal_settings.cpp
             ../../src/deluge/gui/menu_item/submenu.h ../../src/deluge/gui/menu_item/submenu.cpp
             ../../src/deluge/gui/menu_item/horizontal_menu.h ../../src/deluge/gui/menu_item/horizontal_menu.cpp
             ../../src/deluge/gui/menu_item/decimal.cpp
+            ../../src/deluge/gui/menu_item/selection.cpp ../../src/deluge/gui/menu_item/enumeration.cpp
+            ../../src/deluge/gui/menu_item/number.cpp
             ../../src/deluge/gui/menu_item/menu_item.cpp ../../src/deluge/gui/menu_item/value.h
             ../../src/deluge/gui/menu_item/loop_station/settings_items.h
             ../../src/deluge/gui/menu_item/loop_station/settings_items.cpp
@@ -21,6 +24,8 @@ add_custom_command(
 )
 
 add_executable(LoopStationTests
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/real_canvas.cpp"
+    ../../src/deluge/gui/fonts/fonts.c
     "${LOOP_UI_PROBE}"
     "${CMAKE_CURRENT_BINARY_DIR}/generated/horizontal_settings.cpp"
     "${CMAKE_CURRENT_BINARY_DIR}/generated/shared_menu.cpp"
@@ -30,6 +35,7 @@ add_executable(LoopStationTests
     ui/probe_support.cpp
     ui/input_tests.cpp
     ui/horizontal_settings_tests.cpp
+    ui/display_tests.cpp
     main.cpp
     view_tests.cpp
     pad_render_tests.cpp
@@ -73,6 +79,18 @@ add_executable(LoopStationTests
     ../../src/deluge/loop_station/page_pool.cpp
     ../../src/deluge/loop_station/persistence.cpp
 )
+add_custom_command(
+    OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/real_canvas.cpp"
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/../oled_canvas/generate_shared_probe.py"
+            "${CMAKE_CURRENT_BINARY_DIR}/generated/real_canvas.cpp"
+    DEPENDS ../oled_canvas/generate_shared_probe.py ../oled_canvas/generate_probe.py
+            ui/real_canvas.h ui/shared_probe_support.h
+            ../../src/deluge/hid/display/oled_canvas/canvas.cpp
+            ../../src/deluge/hid/display/oled_canvas/canvas.h
+            ../../src/deluge/gui/fonts/fonts.h
+    VERBATIM
+)
+target_include_directories(LoopStationTests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/ui")
 target_include_directories(LoopStationTests PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated" ../../src ../../src/deluge ../../build/src/deluge)
 target_compile_definitions(LoopStationTests PRIVATE CPPUTEST_MEM_LEAK_DETECTION_DISABLED LOOP_STATION_TEST_MODE=1 LOOP_STATION_HOST_TEST=1)
 target_link_libraries(LoopStationTests PRIVATE CppUTest etl::etl)

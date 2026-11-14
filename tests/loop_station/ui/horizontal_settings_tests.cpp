@@ -330,7 +330,7 @@ TEST(LoopHorizontalSettings, CopyFailureIsSettingsOnlyAndHonest) {
 	const auto popups = f.screen.popups.size();
 	press(SELECT_ENC);
 	CHECK_EQUAL(popups + 1, f.screen.popups.size());
-	STRCMP_EQUAL("Copy busy", f.screen.popups.back().c_str());
+	STRCMP_EQUAL("Copy Busy", f.screen.popups.back().c_str());
 	CHECK_TRUE(f.model->engine().state(0).capture);
 	CHECK(Source::Right == f.model->engine().settings().tracks[0].source);
 	// Unavailable destination: allocation failure must not change its settings.
@@ -342,7 +342,7 @@ TEST(LoopHorizontalSettings, CopyFailureIsSettingsOnlyAndHonest) {
 	press(SELECT_ENC);
 	CHECK_FALSE(f.model->clip(3));
 	CHECK(Source::Left == f.model->engine().settings().tracks[3].source);
-	STRCMP_EQUAL("Copy busy", f.screen.popups.back().c_str());
+	STRCMP_EQUAL("Copy Busy", f.screen.popups.back().c_str());
 }
 TEST(LoopHorizontalSettings, FallbackTransposeRetainsFractionAndFineSteps) {
 	Fixture f(false);

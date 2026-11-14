@@ -12,6 +12,8 @@ The demo starts with playing, recording, overdubbing, stopped and empty tracks. 
 
 ## What it can do
 
+The preview's **Track settings** shortcut and **SHIFT** toggle are browser-only conveniences. Settings edits are temporary; Reset Demo restores the examples. Audio and memory readouts are illustrative, not device measurements. Any selected/settings-focused ring pulse shown in the preview is illustrative and **not implemented in firmware**; that feature is deferred. The shared settings controls below are implemented and host-tested, not hardware-accepted.
+
 - Record and play up to eight audio phrases at once.
 - Overdub a playing phrase and keep each track at its own length.
 - Select tracks and watch their clockwise progress rings advance during playback.
@@ -49,11 +51,15 @@ Track colors distinguish tracks. New tracks default to **Yellow, Cyan, Blue, Pur
 
 - Press **SELECT** to open global Loop Station settings.
 - Hold **SHIFT** and press a track's center to open that track's settings.
-- Turn the Select encoder to move through rows, press Select to edit, and press **BACK** to return.
+- On OLED with **Horizontal Menus** enabled, use **SYNTH / KIT / MIDI / CV** to select one of four columns. Turn **SELECT** to edit directly, without an edit toggle. Use **SCALE / CROSS-SCREEN** for the previous/next page (SHIFT still pages locally); empty columns do nothing. The horizontal encoder is inert here.
+- With Horizontal Menus disabled, or on seven-segment hardware, turn SELECT to navigate rows, press SELECT to toggle editing, and turn it to change values. The horizontal encoder retains its list alias.
+- **BACK** or unshifted **SONG** returns, retaining edits in memory. Pads do not trigger loop actions while settings is open.
 
-Global settings include Record Action, Start Mode/Interval and Stop Mode/Interval. Interval settings are shown when the related mode is Synced. Per-track settings include input source, monitoring, record duration, Loop or One Shot playback, transpose, color and Copy To Track. Transpose range is ±24.50 semitones in one-cent steps. Copy To Track copies settings only; it leaves the destination audio, name, output, effects and history intact.
+Global settings include Record Action, Start Mode/Interval and Stop Mode/Interval. Intervals appear only when the related mode is Synced. Per-track settings include input source, monitoring, record duration, Loop or One Shot playback, transpose, color and Copy To Track. Duration offers Manual or bars up to the current memory-dependent limit, not a fixed eight-bar maximum. Transpose range is ±24.50 semitones: each normal detent changes one semitone; **SHIFT + turn SELECT** changes one cent (holding SELECT also enables fine editing). Coarse changes preserve fractional tuning: +1.23 becomes +2.23.
 
-To change a ring's identity color: **SHIFT + track centre → Colour → SELECT to edit → turn SELECT → SELECT to finish → BACK**. The ring updates live and the menu shows the chosen color. White remains available, and multiple tracks may use the same color. Return to Song/Session View and use normal Song **SAVE** to store changes; normal Song load restores them. Editing does not write to the SD card on each turn. Existing saved/custom colors are preserved, including White and copied or duplicate choices; the new defaults do not recolor saved Songs.
+For **Copy To Track**, turn SELECT to choose a destination, then press SELECT to review source and target. Release and press SELECT again to confirm, or press BACK to cancel review without closing settings. In the fallback list, first press SELECT on Copy to enter the destination chooser, then press to review and again to confirm. Copy changes settings only; destination audio, name, output, effects and history remain intact. A busy or unavailable destination is left unchanged.
+
+To change a ring's identity color in horizontal mode: **SHIFT + track centre → page to Color → select its instrument button → turn SELECT → BACK**. In fallback, use SELECT to start/finish editing Colour. The ring updates live and the menu shows the chosen color. White remains available, and multiple tracks may use the same color. Return to Song/Session View and use normal Song **SAVE** to store changes; normal Song load restores them. Editing does not write to the SD card on each turn. Existing saved/custom colors are preserved, including White and copied or duplicate choices; the new defaults do not recolor saved Songs.
 
 Press **CLIP VIEW** to open the selected track's ordinary Audio Clip view and menus. Loop tracks use normal Song outputs and effects.
 
