@@ -2,13 +2,13 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Give global and per-track Loop Station settings the existing four-column, instrument-button-selected horizontal UI, including semitone/SHIFT-cent transpose editing.
+**Goal:** Give global and per-track Loop Station settings the existing four-column, instrument-button-selected horizontal UI, including semitone/SHIFT-cent transpose editing and an identity-colour pulse identifying the selected or settings-focused track.
 
 **Architecture:** Retain `SettingsMenu` as the Loop Station UI host and delegate horizontal presentation/navigation to `HorizontalMenu`, with narrow virtual hooks replacing sound-editor assumptions for external hosts. Bind Loop Station-specific native selection, integer and decimal menu items to the existing configuration commands; retain the current list as the feature-off/seven-segment fallback. Copy review remains a deliberate host-owned action.
 
 **Tech Stack:** C++23, CppUTest, CMake/CTest, Python production-method probes, real OLED canvas/fonts, bundled DBT ARM toolchain, existing static HTML documentation demo. No new dependencies.
 
-**Spec:** `docs/superpowers/specs/2026-11-14-loop-station-settings-ui-design.md` (approved November 14, 2026).
+**Spec:** `docs/superpowers/specs/2026-11-14-loop-station-settings-ui-design.md` (approved November 14, 2026, then amended with the user's focused-ring pulse requirement).
 
 ## Global Constraints
 
@@ -22,6 +22,7 @@
 - Respect the existing **Horizontal Menus** preference; retain list-based behavior when disabled or on seven-segment hardware.
 - Keep live in-memory updates and normal Song Save/load persistence. Do not add per-turn SD writes, new song tags, enum renumbering or migrations.
 - Preserve safe SD-card deferral and lazy track binding, including failure feedback.
+- A track selected by its ring, or addressed by an open track-settings menu, has a **pulsing ring in its own configured colour**; preserve clockwise playback progress and higher-priority recording/overdub, pending, clear and error indications.
 - Do not duplicate horizontal packing, button mapping, paging, rendering or LED algorithms in Loop Station.
 - Do not restart the cancelled preview server automatically; run it later only when an actual browser check needs it.
 - Keep existing prototype changes and unrelated `.openchamber/` artifacts intact; never add those artifacts to feature commits.
@@ -32,7 +33,7 @@
 - A rejected settings command must leave both selected value/notification and model at the authoritative old value (Task 2 rejection test).
 - Hiding an interval before the current field must preserve field identity, not edit the field that inherits its old index (Task 2 mode-combination test; Task 3 input test).
 - Duplicate button edges, re-selecting Copy's instrument button, and SD-deferred replay must never become unintended copy confirmation (Task 3 confirmation-edge tests).
-- Failed opens, closes and cross-view returns must leave no dangling item parents, stale selected-column LEDs or changed fallback preference (Tasks 1, 3 and 4 lifecycle tests).
+- Failed opens, closes and cross-view returns must leave no dangling item parents, stale ring-focus override, selected-column LEDs or changed fallback preference (Tasks 1, 3, 4 and 5 lifecycle tests).
 
 ---
 
@@ -45,6 +46,9 @@
 - Create `src/deluge/gui/menu_item/loop_station/horizontal_settings.{h,cpp}`: external-host `HorizontalMenu` specialization, no duplicate renderer or page arithmetic.
 - Modify `src/deluge/gui/menu_item/loop_station/settings.{h,cpp}`: own the context/items/menu, preserve entry/fallback, route input, implement explicit copy review and lifecycle cleanup.
 - Modify `src/deluge/loop_station/menu_model.{h,cpp}`: coarse/fine transpose helper and shared scalar field access as needed without changing settings schema.
+- Modify `src/deluge/loop_station/geometry.{h,cpp}`: pure, allocation-free visual-clock pulse level alongside existing pulse/progress helpers.
+- Modify `src/deluge/gui/views/loop_station_view.{h,cpp}`: focused-ring brightness modulation and redraw scheduling without changing progress, centre/state priority or engine selection.
+- Modify `tests/loop_station/{view_tests.cpp,pad_render_tests.cpp}`: pulse phase, focus ownership, colour/progress priority and partial-row renderer coverage.
 - Modify `src/deluge/gui/l10n/{strings.h,english.json,seven_segment.json}`: add required short labels/confirmation strings using the existing translation fallback conventions; do not hand-edit generated `g_english.cpp`/`g_seven_segment.cpp` (see that directory's README).
 - Modify `src/deluge/CMakeLists.txt` only if new source files are not already discovered by its source glob.
 - Extend `tests/loop_station/ui/{generate_probe.py,probe_support.h,probe_support.cpp,fixture.h}`: checked extraction of actual shared methods and boundary stubs; no replacement horizontal logic.
@@ -126,19 +130,41 @@ CHECK_EQUAL(-2450, stepTransposeCents(0, INT32_MIN, true));
 - [ ] **Step 5: Wire shared menus and lifecycle.** In horizontal mode, route instrument/page/SELECT rotation through the shared menu and select by field identity after relevance changes. Do not call the sound editor to initialize, navigate, clear shortcuts or redraw pads. Route shared redraw requests to the existing Loop Station underlying view. Own Copy's review in `SettingsMenu`, suppressing generic repeated-selection actions; use press/release state to require distinct presses. Run all commands through existing model status checks and existing card-routine deferral. Clean parent pointers/LEDs on all exits and failed opens; redraw parent LEDs after cleanup.
 - [ ] **Step 6: Establish GREEN and commit.** Run the new horizontal group, shared group, existing input/pad/capture groups and full `LoopStationTests`; all must pass. Commit only Task 3 files: `feat: integrate shared loop station horizontal settings`.
 
-### Task 4: Verify real display rendering, fallback and guide alignment
+### Task 4: Pulse the selected or settings-focused track ring
+
+**Files:** geometry visual helpers; Loop Station performance view and settings host; `view_tests.cpp`, `pad_render_tests.cpp`, new horizontal input tests and their probe support. Extend source-extraction dependencies if necessary. Align the docs demo in Task 5, not by silently changing the accepted prototype during this planning step.
+
+**Interfaces consumed:** Task 3 host lifecycle, current settings scope/slot, `Engine::selected()`, the existing `AudioEngine::loopStationSampleClock()`, `filledBorderPads`, state-priority renderer and configured track colour.
+
+**Interfaces produced:** `uint8_t loop_station::selectionPulseLevel(SampleClock sample)` in `geometry.{h,cpp}` returns a continuous integer triangle wave from 0 to 255 over 66150 samples (1.5 seconds at 44.1 kHz), with level 0 at sample 0/66150 and 255 at 33075. `ls::SlotId SettingsMenu::focusedTrack() const` returns its addressed slot only while that track-settings host is active; otherwise `kInvalidSlot`. `LoopStationView` uses a valid settings focus in preference to `engine.selected()` without modifying selection. `SettingsMenu::graphicsRoutine()` requests underlying **pad-only** redraws while it is foreground; do not invoke the root's `updateLed()` or its full OLED redraw routine from this path. Use a pure renderer-local channel scaler, not new engine or persistent fields.
+
+- [ ] **Step 1: Write failing pulse/focus tests.** `SelectionPulseHasContinuousStablePeriod` asserts the sample values below, both half-cycle directions, period wrap and safe large-clock modulo. `SelectedRingBreathesInOwnColour` presses each of eight physical track rings, renders at low/high phase and asserts only that track's twelve border pads vary while their hue and four centre pads stay unchanged. `TrackMenuFocusOverridesWithoutSelectingEngineTrack` opens slot B settings while A is engine-selected, including fallback and Copy review: only B has the focus pulse; closing restores A, and a failed open leaves A unchanged. Check no added engine command/allocation/transport state change.
+
+```cpp
+CHECK_EQUAL(0, selectionPulseLevel(0));
+CHECK_EQUAL(255, selectionPulseLevel(33075));
+CHECK_EQUAL(0, selectionPulseLevel(66150));
+CHECK_EQUAL(selectionPulseLevel(11025), selectionPulseLevel(77175));
+```
+
+- [ ] **Step 2: Write failing display-priority/redraw tests.** `FocusPulsePreservesClockwiseProgress` fixes actual audio phase while independently varying `probeSampleClock`, asserting the same filled indices at each pulse phase, with filled brightness always greater than unfilled brightness. `FocusPulseYieldsToStateIndications` covers recording, overdub, pending, error and clear sweep at low/high selection phases: existing state render outputs remain unchanged. `FocusedColourChangesLiveWithoutResettingPulse` covers White/custom duplicate colours and other tracks unchanged. `ForegroundSettingsAnimatesPadsWithoutClobberingMenuLeds` drives graphics ticks with no encoder input and stopped transport, asserting advancing pulse samples/redraw requests without root LED/OLED updates. Retain partial-row sentinel checks and unaffected sidebar rendering.
+- [ ] **Step 3: Establish RED.** Build `LoopStationTests` and run `-sg LoopView`, `-sg LoopPadRender` and `-sg LoopHorizontalSettings`; record missing pulse/focus/redraw behavior. Existing exact-colour tests should explicitly render an unselected track or assert the new selected brightness contract, not have their meaningful colour/progress checks deleted.
+- [ ] **Step 4: Implement visual-only pulse composition.** Compute phase once per frame from the existing visual sample clock with integer arithmetic. For focus identity rendering use linear 8-bit brightness ranges: playing filled 128→255, playing unfilled 32→64, empty/stopped ring 32→128, interpolated with pulse level 0→255 and rounded channel scaling. This keeps playing progress contrast at least approximately 4:1 while maintaining hue; centre pads and unselected identity rendering are unchanged. Apply only after all current higher-priority state branches. Do not reset pulse phase on selection, menu open or Colour edit. Keep a single focus override, clear it naturally on close/failure, and schedule pad redraws while either settings layout is foreground without stealing menu LEDs or starting a new audio task.
+- [ ] **Step 5: Establish GREEN and commit.** Run the three groups and full `LoopStationTests`; require unchanged safety-state outputs, eight-track focus/colour coverage, no allocation and real foreground animation scheduling. Run `git diff --check`; commit only Task 4 files: `feat: pulse the focused loop station track ring`.
+
+### Task 5: Verify real display rendering, fallback and guide alignment
 
 **Files:** OLED tests/probes; existing fallback input tests; localization; demo and both feature guides.
 
-**Interfaces consumed:** integrated Task 3 settings UI and its existing rendering methods. No additional runtime API.
+**Interfaces consumed:** integrated Task 3 settings UI and Task 4 ring focus/animation. No additional runtime API.
 
 - [ ] **Step 1: Write failing display/fallback regressions.** Real-canvas tests `SharedSettingsColumnsStayWithinOled` and `CopyReviewFitsOled` render both scopes, both pages, all conditional mode combinations, -24.50/+24.50 and long/localized labels under all supported highlights. Assert canvas bounds/canaries, page text, selection and empty placeholders; use actual shared draw routines and real fonts. `FeatureOffAndSevenSegmentKeepListEditing` checks navigation/edit toggles, existing copy-target flow, semitone/SHIFT-cent steps, readable values and BACK retention in each fallback. `ReturningFromFallbackDoesNotChangePreference` verifies feature state and ordinary editor menu behavior.
 - [ ] **Step 2: Establish RED.** Build `LoopStationOledTests`/`OledCanvasTests` and run them plus the fallback group. Record missing shared-render coverage or genuine bounds/value failures, not fabricated rendering expectations.
 - [ ] **Step 3: Finish presentation and compatibility.** Use shared title/counter, accessibility, selected LEDs and child renderers; localize compact labels and copy review source/target/confirm/cancel copy. Ensure selected notifications use the authoritative full setting name/value. Retain the existing fallback list renderer/flow; remove row/edit-mode routing only from horizontal mode. No hardcoded eight-bar cap or English-only new firmware labels. Fix legitimate display clipping within the approved shared layout rather than introducing a second renderer.
-- [ ] **Step 4: Align documentation and prototype.** Update both guides with horizontal controls, scope, coarse/fine transpose, copy review, fallback and normal Song Save/load. Preserve the accepted HTML interactions and original ring geometry/default palette; align any behavior that changed during integration. Replace “not implemented firmware” only with accurately qualified implemented/tested status; keep the silent/illustrative audio/memory disclaimer and temporary edits/reset behavior. Preserve the browser's Track settings shortcut and SHIFT toggle as explicitly browser-only conveniences.
-- [ ] **Step 5: Establish GREEN and commit.** Run OLED/fallback tests, full host suites and `python3 tests/loop_station/ui/demo_contract_test.py`. Browser-check the existing docs HTML only when needed (a local server may be started then; do not restart it merely because it was cancelled). Check semitone/cents, pages, colour, copy cancel/confirm, global relevance and unchanged loops; record console visibility limits honestly. Run `git diff --check`; commit only Task 4 files: `docs: align loop station controls and display coverage`.
+- [ ] **Step 4: Align documentation and prototype.** Update both guides with horizontal controls, scope, coarse/fine transpose, copy review, focused-ring pulse, fallback and normal Song Save/load. Preserve the accepted HTML interactions and original ring geometry/default palette; add the same single-focus brightness pulse when selecting a ring or opening track settings, including live Colour changes and state priority. Its Pause animation freezes the pulse along with progress; reduced-motion preference uses a steady focus indication instead of continuous breathing. Align other behavior that changed during integration. Replace “not implemented firmware” only with accurately qualified implemented/tested status; keep the silent/illustrative audio/memory disclaimer and temporary edits/reset behavior. Preserve the browser's Track settings shortcut and SHIFT toggle as explicitly browser-only conveniences.
+- [ ] **Step 5: Establish GREEN and commit.** Run OLED/fallback tests, full host suites and `python3 tests/loop_station/ui/demo_contract_test.py`. Browser-check the existing docs HTML only when needed (a local server may be started then; do not restart it merely because it was cancelled). Check semitone/cents, pages, colour, copy cancel/confirm, global relevance, ring-selection/settings pulse ownership, preserved clockwise progress, Pause animation/reduced motion and unchanged loops; record console visibility limits honestly. Run `git diff --check`; commit only Task 5 files: `docs: align loop station controls and display coverage`.
 
-### Task 5: Integrated verification and device handoff
+### Task 6: Integrated verification and device handoff
 
 **Files:** create the dated report; update this plan's evidence/checkmarks. No new feature behavior.
 
@@ -146,13 +172,13 @@ CHECK_EQUAL(-2450, stepTransposeCents(0, INT32_MIN, true));
 
 - [ ] **Step 1: Run integrated host verification.** Run `cmake --build build/tests --target LoopStationTests OledCanvasTests LoopStationOledTests LoopAudioAllocationGuard LoopGestureAllocationGuard LoopHistorySnapshotAllocationGuard -j4`, then `ctest --test-dir build/tests --output-on-failure`. Require every suite to pass; record current counts, actual production paths exercised and any unavailable shared/default-host coverage. No “all menus unchanged” claim based only on Loop Station stubs.
 - [ ] **Step 2: Build Release.** Run `DBT_NO_SYNC=1 ./dbt build Release`; require ARM compilation/link success. Record actual BIN path/size/SHA-256 and embedded source version, with warnings or baseline problems separated from this change.
-- [ ] **Step 3: Obtain final review under the chosen execution method.** Review shared default behavior, sound-editor isolation, conditional selection, Copy edge ownership, per-item acceleration, actual-render tests and fallback. Fix actionable findings and rerun affected verification before claiming completion.
-- [ ] **Step 4: Save evidence and an unchecked device checklist.** Report RED/GREEN, host/build/browser/review results and source commits. Device checklist: real OLED labels/values on each page; four column buttons and page LEDs; one-semitone/one-cent physical detents; entry/exit while loops play/record; no pad-action leakage; deliberate Copy cancel/confirm; feature-off and seven-segment behavior; colours and cents survive normal Song Save/load. Mark unobserved hardware checks **NOT_RUN**.
+- [ ] **Step 3: Obtain final review under the chosen execution method.** Review shared default behavior, sound-editor isolation, conditional selection, Copy edge ownership, per-item acceleration, focus override/foreground ring redraws, progress/state priority, actual-render tests and fallback. Fix actionable findings and rerun affected verification before claiming completion.
+- [ ] **Step 4: Save evidence and an unchecked device checklist.** Report RED/GREEN, host/build/browser/review results and source commits. Device checklist: real OLED labels/values on each page; four column buttons and page LEDs; one-semitone/one-cent physical detents; selected/settings track ring breathing in its own colour at a readable contrast while clockwise progress remains clear; pulse continues with stopped transport and an open track menu without LED conflicts; recording/pending/error/clear indications remain authoritative; entry/exit while loops play/record; no pad-action leakage; deliberate Copy cancel/confirm; feature-off and seven-segment behavior; colours and cents survive normal Song Save/load. Mark unobserved hardware checks **NOT_RUN**.
 - [ ] **Step 5: Commit and hand off.** Run `git diff --check`; commit only report/plan evidence with `docs: verify loop station shared settings UI`. Keep the branch, without merging or pushing. Provide the BIN path and outstanding hardware checks.
 
 ## Plan self-review
 
-- [x] **Spec coverage:** Task 1 owns shared reuse/default compatibility and global-state isolation; Task 2 owns field semantics, localization bindings, coarse/fine arithmetic, rejection and persistence; Task 3 owns real entry/navigation/paging/copy/lifecycle; Task 4 owns native rendering, preference/seven-segment fallback and documentation; Task 5 owns complete build/review evidence and explicitly separate hardware acceptance.
+- [x] **Spec coverage:** Task 1 owns shared reuse/default compatibility and global-state isolation; Task 2 owns field semantics, localization bindings, coarse/fine arithmetic, rejection and persistence; Task 3 owns real entry/navigation/paging/copy/lifecycle; Task 4 owns focused-ring pulse, focus override, progress/state priority and foreground pad redraws; Task 5 owns native rendering, preference/seven-segment fallback and documentation/demo pulse alignment; Task 6 owns complete build/review evidence and explicitly separate hardware acceptance.
 - [x] **Step scan:** each task has named failing assertions, a behavioral RED gate, bounded implementation, explicit verification and a scoped commit. Localization source paths were corrected against the project README.
 - [x] **Type consistency:** hook signatures, context names and item lifetime order are consistent across tasks; existing public UI/model contracts remain unchanged apart from the explicit defaulted transpose helper argument.
 - [x] **Review Focus:** all five conditions have named tests in their owning tasks.

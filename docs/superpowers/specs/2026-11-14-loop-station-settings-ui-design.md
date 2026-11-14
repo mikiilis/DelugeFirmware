@@ -1,6 +1,6 @@
 # Loop Station shared horizontal settings UI
 
-Status: written design approved on November 14, 2026 through the explicit "Approve design" choice. The implementation plan and execution method still require review before firmware implementation.
+Status: written design approved on November 14, 2026 through the explicit "Approve design" choice. The user subsequently requested the focused-ring pulse addition below. The amended implementation plan and execution method still require review before firmware implementation.
 
 ## Intent and agreed direction
 
@@ -11,6 +11,7 @@ The user explicitly chose:
 - Apply this to **both per-track and global Loop Station settings**.
 - **Reuse shared horizontal-menu components**, not a separate implementation of the same UI.
 - Preview the interaction in the **HTML already embedded in the documentation**, `website/public/demos/loop-station.html`.
+- A track selected by its ring, or addressed by an open track-settings menu, has a **pulsing ring in its own configured colour** (user's subsequent plan addition).
 
 The user accepted the resulting interactive preview. It remains a design prototype: no firmware changes have been made. The documentation demo clearly identifies the proposed settings behavior as unimplemented and temporary.
 
@@ -20,6 +21,7 @@ The user accepted the resulting interactive preview. It remains a design prototy
 - Edit an ordinary selected value directly by turning SELECT, without an edit-mode toggle.
 - Expose all existing Loop Station settings, including Colour and Copy To Track.
 - Make transpose practical for coarse musical changes and precise tuning.
+- Make the currently focused track visually identifiable, including while its settings are open.
 - Preserve saved settings, track identity, audio and the Loop Station command/configuration path.
 
 ## Non-goals and anti-goals
@@ -113,6 +115,17 @@ GLOBAL SETTINGS                            2/2
 
 Switching to Immediate hides that mode's interval and compacts subsequent fields, as in the accepted prototype and the existing dynamic shared menu. Do not reset the stored interval when hiding it. Preserve all existing action and interval choices and their menu order.
 
+### Focused-track ring pulse (user-requested addition)
+
+- Selecting a track by pressing its ring makes that ring pulse in the track's configured identity colour. Selecting another ring moves the focus pulse to the new track; other tracks keep their existing display behavior.
+- While track settings are open, pulse the ring of the **track being edited**, even if it differs from the engine's previously selected track. Only one focus ring pulses. Global settings retain the engine-selected track as focus.
+- Keep this visual focus override local to the settings/view layer; do not silently change the engine-selected track or dispatch a musical action merely to highlight a settings target. Closing the track menu resumes the engine-selected ring's pulse. A failed open must not leave a stale override.
+- Pulse brightness, not hue: Colour edits change the pulse colour live, including White and duplicate user choices. Pulse only the twelve ring pads; centre pads retain their existing state indications.
+- While playing, retain the exact clockwise progress geometry and phase. Bright and unfilled segments breathe together but remain visibly distinct throughout the pulse; the animation must not look like a restarted or differently timed loop.
+- Existing recording/overdub, pending-action, hold-to-clear and error indications take priority over the identity-colour focus pulse. Resume the identity pulse automatically when the higher-priority indication ends.
+- Author's proposed visual defaults: a gentle, continuously varying 1.5-second brightness cycle, independent of playback tempo/transport; stopped and empty focused tracks pulse too. Keep the cycle phase continuous across selection/menu changes, and use the existing visual sample clock without allocation, new audio-engine state or SD activity. Final perceived contrast still needs device inspection.
+- Ensure redraws continue while settings is the foreground UI, including fallback lists and Copy review. They must not overwrite settings navigation LEDs or unnecessarily redraw its OLED. The documentation demo should illustrate the same focus rule and respect its Pause animation and reduced-motion controls.
+
 ### Transpose
 
 - Retain integer-cent storage and range **-2450 to +2450 cents**, inclusive; display semitones with two decimal places.
@@ -157,6 +170,7 @@ Avoid duplicate configurable state and broad global context swaps. The builder m
 - Test transpose coarse/fine changes in both directions, crossing zero, fractional preservation, exact range boundaries, large offsets and actual shared SHIFT press/release handling. Verify physical-offset handling is not accidentally accelerated/multiplied for this item.
 - Test Copy To target wrapping/skipping source, no copy on selection/rotation/instrument re-selection, review confirmation, cancellation, failure feedback, settings-only effects and source/destination identity.
 - Test live colour updates and save/load round trips without recolouring other tracks or changing audio. Preserve current duration/memory restrictions and command rejection behavior.
+- Render the selected/focused ring at multiple visual-clock phases for all eight tracks, including a settings target different from the engine-selected slot. Assert identity hue, brightness variation, unchanged centres/unselected tracks, live Colour edits, stable playing progress contrast, higher-priority state overrides, focus restoration after close/failed open, partial-row bounds and animation redraws while the menu is foreground. Selection animation is display-only, not persisted track state.
 - Exercise the actual shared horizontal selection/rendering code from the Loop Station host, not just a probe with copied method bodies. Update probe dependencies or add a suitable shared-menu test seam as necessary.
 - Use real OLED-canvas/font bounds checks for both menus, the last/conditional pages, long labels, negative/maximum transpose and copy review. Check feature-off and seven-segment fallback behavior.
 - Run shared-menu regressions covering ordinary master/sample decimal editing, conditional items, accessibility highlighting, LEDs, horizontal chains and return to the sound editor. Build the affected firmware target.
@@ -170,3 +184,5 @@ Choose exact hook/adapter names, file organization, concrete menu-item base clas
 ## Builder check
 
 A fresh embedded-firmware reviewer read this design and the relevant existing code on November 14, 2026, before handoff. Result: **nothing important left** to clarify before planning. The user subsequently approved the written design.
+
+The focused-ring pulse section was added afterward at the user's request; its cycle/contrast and state-priority details are explicitly the author's proposed implementation defaults, not a separate user-selected animation design.
