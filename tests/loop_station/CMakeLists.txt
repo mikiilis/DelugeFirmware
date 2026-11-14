@@ -2,6 +2,17 @@ find_package(Python3 REQUIRED COMPONENTS Interpreter)
 set(LOOP_UI_PROBE "${CMAKE_CURRENT_BINARY_DIR}/generated/production_ui.cpp")
 set(LOOP_UI_VIEW "${CMAKE_CURRENT_SOURCE_DIR}/../../src/deluge/gui/views/loop_station_view.cpp")
 set(LOOP_UI_SETTINGS "${CMAKE_CURRENT_SOURCE_DIR}/../../src/deluge/gui/menu_item/loop_station/settings.cpp")
+set(LOOP_DISPATCH_PROBE "${CMAKE_CURRENT_BINARY_DIR}/generated/production_dispatch.cpp")
+add_custom_command(
+    OUTPUT "${LOOP_DISPATCH_PROBE}"
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/ui/generate_dispatch_probe.py"
+            --ui "${CMAKE_CURRENT_SOURCE_DIR}/../../src/deluge/gui/ui/ui.cpp"
+            --timers "${CMAKE_CURRENT_SOURCE_DIR}/../../src/deluge/gui/ui_timer_manager.cpp"
+            --output "${LOOP_DISPATCH_PROBE}"
+    DEPENDS ui/generate_dispatch_probe.py ui/probe_support.h
+            ../../src/deluge/gui/ui/ui.cpp ../../src/deluge/gui/ui_timer_manager.cpp
+    VERBATIM
+)
 add_custom_command(
     OUTPUT "${LOOP_UI_PROBE}" "${CMAKE_CURRENT_BINARY_DIR}/generated/shared_menu.cpp" "${CMAKE_CURRENT_BINARY_DIR}/generated/shared_menu_declarations.h" "${CMAKE_CURRENT_BINARY_DIR}/generated/settings_items.cpp" "${CMAKE_CURRENT_BINARY_DIR}/generated/settings_items_declarations.h" "${CMAKE_CURRENT_BINARY_DIR}/generated/horizontal_settings.cpp" "${CMAKE_CURRENT_BINARY_DIR}/generated/horizontal_settings_declarations.h" "${CMAKE_CURRENT_BINARY_DIR}/generated/strings_declarations.h" "${CMAKE_CURRENT_BINARY_DIR}/generated/english_cases.h"
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/ui/generate_probe.py"
@@ -27,6 +38,7 @@ add_executable(LoopStationTests
     "${CMAKE_CURRENT_BINARY_DIR}/generated/real_canvas.cpp"
     ../../src/deluge/gui/fonts/fonts.c
     "${LOOP_UI_PROBE}"
+    "${LOOP_DISPATCH_PROBE}"
     "${CMAKE_CURRENT_BINARY_DIR}/generated/horizontal_settings.cpp"
     "${CMAKE_CURRENT_BINARY_DIR}/generated/shared_menu.cpp"
     ui/shared_menu_tests.cpp

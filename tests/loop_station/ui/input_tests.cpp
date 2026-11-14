@@ -131,6 +131,33 @@ TEST(LoopUi, FallbackCopyReviewKeepsAddressedFocusAndPadsOnlyTick) {
 	CHECK_EQUAL(0, probeOledRequests);
 }
 
+TEST(LoopUi, ForegroundGraphicsDispatchTransmitsAnimatedPadFrames) {
+	for (bool horizontal : {true, false}) {
+		loop_ui_test::Fixture f(horizontal);
+		f.view.padAction(0, 7, 100);
+		CHECK_TRUE(loopStationSettingsMenu.openTrack(5));
+		if (!horizontal)
+			loopStationSettingsMenu.requestCopyReview();
+		probeSentPadFrames.clear();
+		probeOledRequests = 0;
+		indicator_leds::states[IndicatorLED::SYNTH] = true;
+		const auto audioTime = f.host.time;
+		probeSampleClock = 0;
+		probeDispatchGraphicsTick(true);
+		CHECK_EQUAL(1, probeSentPadFrames.size());
+		probeSampleClock = 11025;
+		probeDispatchGraphicsTick(false); // UART backpressure cannot transmit this phase.
+		CHECK_EQUAL(1, probeSentPadFrames.size());
+		probeDispatchGraphicsTick(true);
+		CHECK_EQUAL(2, probeSentPadFrames.size());
+		CHECK(probeSentPadFrames[1].focused.r > probeSentPadFrames[0].focused.r);
+		CHECK_EQUAL(probeSentPadFrames[0].other.r, probeSentPadFrames[1].other.r);
+		CHECK_EQUAL(0, probeOledRequests);
+		CHECK_TRUE(indicator_leds::states[IndicatorLED::SYNTH]);
+		CHECK_EQUAL(audioTime, f.host.time); // No transport started by display ticks.
+	}
+}
+
 // Catches wrong-track edits and menu-only invalidation that leaves the root ring stale.
 TEST(LoopUi, EveryTrackConfigOffersColourAndChangesOnlyItsRing) {
 	constexpr Colour next[] = {Colour::Lime, Colour::Sky,   Colour::Purple, Colour::Magenta,

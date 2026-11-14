@@ -19,6 +19,10 @@ public:
 	ActionResult padAction(int32_t, int32_t, int32_t);
 	ActionResult horizontalEncoderAction(int32_t);
 	void selectEncoderAction(int8_t);
+	bool renderMainPads(uint32_t, RGB[][kDisplayWidth + kSideBarWidth], uint8_t[][kDisplayWidth + kSideBarWidth],
+	                    bool) override;
+	bool renderSidebar(uint32_t, RGB[][kDisplayWidth + kSideBarWidth],
+	                   uint8_t[][kDisplayWidth + kSideBarWidth]) override;
 	void renderOLED(deluge::hid::display::oled_canvas::Canvas&);
 	void renderListOLED(deluge::hid::display::oled_canvas::Canvas&);
 	bool open(::loop_station::MenuScope, ::loop_station::SlotId);

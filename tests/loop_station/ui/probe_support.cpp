@@ -7,6 +7,7 @@ ProbeUI* probeCurrentUI = nullptr;
 ProbeUI* probeRootUI = nullptr;
 unsigned probeRenderRequests = 0;
 std::vector<ProbeUI*> probeRenderTargets;
+std::vector<ProbePadFrame> probeSentPadFrames;
 std::vector<std::pair<uint32_t, uint32_t>> probeRenderRows;
 unsigned probeOledRequests = 0;
 uint64_t probeSampleClock = 0;
@@ -22,6 +23,12 @@ bool shiftPressed = false;
 namespace deluge::gui::menu_item::loop_station {
 SettingsMenu loopStationSettingsMenu;
 }
+namespace production_dispatch {
+void setHierarchy(ProbeUI* root, ProbeUI* current);
+void uiNeedsRendering(ProbeUI* ui, uint32_t mainRows, uint32_t sideRows);
+void dispatchTick(bool ready);
+} // namespace production_dispatch
+static bool probeProductionDispatch = false;
 bool openUI(ProbeUI* ui) {
 	if (!ui->opened()) {
 		if (probeCurrentUI)
@@ -52,10 +59,20 @@ void ProbeUI::graphicsRoutine() {
 	if (probeRootUI && probeRootUI != this)
 		probeRootUI->graphicsRoutine();
 }
+void probeDispatchGraphicsTick(bool uartReady) {
+	if (probeRootUI && probeCurrentUI) {
+		probeProductionDispatch = true;
+		production_dispatch::setHierarchy(probeRootUI, probeCurrentUI);
+		production_dispatch::dispatchTick(uartReady);
+		probeProductionDispatch = false;
+	}
+}
 void uiNeedsRendering(ProbeUI* ui, uint32_t mainRows, uint32_t sideRows) {
 	++probeRenderRequests;
 	probeRenderTargets.push_back(ui);
 	probeRenderRows.emplace_back(mainRows, sideRows);
+	if (probeProductionDispatch)
+		production_dispatch::uiNeedsRendering(ui, mainRows, sideRows);
 }
 void renderUIsForOled() {
 	++probeOledRequests;

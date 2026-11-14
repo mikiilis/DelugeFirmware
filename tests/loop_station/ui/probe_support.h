@@ -24,8 +24,22 @@ public:
 	virtual bool opened() { return true; }
 	virtual void focusRegained() {}
 	virtual void graphicsRoutine();
+	virtual bool renderMainPads(uint32_t = 0, RGB image[][kDisplayWidth + kSideBarWidth] = nullptr,
+	                            uint8_t mask[][kDisplayWidth + kSideBarWidth] = nullptr, bool = true) {
+		return false;
+	}
+	virtual bool renderSidebar(uint32_t = 0, RGB image[][kDisplayWidth + kSideBarWidth] = nullptr,
+	                           uint8_t mask[][kDisplayWidth + kSideBarWidth] = nullptr) {
+		return false;
+	}
 	void close();
 };
+struct ProbePadFrame {
+	RGB focused;
+	RGB other;
+};
+extern std::vector<ProbePadFrame> probeSentPadFrames;
+void probeDispatchGraphicsTick(bool uartReady);
 extern ProbeUI* probeCurrentUI;
 extern ProbeUI* probeRootUI;
 extern unsigned probeRenderRequests;
@@ -118,8 +132,10 @@ public:
 	ActionResult timerCallback();
 	ActionResult padAction(int32_t, int32_t, int32_t);
 	ActionResult buttonAction(deluge::hid::Button, bool, bool);
-	bool renderMainPads(uint32_t, RGB[][kDisplayWidth + kSideBarWidth], uint8_t[][kDisplayWidth + kSideBarWidth], bool);
-	bool renderSidebar(uint32_t, RGB[][kDisplayWidth + kSideBarWidth], uint8_t[][kDisplayWidth + kSideBarWidth]);
+	bool renderMainPads(uint32_t, RGB[][kDisplayWidth + kSideBarWidth], uint8_t[][kDisplayWidth + kSideBarWidth],
+	                    bool) override;
+	bool renderSidebar(uint32_t, RGB[][kDisplayWidth + kSideBarWidth],
+	                   uint8_t[][kDisplayWidth + kSideBarWidth]) override;
 	void selectEncoderAction(int8_t);
 	bool prepareTrack(loop_station::SlotId);
 	void updateLed();

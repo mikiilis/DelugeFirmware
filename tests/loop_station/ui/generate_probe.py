@@ -45,6 +45,11 @@ def main() -> None:
             ),
             section(
                 settings,
+                "bool SettingsMenu::renderMainPads(",
+                "void SettingsMenu::renderOLED(",
+            ),
+            section(
+                settings,
                 "void SettingsMenu::renderOLED(",
                 "} // namespace deluge::gui::menu_item::loop_station",
             ),
