@@ -208,6 +208,36 @@ TEST(LoopHorizontalSettings, DeferredHeldSelectCannotReviewAndConfirm) {
 	press(SELECT_ENC);
 	CHECK(Source::Right == f.model->engine().settings().tracks[1].source);
 }
+TEST(LoopHorizontalSettings, CardRoutineSelectReleaseAllowsLaterCopyConfirmation) {
+	Fixture f(true);
+	CHECK_TRUE(loopStationSettingsMenu.openTrack(0));
+	turn(1);
+	copyColumn();
+	press(SELECT_ENC); // Enter review with the physical press latched.
+	const auto popups = f.screen.popups.size();
+	for (bool locked : {false, true}) {
+		sdRoutineLock = locked;
+		loopStationSettingsMenu.buttonAction(SELECT_ENC, false, true);
+		CHECK_FALSE(f.model->clip(1));
+		CHECK(Source::Left == f.model->engine().settings().tracks[1].source);
+		CHECK_EQUAL(popups, f.screen.popups.size());
+		// Clearing the physical latch must not enable commands inside a card routine,
+		// even when the separate SD lock is not set.
+		CHECK(loopStationSettingsMenu.buttonAction(SELECT_ENC, true, true)
+		      == ActionResult::REMIND_ME_OUTSIDE_CARD_ROUTINE);
+		CHECK_FALSE(f.model->clip(1));
+		CHECK(Source::Left == f.model->engine().settings().tracks[1].source);
+		CHECK_EQUAL(popups, f.screen.popups.size());
+	}
+	sdRoutineLock = false;
+	press(SELECT_ENC); // Replay the deferred press outside the routine: confirm once.
+	CHECK(Source::Right == f.model->engine().settings().tracks[1].source);
+	CHECK_TRUE(f.model->clip(1));
+	CHECK_EQUAL(popups + 1, f.screen.popups.size());
+	STRCMP_EQUAL("Copied", f.screen.popups.back().c_str());
+	press(SELECT_ENC);
+	CHECK_EQUAL(popups + 1, f.screen.popups.size());
+}
 TEST(LoopHorizontalSettings, MenuExitAndFailedOpenRestoreLedsAndParents) {
 	Fixture f(true);
 	for (int pass = 0; pass < 3; ++pass) {

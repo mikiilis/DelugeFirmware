@@ -156,15 +156,16 @@ bool SettingsMenu::opened() {
 }
 
 ActionResult SettingsMenu::buttonAction(deluge::hid::Button button, bool on, bool inCardRoutine) {
+	// Physical releases only clear the press latch; they never dispatch a command.
+	if (button == SELECT_ENC && !on) {
+		selectHeld_ = false;
+		return ActionResult::DEALT_WITH;
+	}
 	if (inCardRoutine)
 		return ActionResult::REMIND_ME_OUTSIDE_CARD_ROUTINE;
 	if (button == SHIFT)
 		return ActionResult::NOT_DEALT_WITH;
 	if (button == SELECT_ENC) {
-		if (!on) {
-			selectHeld_ = false;
-			return ActionResult::DEALT_WITH;
-		}
 		if (sdRoutineLock)
 			return ActionResult::REMIND_ME_OUTSIDE_CARD_ROUTINE;
 		if (selectHeld_)
