@@ -1,6 +1,6 @@
 # Loop Station physical layout and ring colours
 
-Status: planning specification from the user's request; implementation has not been authorized by this document.
+Status: implementation authorized by the user's November 14, 2026 instruction, "Implement this plan". Tasks 1–2 are implemented and task-reviewed; integration evidence is in `docs/superpowers/reports/2026-11-14-loop-station-layout.md`. Final integrated independent review and device acceptance remain pending.
 
 ## Intent
 
@@ -28,9 +28,9 @@ Rejected: reverse only the renderer's animation index. It would leave track orde
 - Each track must expose **Colour** in its own configuration: **SHIFT + track centre → Colour → press SELECT to edit → turn SELECT to choose → press SELECT to finish → BACK**. Reuse the existing `MenuField::Colour` and 11-entry track palette, including White; do not add a second colour picker or arbitrary RGB editor. Apply the choice immediately to that track's identity ring, retaining centre/state/error indications and other tracks' settings/audio. Persist chosen colours through the normal Song Save/load workflow, not an SD write on every encoder turn. Returning with BACK retains the in-memory choice.
 - Preserve centre state colours and existing recording/error/pending colour overrides. Ring uniqueness applies to the default identity palette, not to temporary state/error indications.
 
-## Planning assumptions to review
+## Accepted planning assumptions
 
-The palette adjustment above is a proposed implementation choice, not an exact palette supplied by the user. Distinct defaults remain editable. Preserve explicitly saved/custom colours—including White—and permit duplicate user-selected/copied colours; do not silently recolour existing songs or introduce a persistence migration. Consequently an existing song with saved White will remain White until edited. If uniqueness must be enforced for existing songs too, change this design before execution.
+The palette adjustment above was a proposed implementation choice, not an exact palette supplied by the user; it was accepted with the November 14 implementation authorization. Distinct defaults remain editable. Preserve explicitly saved/custom colours—including White—and permit duplicate user-selected/copied colours; do not silently recolour existing songs or introduce a persistence migration. Consequently an existing song with saved White will remain White until edited. Enforcing uniqueness for existing songs would require a separately authorized design change.
 
 ## Constraints and non-goals
 
