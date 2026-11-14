@@ -22,6 +22,8 @@ public:
 	// Adjust only the pulse grid origin; phrase and queued target positions stay continuous.
 	void setMetronomePositionQ16(SampleClock now, int64_t tickQ16);
 	FrameIndex samplesForBars(uint16_t bars) const;
+	uint32_t tempoQ16() const { return bpmQ16_; }
+	FrameIndex framesPerBar() const { return samplesForBars(1); }
 	int64_t quarterQ16(SampleClock now) const;
 
 private:

@@ -75,6 +75,26 @@ TEST(LoopTiming, transportAnchorPreservesExistingLocalDeadlinesAndDuration) {
 	CHECK_EQUAL(53075, nextDeadline({ActionMode::Synced, Interval::Quarter}, 11025, clock).sampleAt(clock));
 }
 
+TEST(LoopTiming, clockExposesTempoAndBarLengthForDisplay) {
+	ClockMap clock;
+	CHECK_EQUAL(120U * 65536U, clock.tempoQ16());
+	CHECK_EQUAL(88200U, clock.framesPerBar());
+
+	clock.setTempo(0, 60);
+	CHECK_EQUAL(60U * 65536U, clock.tempoQ16());
+	CHECK_EQUAL(176400U, clock.framesPerBar());
+
+	clock.setTempoQ16(0, 112U * 65536U + 32768U);
+	CHECK_EQUAL(112U * 65536U + 32768U, clock.tempoQ16());
+	CHECK_EQUAL(94080U, clock.framesPerBar());
+
+	clock.setTempoQ16(0, 1000U * 65536U);
+	CHECK_EQUAL(10584U, clock.framesPerBar());
+
+	clock.setTempoQ16(0, 0); // rejected; previous tempo remains
+	CHECK_EQUAL(1000U * 65536U, clock.tempoQ16());
+}
+
 TEST(LoopTiming, metronomeOffsetBeyondOnePulseRetainsEarlierFuturePulses) {
 	ClockMap clock{100000};
 	CHECK_EQUAL(11800, nextDeadline({ActionMode::Synced, Interval::Quarter}, 0, clock).sampleAt(clock));
