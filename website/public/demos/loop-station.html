@@ -418,6 +418,91 @@
         font-size: 12px;
         margin: 23px 0 0;
       }
+      .settings-note {
+        color: #c5e79e;
+        font-size: 12px;
+        margin: 12px 0;
+      }
+      .settings-controls {
+        margin-bottom: 18px;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        align-items: center;
+      }
+      .control-group {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+      .hardware-button {
+        border: 1px solid #59635b;
+        border-radius: 4px;
+        background: #202823;
+        color: #cbd3ce;
+        padding: 7px 10px;
+        font-size: 10px;
+        letter-spacing: 0.04em;
+      }
+      .hardware-button:disabled {
+        opacity: 0.35;
+        cursor: default;
+      }
+      .hardware-button[aria-pressed="true"] {
+        color: #172011;
+        background: #c5e79e;
+        border-color: #c5e79e;
+      }
+      .settings-columns {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        height: 45px;
+        gap: 2px;
+      }
+      .setting-column {
+        min-width: 0;
+        text-align: center;
+        border-radius: 2px;
+        padding-top: 2px;
+      }
+      .setting-column.is-selected {
+        background: #c9ebd6;
+        color: #040a09;
+        text-shadow: none;
+      }
+      .setting-column span {
+        display: block;
+        font-size: 8px;
+        line-height: 1.4;
+        overflow-wrap: anywhere;
+      }
+      .setting-column strong {
+        display: block;
+        font-size: 10px;
+        font-weight: 500;
+        margin-top: 3px;
+      }
+      .oled.settings-open {
+        padding: 7px 4px;
+      }
+      .settings-open .oled-title {
+        margin: 0 4px 4px;
+        padding-bottom: 3px;
+      }
+      .settings-open .oled-bottom {
+        margin: 3px 4px 0;
+        font-size: 8px;
+      }
+      .settings-open .oled-row,
+      .oled:not(.settings-open) .settings-columns {
+        display: none;
+      }
+      .preview-feedback {
+        color: #a2b29f;
+        font-size: 12px;
+        min-height: 1.5em;
+        margin: 0 0 8px;
+      }
       @media (max-width: 750px) {
         .page {
           padding: 24px 18px;
@@ -475,6 +560,35 @@
           </button>
         </div>
       </div>
+      <p class="settings-note">
+        Proposed settings UI · interactive design preview, not implemented firmware.
+        Changes are temporary; input, monitoring and audio processing are not simulated.
+      </p>
+      <div class="settings-controls" aria-label="Settings preview controls">
+        <div class="control-group">
+          <button type="button" class="hardware-button" id="track-settings">Track settings</button>
+          <button type="button" class="hardware-button" id="select-press">SELECT / press</button>
+          <button type="button" class="hardware-button" id="back">BACK</button>
+        </div>
+        <div class="control-group" aria-label="Select setting column">
+          <button type="button" class="hardware-button" data-column="0" aria-pressed="false">SYNTH</button>
+          <button type="button" class="hardware-button" data-column="1" aria-pressed="false">KIT</button>
+          <button type="button" class="hardware-button" data-column="2" aria-pressed="false">MIDI</button>
+          <button type="button" class="hardware-button" data-column="3" aria-pressed="false">CV</button>
+        </div>
+        <div class="control-group" aria-label="Settings pages">
+          <button type="button" class="hardware-button" id="previous-page">SCALE ←</button>
+          <button type="button" class="hardware-button" id="next-page">CROSS-SCREEN →</button>
+        </div>
+        <div class="control-group" aria-label="Turn Select encoder">
+          <button type="button" class="hardware-button" id="value-down" aria-label="Turn Select down">SELECT −</button>
+          <button type="button" class="hardware-button" id="value-up" aria-label="Turn Select up">SELECT +</button>
+          <button type="button" class="hardware-button" id="shift" aria-pressed="false">SHIFT</button>
+        </div>
+      </div>
+      <p class="preview-feedback" id="preview-feedback" role="status">
+        SELECT opens global settings. Track settings opens the selected track.
+      </p>
       <div class="device-viewport">
         <section class="device" aria-label="Deluge control surface mockup">
           <i class="screw tl"></i><i class="screw tr"></i
@@ -488,8 +602,9 @@
             <div class="display-bezel">
               <div class="oled" role="status" aria-label="Selected loop">
                 <div class="oled-title">
-                  <span>LOOP STATION</span><span>112 BPM</span>
+                  <span id="oled-title">LOOP STATION</span><span id="oled-page">112 BPM</span>
                 </div>
+                <div class="settings-columns" id="settings-columns"></div>
                 <div class="oled-row">
                   <span id="oled-track">TRACK 1</span
                   ><span id="oled-state">PLAYING</span>
@@ -561,6 +676,22 @@
           <b>Tap the outer border</b>
           <p>Select a track for its input, level and effects controls.</p>
         </div>
+        <div>
+          <b>Try the proposed settings</b>
+          <p>SELECT opens globals. SHIFT + a centre opens that track. The Track settings shortcut also works on touch screens.</p>
+        </div>
+        <div>
+          <b>Select, page, turn</b>
+          <p>SYNTH / KIT / MIDI / CV select a column. SCALE and CROSS-SCREEN change pages. SELECT − / + edit directly.</p>
+        </div>
+        <div>
+          <b>Transpose coarse / fine</b>
+          <p>One SELECT step changes one semitone. Hold keyboard Shift, or toggle SHIFT here, for one-cent steps.</p>
+        </div>
+        <div>
+          <b>Copy settings deliberately</b>
+          <p>Select Copy, turn to choose a track, then press SELECT twice to confirm. BACK cancels confirmation.</p>
+        </div>
       </div>
       <p class="hint">
         Filling ring selected. Try the centre-pad gestures and sidebar controls.
@@ -619,6 +750,150 @@
           lastTime = performance.now(),
           lastPaint = -1
         let hold = null
+        let settingsScope = null,
+          settingIndex = 0,
+          shiftLatched = false,
+          shiftHeld = false,
+          copyTarget = 1,
+          confirmingCopy = false,
+          globalSettings
+        const colourOptions = [
+          ["Gold", "#dbac55"], ["Yellow", "#e9d65c"],
+          ["Lime", "#afd662"], ["Turquoise", "#65d7af"],
+          ["Cyan", "#71d6d7"], ["Sky", "#80bcf1"],
+          ["Blue", "#6098e8"], ["Purple", "#ab85e3"],
+          ["Magenta", "#dd7abd"], ["Pink", "#ff0080"],
+          ["White", "#e9ece8"],
+        ]
+        const intervals = ["1/32", "1/32T", "1/16", "1/16T", "1/8", "1/8T", "1/4", "1/4T", "1/2", "1/2T", "Bar", "Bar T"]
+        const sourceOptions = ["Left", "Right", "Stereo", "Balanced"]
+        const wrap = (n, count) => ((n % count) + count) % count
+        const shiftActive = () => shiftLatched || shiftHeld
+        const feedback = (text) => {
+          document.getElementById("preview-feedback").textContent = text
+        }
+        function settingFields() {
+          if (settingsScope === "track")
+            return ["source", "monitoring", "duration", "playback", "transpose", "colour", "copy"]
+          return ["recordAction", "startMode", ...(globalSettings.startMode === "Synced" ? ["startInterval"] : []), "stopMode", ...(globalSettings.stopMode === "Synced" ? ["stopInterval"] : [])]
+        }
+        const settingNames = {
+          source: "Input", monitoring: "Monitor", duration: "Duration", playback: "Playback",
+          transpose: "Transpose", colour: "Colour", copy: "Copy to",
+          recordAction: "Rec action", startMode: "Start", startInterval: "Start grid",
+          stopMode: "Stop", stopInterval: "Stop grid",
+        }
+        function settingValue(field) {
+          const t = tracks[selected].settings
+          if (field === "source") return sourceOptions[t.source]
+          if (field === "duration") return t.duration ? t.duration + " bars" : "Manual"
+          if (field === "transpose") return (t.transpose >= 0 ? "+" : "") + (t.transpose / 100).toFixed(2)
+          if (field === "colour") return colourOptions[t.colour][0]
+          if (field === "copy") return "Tr " + (copyTarget + 1)
+          if (field === "monitoring" || field === "playback") return t[field]
+          if (field === "recordAction") return globalSettings.recordAction ? "R D P" : "R P D"
+          if (field.endsWith("Interval")) return intervals[globalSettings[field]]
+          return globalSettings[field]
+        }
+        function renderSettings() {
+          const opened = settingsScope !== null
+          document.querySelector(".oled").classList.toggle("settings-open", opened)
+          document.querySelector(".oled").setAttribute("aria-label", opened ? "Proposed Loop Station settings" : "Selected loop")
+          const fields = opened ? settingFields() : []
+          settingIndex = Math.min(settingIndex, Math.max(0, fields.length - 1))
+          const page = Math.floor(settingIndex / 4)
+          const pages = Math.ceil(fields.length / 4)
+          document.getElementById("oled-title").textContent = opened ? (settingsScope === "track" ? "TRACK " + (selected + 1) + " SETTINGS" : "GLOBAL SETTINGS") : "LOOP STATION"
+          document.getElementById("oled-page").textContent = opened ? (page + 1) + "/" + pages : "112 BPM"
+          const columns = document.getElementById("settings-columns")
+          columns.replaceChildren()
+          if (opened && confirmingCopy) {
+            const message = document.createElement("div")
+            message.style.gridColumn = "1 / -1"
+            message.textContent = "Copy to Track " + (copyTarget + 1) + "?"
+            columns.appendChild(message)
+          } else if (opened) {
+            fields.slice(page * 4, page * 4 + 4).forEach((field, i) => {
+              const cell = document.createElement("div")
+              cell.className = "setting-column" + (page * 4 + i === settingIndex ? " is-selected" : "")
+              const label = document.createElement("span")
+              label.textContent = settingNames[field]
+              const value = document.createElement("strong")
+              value.textContent = settingValue(field)
+              cell.append(label, value)
+              columns.appendChild(cell)
+            })
+          }
+          document.querySelectorAll("[data-column]").forEach((button) => {
+            const column = Number(button.dataset.column)
+            button.disabled = !opened || confirmingCopy || page * 4 + column >= fields.length
+            button.setAttribute("aria-pressed", String(opened && !confirmingCopy && settingIndex % 4 === column))
+          })
+          for (const id of ["previous-page", "next-page"])
+            document.getElementById(id).disabled = !opened || pages < 2 || confirmingCopy
+          for (const id of ["value-down", "value-up"])
+            document.getElementById(id).disabled = !opened || confirmingCopy
+          document.getElementById("back").disabled = !opened
+          document.getElementById("track-settings").disabled = opened
+          document.getElementById("shift").setAttribute("aria-pressed", String(shiftActive()))
+          if (opened)
+            document.getElementById("oled-hint").textContent = confirmingCopy ? "SELECT: COPY / BACK: CANCEL" : fields[settingIndex] === "transpose" ? (shiftActive() ? "SHIFT: 1 CENT / STEP" : "1 SEMITONE / STEP") : fields[settingIndex] === "copy" ? "TURN: TARGET / SELECT: REVIEW" : "SELECT: TURN TO EDIT"
+        }
+        function openSettings(scope) {
+          releaseHold(true)
+          settingsScope = scope
+          settingIndex = 0
+          copyTarget = (selected + 1) % 8
+          confirmingCopy = false
+          feedback("Proposed " + scope + " settings. Choose a column, then turn SELECT − / +. BACK returns.")
+          renderSettings()
+        }
+        function changePage(direction) {
+          if (!settingsScope || confirmingCopy) return
+          const fields = settingFields()
+          const page = wrap(Math.floor(settingIndex / 4) + direction, Math.ceil(fields.length / 4))
+          settingIndex = Math.min(page * 4 + settingIndex % 4, fields.length - 1)
+          renderSettings()
+        }
+        function changeSetting(offset) {
+          if (!settingsScope || confirmingCopy) return
+          const field = settingFields()[settingIndex]
+          const t = tracks[selected].settings
+          const cycle = (value, choices) => choices[wrap(choices.indexOf(value) + offset, choices.length)]
+          if (field === "source") t.source = wrap(t.source + offset, 4)
+          else if (field === "monitoring") t.monitoring = cycle(t.monitoring, ["Off", "On"])
+          else if (field === "playback") t.playback = cycle(t.playback, ["Loop", "One shot"])
+          else if (field === "duration") {
+            // Illustrative only: hardware calculates the limit from available audio pages.
+            t.duration = Math.max(0, Math.min(8, t.duration + offset))
+            feedback("Duration preview: Manual or 1–8 bars. Actual firmware limits depend on available memory and tempo.")
+          }
+          else if (field === "transpose") t.transpose = Math.max(-2450, Math.min(2450, t.transpose + offset * (shiftActive() ? 1 : 100)))
+          else if (field === "colour") t.colour = wrap(t.colour + offset, colourOptions.length)
+          else if (field === "copy") {
+            do { copyTarget = wrap(copyTarget + offset, 8) } while (copyTarget === selected)
+          }
+          else if (field === "recordAction") globalSettings.recordAction = wrap(globalSettings.recordAction + offset, 2)
+          else if (field.endsWith("Mode")) globalSettings[field] = cycle(globalSettings[field], ["Synced", "Immediate"])
+          else globalSettings[field] = wrap(globalSettings[field] + offset, intervals.length)
+          const newFields = settingFields()
+          settingIndex = newFields.indexOf(field)
+          updateUI()
+        }
+        function selectPress() {
+          if (!settingsScope) return openSettings("global")
+          if (settingFields()[settingIndex] !== "copy") return
+          if (!confirmingCopy) {
+            confirmingCopy = true
+            feedback("Copy settings from Track " + (selected + 1) + " to Track " + (copyTarget + 1) + "? SELECT confirms; BACK cancels.")
+          } else {
+            tracks[copyTarget].settings = { ...tracks[selected].settings }
+            confirmingCopy = false
+            feedback("Preview: settings copied to Track " + (copyTarget + 1) + ". Loop state and phrase length are unchanged; nothing is saved.")
+            updateUI()
+          }
+          renderSettings()
+        }
         const pulsePeriod = 60 / 112
         function initialTracks() {
           return [
@@ -638,6 +913,11 @@
             passes: i === 2 ? 3 : 1,
             lastTap: -Infinity,
             beforeTap: null,
+            settings: {
+              source: i === 1 ? 2 : 0,
+              monitoring: "Off", duration: 0, playback: "Loop", transpose: 0,
+              colour: colourOptions.findIndex((colour) => colour[1] === colors[i]),
+            },
           }))
         }
         function reset() {
@@ -645,6 +925,11 @@
           selected = 0
           virtualTime = 0
           hold = null
+          settingsScope = null
+          confirmingCopy = false
+          shiftLatched = false
+          globalSettings = { recordAction: 0, startMode: "Synced", startInterval: 10, stopMode: "Synced", stopInterval: 10 }
+          feedback("SELECT opens global settings. Track settings opens the selected track.")
           updateUI()
         }
         function dim(hex, level) {
@@ -664,7 +949,7 @@
             "TRACK " + (selected + 1)
           document.getElementById("oled-state").textContent = labels[t.state]
           document.getElementById("oled-source").textContent =
-            "IN: " + (selected === 1 ? "STEREO" : "LEFT")
+            "IN: " + sourceOptions[t.settings.source].toUpperCase()
           document.getElementById("oled-bars").textContent =
             t.state === "empty"
               ? "READY"
@@ -696,7 +981,7 @@
                     Math.round(tracks[i].length / (4 * pulsePeriod)) +
                     " bars")
             summaries[i].style.borderTopColor =
-              i === selected ? colors[i] : "#35423b"
+              i === selected ? colourOptions[tracks[i].settings.colour][1] : "#35423b"
             summaries[i].querySelector("strong").textContent =
               "TRACK " + (i + 1) + (i === selected ? " · selected" : "")
             for (const p of pads[i]) {
@@ -712,8 +997,10 @@
             }
           }
           lastPaint = -1
+          renderSettings()
         }
         function selectTrack(i) {
+          if (settingsScope) return
           selected = i
           updateUI()
         }
@@ -775,6 +1062,13 @@
           el.addEventListener("pointerdown", (e) => {
             if (e.button !== 0 || hold) return
             e.preventDefault()
+            if (settingsScope) return
+            if (e.shiftKey || shiftActive()) {
+              selected = i
+              updateUI()
+              openSettings("track")
+              return
+            }
             if (stateOf(i) === "stopped") {
               hold = {
                 track: i,
@@ -793,6 +1087,13 @@
           el.addEventListener("keydown", (e) => {
             if ((e.key === "Enter" || e.key === " ") && !e.repeat) {
               e.preventDefault()
+              if (settingsScope) return
+              if (e.shiftKey || shiftActive()) {
+                selected = i
+                updateUI()
+                openSettings("track")
+                return
+              }
               press(i)
             }
           })
@@ -850,6 +1151,7 @@
                 x ? "Stop all loops" : "Start all loops",
               )
               el.addEventListener("click", () => {
+                if (settingsScope) return
                 releaseHold(true)
                 tracks.forEach((t) => {
                   t.lastTap = -Infinity
@@ -874,6 +1176,39 @@
             grid.appendChild(el)
           }
         document.getElementById("reset").addEventListener("click", reset)
+        document.getElementById("track-settings").addEventListener("click", () => openSettings("track"))
+        document.getElementById("select-press").addEventListener("click", selectPress)
+        document.getElementById("back").addEventListener("click", () => {
+          if (confirmingCopy) {
+            confirmingCopy = false
+            feedback("Copy cancelled. Destination settings are unchanged.")
+          } else {
+            settingsScope = null
+            feedback("Back to loops. Preview edits stay in this tab until Reset or reload; nothing is saved.")
+          }
+          updateUI()
+        })
+        document.querySelectorAll("[data-column]").forEach((button) => {
+          button.addEventListener("click", () => {
+            settingIndex = Math.floor(settingIndex / 4) * 4 + Number(button.dataset.column)
+            renderSettings()
+          })
+        })
+        document.getElementById("previous-page").addEventListener("click", () => changePage(-1))
+        document.getElementById("next-page").addEventListener("click", () => changePage(1))
+        document.getElementById("value-down").addEventListener("click", () => changeSetting(-1))
+        document.getElementById("value-up").addEventListener("click", () => changeSetting(1))
+        document.getElementById("shift").addEventListener("click", () => {
+          shiftLatched = !shiftLatched
+          renderSettings()
+        })
+        window.addEventListener("keydown", (event) => {
+          if (event.key === "Shift") { shiftHeld = true; renderSettings() }
+        })
+        window.addEventListener("keyup", (event) => {
+          if (event.key === "Shift") { shiftHeld = false; renderSettings() }
+        })
+        window.addEventListener("blur", () => { shiftHeld = false; renderSettings() })
         document.getElementById("freeze").addEventListener("click", (e) => {
           frozen = !frozen
           e.currentTarget.textContent = frozen
@@ -915,13 +1250,13 @@
                   color =
                     p.ringIndex < Math.floor(progress * 12)
                       ? "#ed4e51"
-                      : dim(colors[i], 0.14)
+                       : dim(colourOptions[t.settings.colour][1], 0.14)
                 else if (s === "recording" || s === "overdubbing")
                   color = dim(stateColors[s], pulse)
                 else if (s === "playing") {
                   const intensity = p.ringIndex <= head ? 0.95 : 0.13
-                  color = dim(colors[i], intensity)
-                } else color = dim(colors[i], s === "empty" ? 0.1 : 0.2)
+                  color = dim(colourOptions[t.settings.colour][1], intensity)
+                } else color = dim(colourOptions[t.settings.colour][1], s === "empty" ? 0.1 : 0.2)
                 if (color !== p.paint) {
                   p.element.style.background = color
                   p.element.style.boxShadow =
@@ -934,7 +1269,9 @@
                 )
               })
             })
-            if (hold)
+            if (settingsScope) {
+              // Keep the menu's edit hint visible while the loop animation runs.
+            } else if (hold)
               document.getElementById("oled-hint").textContent =
                 progressText(now)
             else
@@ -953,10 +1290,16 @@
             style,
             selected: selected + 1,
             frozen,
+            settingsScope,
+            settingIndex,
+            confirmingCopy,
+            copyTarget: copyTarget + 1,
+            globalSettings: { ...globalSettings },
             tracks: tracks.map((t) => ({
               state: t.state,
               position: t.position,
               length: t.length,
+              settings: { ...t.settings },
             })),
           }),
         }
