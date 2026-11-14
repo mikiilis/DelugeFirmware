@@ -22,12 +22,11 @@ def function_body(source, name):
     raise AssertionError(f"unterminated demo behavior: {name}")
 
 
-def run_demo_helpers(expression):
+def run_demo_helpers(expression, helpers=None, preamble=""):
     source = DEMO.read_text()
-    code = "\n".join(
-        function_body(source, name)
-        for name in ("selectedTrackTitle", "nextSelection", "selectionBrightness")
-    )
+    if helpers is None:
+        helpers = ("selectedTrackTitle", "nextSelection", "selectionBrightness")
+    code = preamble + "\n".join(function_body(source, name) for name in helpers)
     if shutil.which("node"):
         command = [
             "node",
@@ -62,6 +61,94 @@ class SelectionPreviewTests(unittest.TestCase):
                 "[nextSelection(0,2),nextSelection(2,2),nextSelection(-1,2),nextSelection(2,2)]"
             ),
         )
+
+    def test_bars_text_reports_capture_and_rounded_bars(self):
+        # The helper reads the demo's tempo-derived pulsePeriod, so stub it here.
+        self.assertEqual(
+            ["READY", "REC", "REC", "4 BARS", "1 BAR", "2 BARS"],
+            run_demo_helpers(
+                "[barsText({state:'empty',length:0}),"
+                "barsText({state:'recording',length:2}),"
+                "barsText({state:'overdubbing',length:8}),"
+                "barsText({state:'playing',length:8}),"
+                "barsText({state:'stopped',length:2}),"
+                "barsText({state:'playing',length:3})]",
+                helpers=("barsText",),
+                preamble="const pulsePeriod = 0.5;\n",
+            ),
+        )
+
+    def test_global_settings_render_without_a_selected_track(self):
+        # No DOM runner is available, so exercise the render loop against a minimal
+        # element stub: with selected = -1 it must not throw and must still show
+        # the global fields, and the track lookup must stay scope-guarded.
+        preamble = """
+let selected = -1
+let settingsScope = "global"
+let settingIndex = 0
+let confirmingCopy = false
+let copyTarget = 0
+const tracks = []
+const shiftActive = () => false
+const sourceOptions = ["Left", "Right", "Stereo", "Balanced"]
+const colourOptions = [["Blue", "#6098e8"]]
+const intervals = ["1/32", "1/32T", "1/16", "1/16T", "1/8", "1/8T", "1/4", "1/4T", "1/2", "1/2T", "Bar"]
+const settingNames = {}
+const globalSettings = { recordAction: 0, startMode: "Synced", startInterval: 10, stopMode: "Synced", stopInterval: 10 }
+const elements = {}
+function element(id) {
+  if (!(id in elements))
+    elements[id] = {
+      id,
+      textContent: "",
+      disabled: false,
+      children: [],
+      classList: { toggle() {} },
+      setAttribute() {},
+      replaceChildren() { this.children = [] },
+      appendChild(child) { this.children.push(child) },
+    }
+  return elements[id]
+}
+const document = {
+  querySelector: () => element("oled"),
+  querySelectorAll: () => [],
+  getElementById: element,
+  createElement: () => ({
+    children: [],
+    style: {},
+    textContent: "",
+    append(...kids) { this.children.push(...kids) },
+  }),
+}
+"""
+        (
+            _rendered,
+            title,
+            back_disabled,
+            values,
+            global_lookup,
+            track_lookup,
+        ) = run_demo_helpers(
+            "[renderSettings(),"
+            "elements['oled-title'].textContent,"
+            "elements['back'].disabled,"
+            "elements['settings-columns'].children.map((cell) => cell.children[1].textContent),"
+            "trackSettingsFor('global'),"
+            "(tracks.push({settings:{source:2}}), selected = 0, trackSettingsFor('track').source)]",
+            helpers=(
+                "renderSettings",
+                "settingFields",
+                "settingValue",
+                "trackSettingsFor",
+            ),
+            preamble=preamble,
+        )
+        self.assertEqual("GLOBAL SETTINGS", title)
+        self.assertFalse(back_disabled)
+        self.assertEqual(["R P D", "Synced", "Bar", "Synced"], values)
+        self.assertIsNone(global_lookup)
+        self.assertEqual(2, track_lookup)
 
     def test_only_selected_ordinary_ring_breathes(self):
         # Args: track index, selected index, state, the existing REC/DUB pulse, filled, reduced motion.

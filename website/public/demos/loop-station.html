@@ -824,7 +824,7 @@
         }
         function barsText(track) {
           if (track.state === "empty") return "READY"
-          if (track.state === "recording") return "REC"
+          if (track.state === "recording" || track.state === "overdubbing") return "REC"
           const bars = Math.max(1, Math.round(track.length / (4 * pulsePeriod)))
           return bars + (bars === 1 ? " BAR" : " BARS")
         }
@@ -848,8 +848,11 @@
           recordAction: "Rec action", startMode: "Start", startInterval: "Start grid",
           stopMode: "Stop", stopInterval: "Stop grid",
         }
+        function trackSettingsFor(scope) {
+          return scope === "track" ? tracks[selected].settings : null
+        }
         function settingValue(field) {
-          const t = tracks[selected].settings
+          const t = trackSettingsFor(settingsScope)
           if (field === "source") return sourceOptions[t.source]
           if (field === "duration") return t.duration ? t.duration + " bars" : "Manual"
           if (field === "transpose") return (t.transpose >= 0 ? "+" : "") + (t.transpose / 100).toFixed(2)
@@ -927,7 +930,7 @@
         function changeSetting(offset) {
           if (!settingsScope || confirmingCopy) return
           const field = settingFields()[settingIndex]
-          const t = tracks[selected].settings
+          const t = trackSettingsFor(settingsScope)
           const cycle = (value, choices) => choices[wrap(choices.indexOf(value) + offset, choices.length)]
           if (field === "source") t.source = wrap(t.source + offset, 4)
           else if (field === "monitoring") t.monitoring = cycle(t.monitoring, ["Off", "On"])
