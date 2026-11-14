@@ -26,7 +26,7 @@ def run_demo_helpers(expression):
     source = DEMO.read_text()
     code = "\n".join(
         function_body(source, name)
-        for name in ("selectedTrackTitle", "selectionBrightness")
+        for name in ("selectedTrackTitle", "nextSelection", "selectionBrightness")
     )
     if shutil.which("node"):
         command = [
@@ -51,8 +51,16 @@ def run_demo_helpers(expression):
 class SelectionPreviewTests(unittest.TestCase):
     def test_selected_track_title_uses_one_based_number(self):
         self.assertEqual(
-            ["LOOP · TRACK 1", "LOOP · TRACK 8"],
+            ["TRACK 1", "TRACK 8"],
             run_demo_helpers("[selectedTrackTitle(0), selectedTrackTitle(7)]"),
+        )
+
+    def test_border_press_toggles_selection(self):
+        self.assertEqual(
+            [2, -1, 2, -1],
+            run_demo_helpers(
+                "[nextSelection(0,2),nextSelection(2,2),nextSelection(-1,2),nextSelection(2,2)]"
+            ),
         )
 
     def test_only_selected_ordinary_ring_breathes(self):

@@ -207,31 +207,64 @@
         box-shadow: inset 0 2px 6px #0008;
       }
       .oled {
+        display: flex;
+        flex-direction: column;
         background: #040a09;
-        padding: 10px 11px;
+        padding: 9px 11px 8px;
         height: 96px;
         color: #c9ebd6;
         font:
-          11px/1.5 ui-monospace,
+          11px/1.4 ui-monospace,
           SFMono-Regular,
           Menlo,
           monospace;
         text-shadow: 0 0 5px #77ffb244;
       }
-      .oled-title {
-        display: flex;
-        justify-content: space-between;
+      .oled-head {
+        position: relative;
+        text-align: center;
         border-bottom: 1px solid #6a9d7a66;
-        padding-bottom: 5px;
-        margin-bottom: 6px;
-        font-size: 10px;
+        padding-bottom: 3px;
+        margin-bottom: 5px;
+      }
+      .oled-title {
+        display: block;
+        font-size: 15px;
+        line-height: 1.1;
+        letter-spacing: 0.08em;
+        white-space: nowrap;
+      }
+      .oled-page {
+        position: absolute;
+        right: 0;
+        top: 50%;
+        transform: translateY(-50%);
+        font-size: 9px;
+        color: #8fc3a3;
+      }
+      .oled-main {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        gap: 6px;
+        min-height: 0;
       }
       .oled-row {
         display: flex;
         justify-content: space-between;
+        align-items: baseline;
+        gap: 12px;
+      }
+      .oled-row .lead {
+        font-size: 12px;
+        letter-spacing: 0.08em;
+      }
+      .oled-row.is-hidden {
+        visibility: hidden;
       }
       .oled-bottom {
-        margin-top: 5px;
+        margin-top: auto;
         color: #6c9e83;
         font-size: 9px;
       }
@@ -485,15 +518,20 @@
       .oled.settings-open {
         padding: 7px 4px;
       }
-      .settings-open .oled-title {
+      .settings-open .oled-head {
+        text-align: left;
         margin: 0 4px 4px;
         padding-bottom: 3px;
+      }
+      .settings-open .oled-title {
+        font-size: 10px;
+        letter-spacing: 0.04em;
       }
       .settings-open .oled-bottom {
         margin: 3px 4px 0;
         font-size: 8px;
       }
-      .settings-open .oled-row,
+      .settings-open .oled-main,
       .oled:not(.settings-open) .settings-columns {
         display: none;
       }
@@ -561,8 +599,9 @@
         </div>
       </div>
       <p class="settings-note">
-        Proposed settings UI · interactive design preview, not implemented firmware.
-        Changes are temporary; input, monitoring and audio processing are not simulated.
+        Proposed main screen and settings UI · interactive design preview, not
+        implemented firmware. Changes are temporary; input, monitoring and
+        audio processing are not simulated.
       </p>
       <div class="settings-controls" aria-label="Settings preview controls">
         <div class="control-group">
@@ -600,21 +639,24 @@
               <div class="mode-label"><i></i> Loop Station</div>
             </div>
             <div class="display-bezel">
-              <div class="oled" role="status" aria-label="Selected loop">
-                <div class="oled-title">
-                   <span id="oled-title">LOOP · TRACK 1</span><span id="oled-page">112 BPM</span>
+              <div class="oled" role="status" aria-label="Loop Station screen">
+                <div class="oled-head">
+                  <span class="oled-title" id="oled-title">LOOP STATION</span
+                  ><span class="oled-page" id="oled-page"></span>
+                </div>
+                <div class="oled-main">
+                  <div class="oled-row">
+                    <span class="lead" id="oled-track">TRACK 1</span
+                    ><span id="oled-tempo">112 BPM</span>
+                  </div>
+                  <div class="oled-row" id="oled-info">
+                    <span id="oled-source">IN: LEFT</span
+                    ><span id="oled-bars">4 BARS</span>
+                  </div>
                 </div>
                 <div class="settings-columns" id="settings-columns"></div>
-                <div class="oled-row">
-                  <span id="oled-track">TRACK 1</span
-                  ><span id="oled-state">PLAYING</span>
-                </div>
-                <div class="oled-row">
-                  <span id="oled-source">IN: LEFT</span
-                  ><span id="oled-bars">4 BARS</span>
-                </div>
                 <div class="oled-bottom" id="oled-hint">
-                  BORDER SELECTS TRACK / FX
+                  TAP BORDER · RING PULSES
                 </div>
               </div>
             </div>
@@ -674,7 +716,10 @@
         </div>
         <div>
           <b>Tap the outer border</b>
-          <p>Select a track for its input, level and effects controls.</p>
+          <p>
+            Select a track for its input, level and effects controls. Tap the
+            same border again to clear the selection.
+          </p>
         </div>
         <div>
           <b>Try the proposed settings</b>
@@ -694,7 +739,8 @@
         </div>
       </div>
       <p class="hint">
-        Track 1 selected. Its ring pulses; tap another border to move the selection.
+        Tap a border to select a track; tap the same border again to clear the
+        selection. The selected ring pulses.
       </p>
     </main>
     <script>
@@ -769,8 +815,18 @@
         const sourceOptions = ["Left", "Right", "Stereo", "Balanced"]
         const wrap = (n, count) => ((n % count) + count) % count
         const shiftActive = () => shiftLatched || shiftHeld
+        const tempoBPM = 112
         function selectedTrackTitle(trackIndex) {
-          return "LOOP · TRACK " + (trackIndex + 1)
+          return "TRACK " + (trackIndex + 1)
+        }
+        function nextSelection(current, clicked) {
+          return current === clicked ? -1 : clicked
+        }
+        function barsText(track) {
+          if (track.state === "empty") return "READY"
+          if (track.state === "recording") return "REC"
+          const bars = Math.max(1, Math.round(track.length / (4 * pulsePeriod)))
+          return bars + (bars === 1 ? " BAR" : " BARS")
         }
         function selectionBrightness(trackIndex, selectedIndex, state, pulse, filled, reducedMotion) {
           if (trackIndex !== selectedIndex || state === "recording" || state === "overdubbing") return null
@@ -807,13 +863,13 @@
         function renderSettings() {
           const opened = settingsScope !== null
           document.querySelector(".oled").classList.toggle("settings-open", opened)
-          document.querySelector(".oled").setAttribute("aria-label", opened ? "Proposed Loop Station settings" : "Selected loop")
+          document.querySelector(".oled").setAttribute("aria-label", opened ? "Proposed Loop Station settings" : "Loop Station screen")
           const fields = opened ? settingFields() : []
           settingIndex = Math.min(settingIndex, Math.max(0, fields.length - 1))
           const page = Math.floor(settingIndex / 4)
           const pages = Math.ceil(fields.length / 4)
-          document.getElementById("oled-title").textContent = opened ? (settingsScope === "track" ? "TRACK " + (selected + 1) + " SETTINGS" : "GLOBAL SETTINGS") : selectedTrackTitle(selected)
-          document.getElementById("oled-page").textContent = opened ? (page + 1) + "/" + pages : "112 BPM"
+          document.getElementById("oled-title").textContent = opened ? (settingsScope === "track" ? "TRACK " + (selected + 1) + " SETTINGS" : "GLOBAL SETTINGS") : "LOOP STATION"
+          document.getElementById("oled-page").textContent = opened ? (page + 1) + "/" + pages : ""
           const columns = document.getElementById("settings-columns")
           columns.replaceChildren()
           if (opened && confirmingCopy) {
@@ -843,12 +899,16 @@
           for (const id of ["value-down", "value-up"])
             document.getElementById(id).disabled = !opened || confirmingCopy
           document.getElementById("back").disabled = !opened
-          document.getElementById("track-settings").disabled = opened
+          document.getElementById("track-settings").disabled = opened || selected < 0
           document.getElementById("shift").setAttribute("aria-pressed", String(shiftActive()))
           if (opened)
             document.getElementById("oled-hint").textContent = confirmingCopy ? "SELECT: COPY / BACK: CANCEL" : fields[settingIndex] === "transpose" ? (shiftActive() ? "SHIFT: 1 CENT / STEP" : "1 SEMITONE / STEP") : fields[settingIndex] === "copy" ? "TURN: TARGET / SELECT: REVIEW" : "SELECT: TURN TO EDIT"
         }
         function openSettings(scope) {
+          if (scope === "track" && selected < 0) {
+            feedback("Select a track before opening its settings.")
+            return
+          }
           releaseHold(true)
           settingsScope = scope
           settingIndex = 0
@@ -903,7 +963,7 @@
           }
           renderSettings()
         }
-        const pulsePeriod = 60 / 112
+        const pulsePeriod = 60 / tempoBPM
         function initialTracks() {
           return [
             "playing",
@@ -953,18 +1013,17 @@
           return tracks[i].state
         }
         function updateUI() {
-          const t = tracks[selected]
-          document.getElementById("oled-track").textContent =
-            "TRACK " + (selected + 1) + " · SELECTED"
-          document.getElementById("oled-state").textContent = labels[t.state]
-          document.getElementById("oled-source").textContent =
-            "IN: " + sourceOptions[t.settings.source].toUpperCase()
-          document.getElementById("oled-bars").textContent =
-            t.state === "empty"
-              ? "READY"
-              : t.state === "recording"
-                ? "FREE REC"
-                : Math.round(t.length / (4 * pulsePeriod)) + " BARS"
+          const t = selected >= 0 ? tracks[selected] : null
+          document.getElementById("oled-track").textContent = t
+            ? selectedTrackTitle(selected)
+            : "NO TRACK"
+          document.getElementById("oled-tempo").textContent = tempoBPM + " BPM"
+          document.getElementById("oled-info").classList.toggle("is-hidden", !t)
+          if (t) {
+            document.getElementById("oled-source").textContent =
+              "IN: " + sourceOptions[t.settings.source].toUpperCase()
+            document.getElementById("oled-bars").textContent = barsText(t)
+          }
           for (let i = 0; i < 8; i++) {
             const s = tracks[i].state
             titles[i].innerHTML =
@@ -1010,7 +1069,12 @@
         }
         function selectTrack(i) {
           if (settingsScope) return
-          selected = i
+          selected = nextSelection(selected, i)
+          feedback(
+            selected < 0
+              ? "No track selected. Tap a border to select one."
+              : "Track " + (selected + 1) + " selected.",
+          )
           updateUI()
         }
         function press(i) {
@@ -1302,7 +1366,7 @@
         window.loopStationDemo = {
           snapshot: () => ({
             style,
-            selected: selected + 1,
+            selected: selected >= 0 ? selected + 1 : null,
             frozen,
             settingsScope,
             settingIndex,
