@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "deluge/loop_station/config.h"
+#include "deluge/loop_station/engine.h"
 #include "deluge/loop_station/menu_model.h"
 #include "deluge/loop_station/types.h"
 #include "gui/fonts/fonts.h"
@@ -36,6 +37,8 @@ public:
 	ImageStore& hackGetImageStore() { return image_; }
 
 	void drawString(std::string_view, int32_t, int32_t, int32_t, int32_t, int32_t = 0, int32_t = 128, bool = false);
+	void drawStringCentred(char const*, int32_t, int32_t, int32_t, int32_t = OLED_MAIN_WIDTH_PIXELS / 2);
+	void drawStringAlignRight(char const*, int32_t, int32_t, int32_t, int32_t = OLED_MAIN_WIDTH_PIXELS);
 	void drawChar(uint8_t, int32_t, int32_t, int32_t, int32_t, int32_t = 0, int32_t = 128);
 	int32_t getCharIndex(uint8_t);
 	int32_t getCharWidthInPixels(uint8_t, int32_t);
@@ -53,12 +56,18 @@ extern MemoryProfile testConfiguredMemoryProfile;
 struct TestEngine {
 	Settings values = defaultSettings();
 	SlotId selectedSlot = 0;
+	std::array<SlotState, kTrackCount> slotStates{};
 	Settings& settings() { return values; }
 	const Settings& settings() const { return values; }
 	SlotId selected() const { return selectedSlot; }
+	SlotState state(SlotId slot) const { return validSlot(slot) ? slotStates[slot] : SlotState{}; }
 };
 
 struct TestClock {
+	uint32_t bpmQ16 = 120 * 65536;
+	FrameIndex framesPerBarValue = 88200;
+	uint32_t tempoQ16() const { return bpmQ16; }
+	FrameIndex framesPerBar() const { return framesPerBarValue; }
 	uint32_t samplesForBars(uint32_t bars) const { return bars * 44100; }
 };
 

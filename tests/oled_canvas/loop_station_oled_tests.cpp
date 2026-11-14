@@ -112,70 +112,128 @@ void compareImages(const Canvas& actual, const Canvas& expected) {
 	}
 }
 
-void composeRootExpected(Canvas& canvas, MemoryProfile profile, bool unsaved, bool undo, loop_station::SlotId slot) {
+void composeMainExpected(Canvas& canvas, const char* trackLine, const char* tempoLine, const char* sourceLine,
+                         const char* barsLine) {
 	canvas.clear();
-	char title[24];
-	std::snprintf(title, sizeof(title), "Loop Track %u", slot + 1);
-	canvas.drawString(title, 0, 6, kTextTitleSpacingX, kTextTitleSizeY);
-	canvas.drawString(profile == MemoryProfile::TenSecond ? "26.9 MiB / 10s" : "32 MiB / ~12s x8", 0, 20, kTextSpacingX,
-	                  kTextSizeYUpdated);
-	canvas.drawString(unsaved ? "Unsaved audio" : "Saved", 0, 30, kTextSpacingX, kTextSizeYUpdated);
-	canvas.drawString(undo ? "Undo ready" : "Undo unavailable", 0, 40, kTextSpacingX, kTextSizeYUpdated);
+	constexpr int32_t titleY = OLED_MAIN_TOPMOST_PIXEL + 1;
+	auto centredX = [&](const char* text, int32_t height) {
+		return OLED_MAIN_WIDTH_PIXELS / 2 - (canvas.getStringWidthInPixels(text, height) >> 1);
+	};
+	auto rightX = [&](const char* text, int32_t height) {
+		return OLED_MAIN_WIDTH_PIXELS - canvas.getStringWidthInPixels(text, height);
+	};
+	canvas.drawString("LOOP STATION", centredX("LOOP STATION", kTextTitleSizeY), titleY, kTextTitleSpacingX,
+	                  kTextTitleSizeY);
+	if (trackLine)
+		canvas.drawString(trackLine, 0, 20, kTextSpacingX, kTextSizeYUpdated);
+	if (tempoLine)
+		canvas.drawString(tempoLine, rightX(tempoLine, kTextSizeYUpdated), 20, kTextSpacingX, kTextSizeYUpdated);
+	if (sourceLine) {
+		canvas.drawString(sourceLine, 0, 30, kTextSpacingX, kTextSizeYUpdated);
+		canvas.drawString(barsLine, rightX(barsLine, kTextSizeYUpdated), 30, kTextSpacingX, kTextSizeYUpdated);
+	}
 }
 
-void testRootShowsAllStatusRows() {
-	SongModel model;
+void expectMainScreen(SongModel& model, const char* trackLine, const char* tempoLine, const char* sourceLine,
+                      const char* barsLine) {
 	Song song;
 	song.model = &model;
 	currentSong = &song;
 	LoopStationView view;
-	for (auto profile : {MemoryProfile::Preferred, MemoryProfile::TenSecond}) {
-		loop_station::testConfiguredMemoryProfile = profile;
-		for (loop_station::SlotId selected : {loop_station::SlotId{0}, loop_station::SlotId{7}}) {
-			model.testEngine.selectedSlot = selected;
-			for (bool unsaved : {false, true}) {
-				for (bool undo : {false, true}) {
-					model.unsaved = unsaved;
-					model.undoAvailable = undo;
-					Canvas actual, expected;
-					imageContext = "root rows";
-					initialize(actual);
-					composeRootExpected(expected, profile, unsaved, undo, selected);
-					view.renderOLED(actual);
-					compareImages(actual, expected);
-					checkCanaries(actual);
-				}
-			}
-		}
-	}
-	model.testEngine.selectedSlot = loop_station::kInvalidSlot;
 	Canvas actual, expected;
-	imageContext = "root invalid selection";
+	imageContext = trackLine;
 	initialize(actual);
-	expected.clear();
-	expected.drawString("Loop Station", 0, 6, kTextTitleSpacingX, kTextTitleSizeY);
-	expected.drawString("32 MiB / ~12s x8", 0, 20, kTextSpacingX, kTextSizeYUpdated);
-	expected.drawString("Saved", 0, 30, kTextSpacingX, kTextSizeYUpdated);
-	expected.drawString("Undo ready", 0, 40, kTextSpacingX, kTextSizeYUpdated);
-	loop_station::testConfiguredMemoryProfile = MemoryProfile::Preferred;
-	model.unsaved = false;
-	model.undoAvailable = true;
+	composeMainExpected(expected, trackLine, tempoLine, sourceLine, barsLine);
 	view.renderOLED(actual);
 	compareImages(actual, expected);
 	checkCanaries(actual);
 }
 
-void testRootWithoutModelShowsOnlyTitle() {
+void testEverySelectedTrackShowsItsNumberAndSource() {
+	const char* sources[] = {"IN: LEFT", "IN: RIGHT", "IN: STEREO", "IN: BALANCED"};
+	for (loop_station::SlotId slot = 0; slot < loop_station::kTrackCount; ++slot) {
+		SongModel model;
+		model.testEngine.selectedSlot = slot;
+		model.testEngine.values.tracks[slot].source = static_cast<loop_station::Source>(slot % 4);
+		char track[16];
+		std::snprintf(track, sizeof(track), "TRACK %u", static_cast<unsigned>(slot) + 1);
+		expectMainScreen(model, track, "120 BPM", sources[slot % 4], "READY");
+	}
+}
+
+void testTempoRoundsToNearestWholeBpm() {
+	SongModel model;
+	model.testEngine.selectedSlot = 0;
+	model.testClock.bpmQ16 = 112 * 65536 + 32768;
+	expectMainScreen(model, "TRACK 1", "113 BPM", "IN: LEFT", "READY");
+	model.testClock.bpmQ16 = 112 * 65536 + 32767;
+	expectMainScreen(model, "TRACK 1", "112 BPM", "IN: LEFT", "READY");
+	model.testClock.bpmQ16 = 1000 * 65536;
+	expectMainScreen(model, "TRACK 1", "1000 BPM", "IN: LEFT", "READY");
+}
+
+void testEmptyCaptureAndPhraseLabels() {
+	SongModel model;
+	model.testEngine.selectedSlot = 2;
+	model.testClock.framesPerBarValue = 1000;
+	auto& state = model.testEngine.slotStates[2];
+
+	expectMainScreen(model, "TRACK 3", "120 BPM", "IN: LEFT", "READY");
+	state.capture = true;
+	expectMainScreen(model, "TRACK 3", "120 BPM", "IN: LEFT", "REC");
+	state.hasPhrase = true;
+	state.playing = true; // overdub still reports capture
+	expectMainScreen(model, "TRACK 3", "120 BPM", "IN: LEFT", "REC");
+	state.capture = false;
+	state.playing = false;
+	state.phraseFrames = 4000;
+	expectMainScreen(model, "TRACK 3", "120 BPM", "IN: LEFT", "4 BARS");
+	state.hasPhrase = false;
+	state.phraseFrames = 0; // cleared phrase must not retain the old count
+	expectMainScreen(model, "TRACK 3", "120 BPM", "IN: LEFT", "READY");
+}
+
+void testBarCountRoundsToNearestAndNeverShowsZero() {
+	SongModel model;
+	model.testEngine.selectedSlot = 0;
+	model.testClock.framesPerBarValue = 1000;
+	auto& state = model.testEngine.slotStates[0];
+	state.hasPhrase = true;
+	const struct {
+		loop_station::FrameIndex frames;
+		const char* label;
+	} cases[] = {{1, "1 BAR"}, {1499, "1 BAR"}, {1500, "2 BARS"}, {64000, "64 BARS"}};
+	for (const auto& c : cases) {
+		state.phraseFrames = c.frames;
+		expectMainScreen(model, "TRACK 1", "120 BPM", "IN: LEFT", c.label);
+	}
+}
+
+void testNoSelectionShowsNoTrackAndNoInfoRow() {
+	SongModel model;
+	model.testEngine.selectedSlot = loop_station::kInvalidSlot;
+	expectMainScreen(model, "NO TRACK", "120 BPM", nullptr, nullptr);
+}
+
+void testNoModelShowsOnlyCentredTitle() {
 	currentSong = nullptr;
 	LoopStationView view;
 	Canvas actual, expected;
-	imageContext = "root without model";
+	imageContext = "no model";
 	initialize(actual);
-	expected.clear();
-	expected.drawString("Loop Station", 0, 6, kTextTitleSpacingX, kTextTitleSizeY);
+	composeMainExpected(expected, nullptr, nullptr, nullptr, nullptr);
 	view.renderOLED(actual);
 	compareImages(actual, expected);
 	checkCanaries(actual);
+}
+
+void testLongestLinesFitWithoutOverlap() {
+	Canvas canvas;
+	auto width = [&](const char* text) { return canvas.getStringWidthInPixels(text, kTextSizeYUpdated); };
+	CHECK(width("IN: BALANCED") + width("1000 BPM") < OLED_MAIN_WIDTH_PIXELS);
+	CHECK(width("TRACK 8") + width("1000 BPM") < OLED_MAIN_WIDTH_PIXELS);
+	CHECK(width("NO TRACK") + width("1000 BPM") < OLED_MAIN_WIDTH_PIXELS);
+	CHECK(width("IN: STEREO") + width("64 BARS") < OLED_MAIN_WIDTH_PIXELS);
 }
 
 struct ExpectedRow {
@@ -290,8 +348,13 @@ void testCopyTargetAndConfirmationFit() {
 } // namespace
 
 int main() {
-	testRootShowsAllStatusRows();
-	testRootWithoutModelShowsOnlyTitle();
+	testEverySelectedTrackShowsItsNumberAndSource();
+	testTempoRoundsToNearestWholeBpm();
+	testEmptyCaptureAndPhraseLabels();
+	testBarCountRoundsToNearestAndNeverShowsZero();
+	testNoSelectionShowsNoTrackAndNoInfoRow();
+	testNoModelShowsOnlyCentredTitle();
+	testLongestLinesFitWithoutOverlap();
 	testSettingsSelectionStaysVisible();
 	testCopyTargetAndConfirmationFit();
 	if (failures) {

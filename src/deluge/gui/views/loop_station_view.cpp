@@ -31,6 +31,32 @@ constexpr int32_t kSidebarControlY = kDisplayHeight - 1;
 SongModel* model() {
 	return currentSong ? currentSong->loopStation() : nullptr;
 }
+char const* sourceLabel(loop_station::Source source) {
+	switch (source) {
+	case loop_station::Source::Left:
+		return "LEFT";
+	case loop_station::Source::Right:
+		return "RIGHT";
+	case loop_station::Source::Stereo:
+		return "STEREO";
+	case loop_station::Source::Balanced:
+		return "BALANCED";
+	}
+	return "LEFT";
+}
+
+void formatBarCount(const SlotState& state, FrameIndex framesPerBar, char* out, size_t size) {
+	if (state.capture)
+		snprintf(out, size, "REC");
+	else if (!state.hasPhrase)
+		snprintf(out, size, "READY");
+	else {
+		uint32_t bars = static_cast<uint32_t>((uint64_t(state.phraseFrames) + framesPerBar / 2) / framesPerBar);
+		if (bars < 1)
+			bars = 1;
+		snprintf(out, size, "%u BAR%s", bars, bars == 1 ? "" : "S");
+	}
+}
 RGB colourFor(Colour c) {
 	switch (c) {
 	case Colour::Gold:
@@ -393,20 +419,32 @@ bool LoopStationView::renderSidebar(uint32_t rows, RGB image[][kDisplayWidth + k
 
 void LoopStationView::renderOLED(deluge::hid::display::oled_canvas::Canvas& canvas) {
 	canvas.clear();
+	canvas.drawStringCentred("LOOP STATION", OLED_MAIN_TOPMOST_PIXEL + 1, kTextTitleSpacingX, kTextTitleSizeY);
 	auto* m = model();
-	char title[24] = "Loop Station";
-	if (m && validSlot(m->engine().selected()))
-		snprintf(title, sizeof(title), "Loop Track %u", m->engine().selected() + 1);
-	canvas.drawString(title, 0, OLED_MAIN_TOPMOST_PIXEL + 1, kTextTitleSpacingX, kTextTitleSizeY);
 	if (!m)
 		return;
-	canvas.drawString(kConfiguredMemoryProfile == MemoryProfile::TenSecond ? "26.9 MiB / 10s" : "32 MiB / ~12s x8", 0,
-	                  20, kTextSpacingX, kTextSizeYUpdated);
-	canvas.drawString(m->hasUnsavedAudio() ? "Unsaved audio" : "Saved", 0, 30, kTextSpacingX, kTextSizeYUpdated);
-	SlotId slot = m->engine().selected();
-	if (!validSlot(slot))
-		slot = 0;
-	canvas.drawString(m->canUndo(slot) ? "Undo ready" : "Undo unavailable", 0, 40, kTextSpacingX, kTextSizeYUpdated);
+
+	const SlotId selected = m->engine().selected();
+	const bool hasTrack = validSlot(selected);
+	char line[24];
+	if (hasTrack)
+		snprintf(line, sizeof(line), "TRACK %u", static_cast<unsigned>(selected) + 1);
+	else
+		snprintf(line, sizeof(line), "NO TRACK");
+	canvas.drawString(line, 0, 20, kTextSpacingX, kTextSizeYUpdated);
+
+	const uint32_t bpm = (m->clock().tempoQ16() + 32768) / 65536;
+	snprintf(line, sizeof(line), "%u BPM", bpm);
+	canvas.drawStringAlignRight(line, 20, kTextSpacingX, kTextSizeYUpdated);
+
+	if (!hasTrack)
+		return;
+
+	snprintf(line, sizeof(line), "IN: %s", sourceLabel(m->engine().settings().tracks[selected].source));
+	canvas.drawString(line, 0, 30, kTextSpacingX, kTextSizeYUpdated);
+
+	formatBarCount(m->engine().state(selected), m->clock().framesPerBar(), line, sizeof(line));
+	canvas.drawStringAlignRight(line, 30, kTextSpacingX, kTextSizeYUpdated);
 }
 void LoopStationView::selectEncoderAction(int8_t offset) {
 	if (auto* m = model()) {

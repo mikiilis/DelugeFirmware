@@ -33,6 +33,11 @@ def main() -> None:
             "void Canvas::drawString(std::string_view",
             "void Canvas::drawStringCentred(",
         ),
+        section(
+            canvas,
+            "void Canvas::drawStringCentred(",
+            "void Canvas::drawStringCentered(",
+        ),
         section(canvas, "void Canvas::drawChar(", "int32_t Canvas::getCharIndex("),
         section(
             canvas,
@@ -60,6 +65,11 @@ def main() -> None:
             "void Canvas::drawGraphicMultiLine(",
         ),
         section(canvas, "void Canvas::drawGraphicMultiLine(", "void Canvas::drawIcon("),
+        section(
+            canvas,
+            "void Canvas::drawStringAlignRight(",
+            "#define DO_CHARACTER_SCALING 0",
+        ),
     ]
 
     text = "\n".join(
