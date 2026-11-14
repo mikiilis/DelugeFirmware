@@ -2,6 +2,7 @@
 
 #include "deluge/loop_station/menu_model.h"
 #include "gui/ui/root_ui.h"
+#include "horizontal_settings.h"
 
 namespace deluge::gui::menu_item::loop_station {
 
@@ -12,6 +13,10 @@ public:
 	bool openGlobal();
 	bool openTrack(ls::SlotId slot);
 	bool opened() override;
+	bool useHorizontalMenu() const;
+	void requestCopyReview();
+	void confirmCopy();
+	void cancelCopyReview();
 	ActionResult buttonAction(deluge::hid::Button button, bool on, bool inCardRoutine) override;
 	ActionResult padAction(int32_t x, int32_t y, int32_t velocity) override;
 	ActionResult horizontalEncoderAction(int32_t offset) override;
@@ -24,11 +29,19 @@ public:
 	UIType getUIType() override { return UIType::LOOP_STATION_SETTINGS; }
 
 private:
+	SettingsContext context_{};
+	SettingsItems items_{context_};
+	SettingsHorizontalMenu horizontalMenu_{context_, items_};
+	bool horizontalSession_ = false;
+	bool copyReview_ = false;
+	bool selectHeld_ = false;
+	ls::SlotId copyReviewTarget_ = 1;
 	bool open(ls::MenuScope scope, ls::SlotId slot);
 	void changeValue(int32_t offset);
 	void selectCurrent();
 	void closeMenu();
 	void refreshDisplay();
+	void renderListOLED(deluge::hid::display::oled_canvas::Canvas& canvas);
 	ls::MenuFields fields_{};
 	ls::MenuScope scope_ = ls::MenuScope::Global;
 	ls::SlotId slot_ = 0;

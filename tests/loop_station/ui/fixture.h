@@ -2,7 +2,7 @@
 
 #include "../mocks/audio_clip.h"
 #include "CppUTest/TestHarness.h"
-#include "probe_support.h"
+#include "settings_probe_support.h"
 #include <cstdlib>
 #include <memory>
 
@@ -61,7 +61,8 @@ struct Fixture {
 	Song song;
 	ProbeDisplay screen;
 	LoopStationView view;
-	Fixture() {
+	Fixture(bool horizontal = true) {
+		runtimeFeatureSettings.horizontal = horizontal;
 		song.model = model.get();
 		currentSong = &song;
 		display = &screen;
@@ -71,13 +72,18 @@ struct Fixture {
 		probeRenderTargets.clear();
 		probeOledRequests = 0;
 		probeSampleClock = host.time;
-		deluge::gui::menu_item::loop_station::loopStationSettingsMenu = {};
+		auto& menu = deluge::gui::menu_item::loop_station::loopStationSettingsMenu;
+		std::destroy_at(&menu);
+		std::construct_at(&menu);
 		CHECK_TRUE(openUI(&view));
 		auto settings = loop_station::defaultSettings();
 		settings.startAction.mode = settings.stopAction.mode = loop_station::ActionMode::Immediate;
 		CHECK(loop_station::Status::Ok == model->dispatch(loop_station::Command::configure(settings)));
 	}
 	~Fixture() {
+		auto& menu = deluge::gui::menu_item::loop_station::loopStationSettingsMenu;
+		if (menu.horizontalSession_)
+			menu.closeMenu();
 		model->requestRelease();
 		for (unsigned i = 0; i < 10000 && !model->safeToRelease(); ++i) {
 			model->serviceRetirement();
@@ -92,6 +98,8 @@ struct Fixture {
 		probeRenderTargets.clear();
 		sdRoutineLock = false;
 		Buttons::shiftPressed = false;
+		Buttons::selectPressed = Buttons::selectButtonPressUsedUp = false;
+		runtimeFeatureSettings.horizontal = true;
 	}
 	void onlyBound(loop_station::SlotId slot) {
 		for (loop_station::SlotId id = 0; id < 8; ++id)

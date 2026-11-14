@@ -38,6 +38,7 @@ void press(HorizontalMenu& menu, deluge::hid::Button button) {
 TEST_GROUP(SharedHorizontalMenu) {
 	ProbeDisplay screen;
 	void setup() {
+		runtimeFeatureSettings.horizontal = true;
 		display = &screen;
 		soundEditor = {};
 		probeChain.clear();
@@ -258,7 +259,30 @@ TEST(SharedHorizontalMenu, DefaultHostShiftChainsAndUnshiftedPagesLocally) {
 	press(first, CROSS_SCREEN_EDIT);
 	POINTERS_EQUAL(&second, soundEditor.menuItemNavigationRecord[0]);
 	POINTERS_EQUAL(&target, second.getCurrentItem());
-	CHECK(target.permissions > 0);
+	CHECK_EQUAL(2, target.permissions); // begin and desired-page initialization
+	CHECK_EQUAL(1, a.permissions);      // begin only, never initialized while leaving
+	CHECK_EQUAL(1, e.permissions);      // local page selection only
+}
+TEST(SharedHorizontalMenu, ChainInitializesTargetDesiredPageNotSourceItem) {
+	MenuItem source, a, b, c, d, desired;
+	HorizontalMenu first({}, {&source});
+	std::array<MenuItem*, 5> targetItems{&a, &b, &c, &d, &desired};
+	modFXMenu = HorizontalMenu({}, targetItems, HorizontalMenu::DYNAMIC);
+	probeChain = {&first, &modFXMenu};
+	first.beginSession(nullptr);
+	first.renderOLED();
+	Buttons::shiftPressed = true;
+	press(first, CROSS_SCREEN_EDIT);
+	POINTERS_EQUAL(&modFXMenu, soundEditor.menuItemNavigationRecord[0]);
+	POINTERS_EQUAL(&desired, modFXMenu.getCurrentItem());
+	CHECK_EQUAL(1, source.permissions);
+	CHECK_EQUAL(1, a.permissions);
+	CHECK_EQUAL(1, desired.permissions);
+	CHECK_EQUAL(0, b.permissions);
+	modFXMenu.renderOLED();
+	CHECK(indicator_leds::states[IndicatorLED::SYNTH]);
+	modFXMenu.endSession();
+	modFXMenu = HorizontalMenu({}, {});
 }
 TEST(SharedHorizontalMenu, AcceptedPressDispatchesOnceAndDebounceAndReleaseAreInert) {
 	MenuItem a, b;

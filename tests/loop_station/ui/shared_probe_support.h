@@ -16,9 +16,11 @@ namespace FlashStorage {
 inline MenuHighlighting accessibilityMenuHighlighting = MenuHighlighting::FULL_INVERSION;
 }
 enum Feature { HorizontalMenus };
-inline struct {
-	bool isOn(Feature) const { return true; }
-} runtimeFeatureSettings;
+struct ProbeRuntimeFeatureSettings {
+	bool horizontal = true;
+	bool isOn(Feature) const { return horizontal; }
+};
+inline ProbeRuntimeFeatureSettings runtimeFeatureSettings;
 inline double probeMenuTime = 1;
 inline double getSystemTime() {
 	return probeMenuTime;
@@ -85,6 +87,7 @@ public:
 	int permissionSource = -1;
 	mutable int relevanceCalls = 0;
 	MenuItem(l10n::String = {}, l10n::String = {}) {}
+	l10n::String title{};
 	virtual ~MenuItem() = default;
 	virtual void beginSession(MenuItem*) {}
 	virtual void endSession();
@@ -194,7 +197,7 @@ struct ProbeMultiRangeMenu : MenuItem {
 	MenuItem* menuItemHeadingTo = nullptr;
 };
 inline ProbeMultiRangeMenu multiRangeMenu;
-inline Submenu modFXMenu{{}, {}}, globalModFXMenu{{}, {}};
+inline HorizontalMenu modFXMenu{{}, {}}, globalModFXMenu{{}, {}};
 class HorizontalMenuContainer {
 public:
 	std::span<MenuItem*> getItems() { return {}; }

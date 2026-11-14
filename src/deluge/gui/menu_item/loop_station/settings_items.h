@@ -90,6 +90,8 @@ private:
 class CopySetting final : public MenuItem {
 public:
 	explicit CopySetting(SettingsContext& context);
+	void setTarget(ls::SlotId target) { target_ = target; }
+	void renderInHorizontalMenu(const SlotPosition& slot) override;
 	bool isRelevant(ModControllableAudio*, int32_t) const override {
 		return context_.relevant(ls::MenuField::CopyToTrack);
 	}
@@ -97,6 +99,7 @@ public:
 
 private:
 	SettingsContext& context_;
+	ls::SlotId target_ = 1;
 };
 
 class SettingsItems {

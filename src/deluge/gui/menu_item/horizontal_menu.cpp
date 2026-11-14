@@ -408,8 +408,8 @@ void HorizontalMenu::switchHorizontalMenu(int32_t direction, std::span<Horizonta
 	// For Mod FX menu we want to switch straight to the selected FX's controls that are on the second page
 	auto desired_page = util::one_of<Submenu*>(target_menu, {&modFXMenu, &globalModFXMenu}) ? 1 : 0;
 	target_menu->selectMenuItem(desired_page, 0);
-	if (current_item_ != items.end()) {
-		initializeItem(*current_item_);
+	if (target_menu->current_item_ != target_menu->items.end()) {
+		target_menu->initializeItem(*target_menu->current_item_);
 	}
 
 	soundEditor.menuItemNavigationRecord[soundEditor.navigationDepth] = target_menu;

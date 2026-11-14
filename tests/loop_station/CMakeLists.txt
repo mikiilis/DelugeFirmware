@@ -3,11 +3,14 @@ set(LOOP_UI_PROBE "${CMAKE_CURRENT_BINARY_DIR}/generated/production_ui.cpp")
 set(LOOP_UI_VIEW "${CMAKE_CURRENT_SOURCE_DIR}/../../src/deluge/gui/views/loop_station_view.cpp")
 set(LOOP_UI_SETTINGS "${CMAKE_CURRENT_SOURCE_DIR}/../../src/deluge/gui/menu_item/loop_station/settings.cpp")
 add_custom_command(
-    OUTPUT "${LOOP_UI_PROBE}" "${CMAKE_CURRENT_BINARY_DIR}/generated/shared_menu.cpp" "${CMAKE_CURRENT_BINARY_DIR}/generated/shared_menu_declarations.h" "${CMAKE_CURRENT_BINARY_DIR}/generated/settings_items.cpp" "${CMAKE_CURRENT_BINARY_DIR}/generated/settings_items_declarations.h"
+    OUTPUT "${LOOP_UI_PROBE}" "${CMAKE_CURRENT_BINARY_DIR}/generated/shared_menu.cpp" "${CMAKE_CURRENT_BINARY_DIR}/generated/shared_menu_declarations.h" "${CMAKE_CURRENT_BINARY_DIR}/generated/settings_items.cpp" "${CMAKE_CURRENT_BINARY_DIR}/generated/settings_items_declarations.h" "${CMAKE_CURRENT_BINARY_DIR}/generated/horizontal_settings.cpp" "${CMAKE_CURRENT_BINARY_DIR}/generated/horizontal_settings_declarations.h"
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/ui/generate_probe.py"
             --loop-view "${LOOP_UI_VIEW}" --settings-view "${LOOP_UI_SETTINGS}"
             --support "${CMAKE_CURRENT_SOURCE_DIR}/ui/probe_support.h" --output "${LOOP_UI_PROBE}"
     DEPENDS ui/generate_probe.py ui/probe_support.h "${LOOP_UI_VIEW}" "${LOOP_UI_SETTINGS}"
+            ui/settings_probe_support.h
+            ../../src/deluge/gui/menu_item/loop_station/horizontal_settings.h
+            ../../src/deluge/gui/menu_item/loop_station/horizontal_settings.cpp
             ../../src/deluge/gui/menu_item/submenu.h ../../src/deluge/gui/menu_item/submenu.cpp
             ../../src/deluge/gui/menu_item/horizontal_menu.h ../../src/deluge/gui/menu_item/horizontal_menu.cpp
             ../../src/deluge/gui/menu_item/decimal.cpp
@@ -19,12 +22,14 @@ add_custom_command(
 
 add_executable(LoopStationTests
     "${LOOP_UI_PROBE}"
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/horizontal_settings.cpp"
     "${CMAKE_CURRENT_BINARY_DIR}/generated/shared_menu.cpp"
     ui/shared_menu_tests.cpp
     ui/settings_items_tests.cpp
     "${CMAKE_CURRENT_BINARY_DIR}/generated/settings_items.cpp"
     ui/probe_support.cpp
     ui/input_tests.cpp
+    ui/horizontal_settings_tests.cpp
     main.cpp
     view_tests.cpp
     pad_render_tests.cpp

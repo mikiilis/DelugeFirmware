@@ -238,19 +238,24 @@ void testCopyTargetAndConfirmationFit() {
 	menu.scope_ = MenuScope::Track;
 	menu.choosingCopyTarget_ = true;
 	for (loop_station::SlotId slot : {loop_station::SlotId{0}, loop_station::SlotId{7}}) {
-		menu.copyTarget_ = slot;
-		Canvas actual, expected;
-		imageContext = "copy target";
-		initialize(actual);
-		expected.clear();
-		expected.drawString("Track Settings", 0, 6, kTextTitleSpacingX, kTextTitleSizeY);
-		char target[24];
-		std::snprintf(target, sizeof(target), "Copy to Track %u", slot + 1);
-		expected.drawString(target, 0, 22, kTextSpacingX, kTextSizeYUpdated);
-		expected.drawString("SELECT to copy", 0, 38, kTextSpacingX, kTextSizeYUpdated);
-		menu.renderOLED(actual);
-		compareImages(actual, expected);
-		checkCanaries(actual);
+		for (bool review : {false, true}) {
+			menu.copyReview_ = review;
+			menu.copyReviewTarget_ = slot;
+			menu.copyTarget_ = review ? (slot + 1) % 8 : slot; // review must show its frozen target
+			Canvas actual, expected;
+			imageContext = "copy target";
+			initialize(actual);
+			expected.clear();
+			expected.drawString("Track Settings", 0, 6, kTextTitleSpacingX, kTextTitleSizeY);
+			char target[24];
+			std::snprintf(target, sizeof(target), "Copy to Track %u", slot + 1);
+			expected.drawString(target, 0, 22, kTextSpacingX, kTextSizeYUpdated);
+			expected.drawString(review ? "SELECT to copy" : "SELECT to review", 0, 38, kTextSpacingX,
+			                    kTextSizeYUpdated);
+			menu.renderOLED(actual);
+			compareImages(actual, expected);
+			checkCanaries(actual);
+		}
 	}
 }
 } // namespace

@@ -9,6 +9,7 @@
 #include "hid/buttons.h"
 #include "hid/display/display.h"
 #include "hid/display/oled_canvas/canvas.h"
+#include "model/settings/runtime_feature_settings.h"
 #include "model/song/song.h"
 #include <algorithm>
 #include <array>
@@ -106,13 +107,31 @@ bool SettingsMenu::openTrack(SlotId slot) {
 }
 
 bool SettingsMenu::open(MenuScope scope, SlotId slot) {
+	if (horizontalSession_) {
+		horizontalMenu_.endSession();
+		horizontalSession_ = false;
+	}
 	scope_ = scope;
 	slot_ = slot;
+	context_.scope = scope;
+	context_.slot = slot;
 	copyTarget_ = static_cast<SlotId>((slot + 1) % kTrackCount);
 	row_ = 0;
 	editing_ = false;
 	choosingCopyTarget_ = false;
-	return openUI(this);
+	copyReview_ = false;
+	selectHeld_ = false;
+	const bool result = openUI(this);
+	if (!result) {
+		if (horizontalSession_)
+			horizontalMenu_.endSession();
+		horizontalSession_ = false;
+	}
+	return result;
+}
+
+bool SettingsMenu::useHorizontalMenu() const {
+	return display && display->haveOLED() && runtimeFeatureSettings.isOn(HorizontalMenus);
 }
 
 bool SettingsMenu::opened() {
@@ -127,6 +146,11 @@ bool SettingsMenu::opened() {
 		return false;
 	}
 	fields_ = visibleMenuFields(scope_, model->engine().settings());
+	if (useHorizontalMenu()) {
+		horizontalMenu_.resetSelection();
+		horizontalMenu_.beginSession(nullptr);
+		horizontalSession_ = true;
+	}
 	refreshDisplay();
 	return true;
 }
@@ -136,31 +160,76 @@ ActionResult SettingsMenu::buttonAction(deluge::hid::Button button, bool on, boo
 		return ActionResult::REMIND_ME_OUTSIDE_CARD_ROUTINE;
 	if (button == SHIFT)
 		return ActionResult::NOT_DEALT_WITH;
+	if (button == SELECT_ENC) {
+		if (!on) {
+			selectHeld_ = false;
+			return ActionResult::DEALT_WITH;
+		}
+		if (sdRoutineLock)
+			return ActionResult::REMIND_ME_OUTSIDE_CARD_ROUTINE;
+		if (selectHeld_)
+			return ActionResult::DEALT_WITH;
+		selectHeld_ = true;
+		if (copyReview_)
+			confirmCopy();
+		else if (useHorizontalMenu()) {
+			if (horizontalMenu_.selectedField() == MenuField::CopyToTrack)
+				requestCopyReview();
+		}
+		else
+			selectCurrent();
+		return ActionResult::DEALT_WITH;
+	}
 	if (!on)
 		return ActionResult::DEALT_WITH;
+	if (button == BACK && copyReview_) {
+		cancelCopyReview();
+		return ActionResult::DEALT_WITH;
+	}
 	if (shouldCloseSettingsMenu(button == BACK, button == SESSION_VIEW, Buttons::isShiftButtonPressed())) {
 		closeMenu();
 		return ActionResult::DEALT_WITH;
 	}
-	if (button == SELECT_ENC) {
-		selectCurrent();
+	if (useHorizontalMenu()) {
+		if (!copyReview_) {
+			horizontalMenu_.renderOLED(); // Refresh relevance and shared page mapping before input.
+			horizontalMenu_.buttonAction(button, on, inCardRoutine);
+			refreshDisplay();
+		}
 		return ActionResult::DEALT_WITH;
 	}
 	return ActionResult::DEALT_WITH;
 }
 
-ActionResult SettingsMenu::padAction(int32_t, int32_t, int32_t velocity) {
-	if (velocity > 0)
-		selectCurrent();
+ActionResult SettingsMenu::padAction(int32_t, int32_t, int32_t) {
 	return ActionResult::DEALT_WITH;
 }
 
 ActionResult SettingsMenu::horizontalEncoderAction(int32_t offset) {
-	selectEncoderAction(static_cast<int8_t>(std::clamp<int32_t>(offset, -127, 127)));
+	if (!useHorizontalMenu())
+		selectEncoderAction(static_cast<int8_t>(std::clamp<int32_t>(offset, -127, 127)));
 	return ActionResult::DEALT_WITH;
 }
 
 void SettingsMenu::selectEncoderAction(int8_t offset) {
+	if (sdRoutineLock || copyReview_)
+		return;
+	if (useHorizontalMenu()) {
+		if (horizontalMenu_.selectedField() == MenuField::CopyToTrack) {
+			// The source is never a destination: rotate a seven-entry ring.
+			const int index = copyTarget_ < slot_ ? copyTarget_ : copyTarget_ - 1;
+			const int next = wrapIndex(index + offset, kTrackCount - 1);
+			copyTarget_ = static_cast<SlotId>(next < slot_ ? next : next + 1);
+		}
+		else {
+			const auto field = horizontalMenu_.selectedField();
+			horizontalMenu_.selectEncoderAction(offset);
+			horizontalMenu_.selectField(field); // Identity survives inserted/removed intervals.
+		}
+		refreshDisplay();
+		uiNeedsRendering(getRootUI());
+		return;
+	}
 	if (choosingCopyTarget_) {
 		copyTarget_ = static_cast<SlotId>(wrapIndex(copyTarget_ + offset, kTrackCount));
 	}
@@ -184,16 +253,7 @@ void SettingsMenu::selectCurrent() {
 			refreshDisplay();
 			return;
 		}
-		auto* model = currentModel();
-		if (!model || copyTarget_ == slot_)
-			return;
-		const auto status = model->copySettingsTo(slot_, copyTarget_);
-		if (display)
-			display->displayPopup(deluge::l10n::get(status == Status::Ok
-			                                            ? deluge::l10n::String::STRING_FOR_LOOP_STATION_COPIED
-			                                            : deluge::l10n::String::STRING_FOR_LOOP_STATION_COPY_BUSY));
-		choosingCopyTarget_ = false;
-		refreshDisplay();
+		requestCopyReview();
 		return;
 	}
 	if (choosingCopyTarget_) {
@@ -202,6 +262,32 @@ void SettingsMenu::selectCurrent() {
 		return;
 	}
 	editing_ = !editing_;
+	refreshDisplay();
+}
+
+void SettingsMenu::requestCopyReview() {
+	if (scope_ != MenuScope::Track || copyTarget_ == slot_)
+		return;
+	copyReviewTarget_ = copyTarget_;
+	copyReview_ = true;
+	refreshDisplay();
+}
+
+void SettingsMenu::confirmCopy() {
+	if (!copyReview_ || sdRoutineLock)
+		return;
+	auto* model = currentModel();
+	const auto status = model ? model->copySettingsTo(slot_, copyReviewTarget_) : Status::Unavailable;
+	copyReview_ = choosingCopyTarget_ = false;
+	refreshDisplay();
+	if (display)
+		display->displayPopup(deluge::l10n::get(status == Status::Ok
+		                                            ? deluge::l10n::String::STRING_FOR_LOOP_STATION_COPIED
+		                                            : deluge::l10n::String::STRING_FOR_LOOP_STATION_COPY_BUSY));
+}
+
+void SettingsMenu::cancelCopyReview() {
+	copyReview_ = choosingCopyTarget_ = false;
 	refreshDisplay();
 }
 
@@ -254,7 +340,8 @@ void SettingsMenu::changeValue(int32_t offset) {
 		    static_cast<::loop_station::PlaybackMode>(wrapIndex(static_cast<int>(track.playback) + offset, 2));
 		break;
 	case MenuField::Transpose:
-		track.transposeCents = stepTransposeCents(track.transposeCents, offset);
+		track.transposeCents =
+		    stepTransposeCents(track.transposeCents, offset, Buttons::isAnyOfButtonsPressed({SHIFT, SELECT_ENC}));
 		break;
 	case MenuField::Colour:
 		track.colour = trackColourAt(static_cast<unsigned>(
@@ -285,9 +372,10 @@ void SettingsMenu::refreshDisplay() {
 	display->setText(deluge::l10n::get(scope_ == MenuScope::Global
 	                                       ? deluge::l10n::String::STRING_FOR_LOOP_STATION_GLOBAL_SETTINGS
 	                                       : deluge::l10n::String::STRING_FOR_LOOP_STATION_TRACK_SETTINGS));
-	if (choosingCopyTarget_) {
+	if (copyReview_ || choosingCopyTarget_) {
 		char target[16];
-		snprintf(target, sizeof(target), "TO TR %u", copyTarget_ + 1);
+		snprintf(target, sizeof(target), copyReview_ ? "COPY TR %u?" : "TO TR %u",
+		         (copyReview_ ? copyReviewTarget_ : copyTarget_) + 1);
 		display->displayPopup(target);
 		return;
 	}
@@ -369,6 +457,15 @@ bool SettingsMenu::renderSidebar(uint32_t, RGB[][kDisplayWidth + kSideBarWidth],
 
 void SettingsMenu::renderOLED(deluge::hid::display::oled_canvas::Canvas& canvas) {
 	canvas.clear();
+	if (useHorizontalMenu() && !copyReview_) {
+		static_cast<CopySetting*>(items_.item(MenuField::CopyToTrack))->setTarget(copyTarget_);
+		horizontalMenu_.renderOLED();
+		return;
+	}
+	renderListOLED(canvas);
+}
+
+void SettingsMenu::renderListOLED(deluge::hid::display::oled_canvas::Canvas& canvas) {
 	canvas.drawString(deluge::l10n::get(scope_ == MenuScope::Global
 	                                        ? deluge::l10n::String::STRING_FOR_LOOP_STATION_GLOBAL_SETTINGS
 	                                        : deluge::l10n::String::STRING_FOR_LOOP_STATION_TRACK_SETTINGS),
@@ -376,11 +473,11 @@ void SettingsMenu::renderOLED(deluge::hid::display::oled_canvas::Canvas& canvas)
 	auto* model = currentModel();
 	if (!model)
 		return;
-	if (choosingCopyTarget_) {
+	if (copyReview_ || choosingCopyTarget_) {
 		char target[24];
-		snprintf(target, sizeof(target), "Copy to Track %u", copyTarget_ + 1);
+		snprintf(target, sizeof(target), "Copy to Track %u", (copyReview_ ? copyReviewTarget_ : copyTarget_) + 1);
 		canvas.drawString(target, 0, 22, kTextSpacingX, kTextSizeYUpdated);
-		canvas.drawString("SELECT to copy", 0, 38, kTextSpacingX, kTextSizeYUpdated);
+		canvas.drawString(copyReview_ ? "SELECT to copy" : "SELECT to review", 0, 38, kTextSpacingX, kTextSizeYUpdated);
 		return;
 	}
 	fields_ = visibleMenuFields(scope_, model->engine().settings());
@@ -458,7 +555,11 @@ void SettingsMenu::renderOLED(deluge::hid::display::oled_canvas::Canvas& canvas)
 }
 
 void SettingsMenu::closeMenu() {
-	close();
+	if (horizontalSession_)
+		horizontalMenu_.endSession();
+	horizontalSession_ = false;
+	copyReview_ = choosingCopyTarget_ = selectHeld_ = false;
+	close(); // closeUI restores parent LEDs after shared-menu LED cleanup.
 }
 
 } // namespace deluge::gui::menu_item::loop_station

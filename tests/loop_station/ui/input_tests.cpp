@@ -4,13 +4,21 @@
 using namespace loop_station;
 using namespace deluge::hid::button;
 using deluge::gui::menu_item::loop_station::loopStationSettingsMenu;
-using loop_ui_test::Fixture;
+// These pre-existing list/7SEG tests explicitly exercise the preference-off fallback.
+struct Fixture : loop_ui_test::Fixture {
+	Fixture() : loop_ui_test::Fixture(false) {}
+};
 
 TEST_GROUP(LoopUi){};
 
 namespace {
 // Physical centres, not derived from padAddress (the input mapping under test).
 constexpr int32_t centres[8][2] = {{1, 6}, {5, 6}, {9, 6}, {13, 6}, {1, 2}, {5, 2}, {9, 2}, {13, 2}};
+
+void selectClick() {
+	loopStationSettingsMenu.buttonAction(SELECT_ENC, true, false);
+	loopStationSettingsMenu.buttonAction(SELECT_ENC, false, false);
+}
 
 void openColour(Fixture& f, SlotId slot) {
 	f.sharedShift(f.view, true);
@@ -24,7 +32,7 @@ void openColour(Fixture& f, SlotId slot) {
 	     ++i)
 		loopStationSettingsMenu.selectEncoderAction(1);
 	CHECK(MenuField::Colour == loopStationSettingsMenu.fields_.rows[loopStationSettingsMenu.row_]);
-	loopStationSettingsMenu.buttonAction(SELECT_ENC, true, false);
+	selectClick();
 	CHECK_TRUE(loopStationSettingsMenu.editing_);
 }
 
@@ -76,7 +84,7 @@ TEST(LoopUi, EveryTrackConfigOffersColourAndChangesOnlyItsRing) {
 		}
 		CHECK(std::find(probeRenderTargets.begin(), probeRenderTargets.end(), &f.view) != probeRenderTargets.end());
 		CHECK(probeOledRequests > 0);
-		loopStationSettingsMenu.buttonAction(SELECT_ENC, true, false);
+		selectClick();
 		CHECK_FALSE(loopStationSettingsMenu.editing_);
 		loopStationSettingsMenu.buttonAction(BACK, true, false);
 		POINTERS_EQUAL(&f.view, getCurrentUI());
@@ -97,7 +105,7 @@ TEST(LoopUi, ColourPaletteWrapsAndBackKeepsChoice) {
 	loopStationSettingsMenu.selectEncoderAction(1);
 	CHECK(Colour::Gold == f.model->engine().settings().tracks[6].colour);
 	loopStationSettingsMenu.selectEncoderAction(-1);
-	loopStationSettingsMenu.buttonAction(SELECT_ENC, true, false);
+	selectClick();
 	loopStationSettingsMenu.buttonAction(BACK, true, false);
 	POINTERS_EQUAL(&f.view, getCurrentUI());
 	CHECK(Colour::White == f.model->engine().settings().tracks[6].colour);
@@ -137,7 +145,7 @@ TEST(LoopUi, ConfiguredTrackColoursRoundTripAfterEditing) {
 		const auto to = std::find(kTrackColours.begin(), kTrackColours.end(), chosen[slot]);
 		loopStationSettingsMenu.selectEncoderAction(static_cast<int8_t>(to - from));
 		CHECK(chosen[slot] == f.model->engine().settings().tracks[slot].colour);
-		loopStationSettingsMenu.buttonAction(SELECT_ENC, true, false);
+		selectClick();
 		loopStationSettingsMenu.buttonAction(BACK, true, false);
 	}
 	SettingsDocument document{};
@@ -340,7 +348,7 @@ TEST(LoopUi, SelectClickEntersEditingAndInvalidatesOled) {
 	Fixture f;
 	CHECK_TRUE(loopStationSettingsMenu.openGlobal());
 	probeOledRequests = 0;
-	loopStationSettingsMenu.buttonAction(SELECT_ENC, true, false);
+	selectClick();
 	CHECK_TRUE(loopStationSettingsMenu.editing_);
 	CHECK_EQUAL(0, loopStationSettingsMenu.row_);
 	CHECK(probeOledRequests > 0);
@@ -349,9 +357,9 @@ TEST(LoopUi, SelectClickEntersEditingAndInvalidatesOled) {
 TEST(LoopUi, SelectClickLeavesEditingAndInvalidatesOled) {
 	Fixture f;
 	CHECK_TRUE(loopStationSettingsMenu.openGlobal());
-	loopStationSettingsMenu.buttonAction(SELECT_ENC, true, false);
+	selectClick();
 	probeOledRequests = 0;
-	loopStationSettingsMenu.buttonAction(SELECT_ENC, true, false);
+	selectClick();
 	CHECK_FALSE(loopStationSettingsMenu.editing_);
 	CHECK(probeOledRequests > 0);
 }
@@ -360,7 +368,7 @@ TEST(LoopUi, EditingSelectTurnChangesValueAndInvalidatesOled) {
 	Fixture f;
 	CHECK_TRUE(loopStationSettingsMenu.openTrack(2));
 	CHECK(Source::Left == f.model->engine().settings().tracks[2].source);
-	loopStationSettingsMenu.buttonAction(SELECT_ENC, true, false);
+	selectClick();
 	probeOledRequests = 0;
 	loopStationSettingsMenu.selectEncoderAction(1);
 	CHECK(Source::Right == f.model->engine().settings().tracks[2].source);
@@ -374,7 +382,7 @@ TEST(LoopUi, CopyTargetEntryInvalidatesOled) {
 	CHECK_TRUE(loopStationSettingsMenu.openTrack(2));
 	loopStationSettingsMenu.selectEncoderAction(6);
 	probeOledRequests = 0;
-	loopStationSettingsMenu.buttonAction(SELECT_ENC, true, false);
+	selectClick();
 	CHECK_TRUE(loopStationSettingsMenu.choosingCopyTarget_);
 	CHECK_EQUAL(3, loopStationSettingsMenu.copyTarget_);
 	CHECK(probeOledRequests > 0);
@@ -384,7 +392,7 @@ TEST(LoopUi, CopyTargetMovementInvalidatesOled) {
 	Fixture f;
 	CHECK_TRUE(loopStationSettingsMenu.openTrack(2));
 	loopStationSettingsMenu.selectEncoderAction(6);
-	loopStationSettingsMenu.buttonAction(SELECT_ENC, true, false);
+	selectClick();
 	probeOledRequests = 0;
 	loopStationSettingsMenu.selectEncoderAction(1);
 	CHECK_TRUE(loopStationSettingsMenu.choosingCopyTarget_);
@@ -395,13 +403,14 @@ TEST(LoopUi, CopyTargetMovementInvalidatesOled) {
 TEST(LoopUi, CopyConfirmationCopiesSettingsAndInvalidatesOled) {
 	Fixture f;
 	CHECK_TRUE(loopStationSettingsMenu.openTrack(2));
-	loopStationSettingsMenu.buttonAction(SELECT_ENC, true, false);
+	selectClick();
 	loopStationSettingsMenu.selectEncoderAction(1);
-	loopStationSettingsMenu.buttonAction(SELECT_ENC, true, false);
+	selectClick();
 	loopStationSettingsMenu.selectEncoderAction(6);
-	loopStationSettingsMenu.buttonAction(SELECT_ENC, true, false);
+	selectClick(); // destination chooser in fallback
+	selectClick(); // review the chosen destination
 	probeOledRequests = 0;
-	loopStationSettingsMenu.buttonAction(SELECT_ENC, true, false);
+	selectClick(); // distinct confirming press
 	CHECK_FALSE(loopStationSettingsMenu.choosingCopyTarget_);
 	CHECK(Source::Right == f.model->engine().settings().tracks[3].source);
 	CHECK_TRUE(f.model->clip(3));
@@ -421,7 +430,7 @@ TEST(LoopUi, SevenSegmentNavigationAndEditingRefreshTextAndPopup) {
 	CHECK_EQUAL(1, loopStationSettingsMenu.row_);
 	STRCMP_EQUAL("Loop Station Global", f.screen.text.c_str());
 	STRCMP_EQUAL("IMM", f.screen.popups.back().c_str());
-	loopStationSettingsMenu.buttonAction(SELECT_ENC, true, false);
+	selectClick();
 	CHECK_TRUE(loopStationSettingsMenu.editing_);
 	CHECK_EQUAL(before + 2, f.screen.popups.size());
 	loopStationSettingsMenu.selectEncoderAction(1);
@@ -437,19 +446,21 @@ TEST(LoopUi, SevenSegmentCopyTargetRefreshesAndConfirmationRestoresTrackText) {
 	STRCMP_EQUAL("Loop Station Track", f.screen.text.c_str());
 	STRCMP_EQUAL("SRC 1", f.screen.popups.back().c_str());
 	loopStationSettingsMenu.selectEncoderAction(6);
-	loopStationSettingsMenu.buttonAction(SELECT_ENC, true, false);
+	selectClick();
 	CHECK_TRUE(loopStationSettingsMenu.choosingCopyTarget_);
 	STRCMP_EQUAL("TO TR 4", f.screen.popups.back().c_str());
 	loopStationSettingsMenu.selectEncoderAction(1);
 	CHECK_EQUAL(4, loopStationSettingsMenu.copyTarget_);
 	STRCMP_EQUAL("TO TR 5", f.screen.popups.back().c_str());
+	selectClick(); // review before a separate confirming press
+	STRCMP_EQUAL("COPY TR 5?", f.screen.popups.back().c_str());
 	f.screen.text.clear();
 	const auto before = f.screen.popups.size();
-	loopStationSettingsMenu.buttonAction(SELECT_ENC, true, false);
+	selectClick();
 	CHECK_FALSE(loopStationSettingsMenu.choosingCopyTarget_);
 	CHECK_TRUE(f.model->clip(4));
-	STRCMP_EQUAL("Copied", f.screen.popups[before].c_str());
-	STRCMP_EQUAL("TO TR 5", f.screen.popups.back().c_str());
+	STRCMP_EQUAL("TO TR 5", f.screen.popups[before].c_str());
+	STRCMP_EQUAL("Copied", f.screen.popups.back().c_str());
 	STRCMP_EQUAL("Loop Station Track", f.screen.text.c_str());
 	CHECK_EQUAL(0, probeOledRequests);
 }

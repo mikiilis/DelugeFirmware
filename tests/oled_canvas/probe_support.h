@@ -106,7 +106,15 @@ const char* get(String string);
 namespace deluge::gui::menu_item::loop_station {
 class SettingsMenu {
 public:
-	void renderOLED(Canvas& canvas);
+	// This existing real-canvas suite exercises the preference-off list path.
+	// Integrated horizontal rendering is covered separately, not replaced with a fake menu.
+	void renderOLED(Canvas& canvas) {
+		canvas.clear();
+		renderListOLED(canvas);
+	}
+	void renderListOLED(Canvas& canvas);
+	bool copyReview_ = false;
+	::loop_station::SlotId copyReviewTarget_ = 1;
 	::loop_station::MenuFields fields_{};
 	::loop_station::MenuScope scope_ = ::loop_station::MenuScope::Global;
 	::loop_station::SlotId slot_ = 0;

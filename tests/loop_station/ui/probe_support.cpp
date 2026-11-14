@@ -1,4 +1,4 @@
-#include "probe_support.h"
+#include "settings_probe_support.h"
 
 Song* currentSong = nullptr;
 bool sdRoutineLock = false;
@@ -22,8 +22,11 @@ namespace deluge::gui::menu_item::loop_station {
 SettingsMenu loopStationSettingsMenu;
 }
 bool openUI(ProbeUI* ui) {
-	if (!ui->opened())
+	if (!ui->opened()) {
+		if (probeCurrentUI)
+			probeCurrentUI->focusRegained();
 		return false;
+	}
 	probeCurrentUI = ui;
 	if (!probeRootUI)
 		probeRootUI = ui;
@@ -41,6 +44,8 @@ ProbeUI* getRootUI() {
 }
 void ProbeUI::close() {
 	probeCurrentUI = this == probeRootUI ? nullptr : probeRootUI;
+	if (probeCurrentUI)
+		probeCurrentUI->focusRegained();
 }
 void uiNeedsRendering(ProbeUI* ui) {
 	++probeRenderRequests;
@@ -59,6 +64,8 @@ const char* get(String string) {
 		return "Loop Station Track";
 	if (string == String::STRING_FOR_LOOP_STATION_COPIED)
 		return "Copied";
+	if (string == String::STRING_FOR_LOOP_STATION_COPY_BUSY)
+		return "Copy busy";
 	return "Loop setting";
 }
 } // namespace deluge::l10n

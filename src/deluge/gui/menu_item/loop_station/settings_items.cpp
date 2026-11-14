@@ -4,9 +4,11 @@
 #include "extern.h"
 #include "gui/menu_item/horizontal_menu.h"
 #include "hid/buttons.h"
+#include "hid/display/oled.h"
 #include "model/song/song.h"
 #include <algorithm>
 #include <cassert>
+#include <cstdio>
 
 namespace deluge::gui::menu_item::loop_station {
 using l10n::String;
@@ -225,6 +227,13 @@ void TransposeSetting::selectEncoderAction(int32_t offset) {
 
 CopySetting::CopySetting(SettingsContext& context)
     : MenuItem(String::STRING_FOR_LOOP_STATION_COPY_TO_TRACK), context_(context) {
+}
+
+void CopySetting::renderInHorizontalMenu(const SlotPosition& slot) {
+	char target[12];
+	snprintf(target, sizeof(target), "Track %u", target_ + 1);
+	hid::display::OLED::main.drawStringCentered(target, slot.start_x, slot.start_y + kHorizontalMenuSlotYOffset,
+	                                            kTextSpacingX, kTextSmallSizeY, slot.width);
 }
 
 SettingsItems::SettingsItems(SettingsContext& context)

@@ -94,7 +94,7 @@ def main() -> None:
     )
     settings_method = section(
         settings_view,
-        "void SettingsMenu::renderOLED(",
+        "void SettingsMenu::renderListOLED(",
         "void SettingsMenu::closeMenu()",
     )
     menu_model = args.menu_model.read_text()

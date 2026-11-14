@@ -26,7 +26,7 @@ def main() -> None:
         raise SystemExit("production encoder definition missing or ambiguous")
     text = "\n".join(
         [
-            f'#include "{args.support.as_posix()}"',
+            f'#include "{args.support.parent.as_posix()}/settings_probe_support.h"',
             "using namespace deluge::hid::button;\nusing namespace loop_station;",
             section(loop, "namespace {", "bool LoopStationView::opened()"),
             section(
@@ -115,6 +115,24 @@ def main() -> None:
 
     # Native items use the same production declaration/body extraction boundary.
     native_dir = args.settings_view.parent
+    (args.output.parent / "horizontal_settings_declarations.h").write_text(
+        '#pragma once\n#include "settings_items_declarations.h"\n'
+        + "\n".join(
+            line
+            for line in (native_dir / "horizontal_settings.h").read_text().splitlines()
+            if not line.startswith("#include") and line != "#pragma once"
+        )
+    )
+    (args.output.parent / "horizontal_settings.cpp").write_text(
+        f'#include "{args.support.parent.as_posix()}/settings_probe_support.h"\n'
+        + "\n".join(
+            line
+            for line in (native_dir / "horizontal_settings.cpp")
+            .read_text()
+            .splitlines()
+            if not line.startswith("#include")
+        )
+    )
     (args.output.parent / "settings_items_declarations.h").write_text(
         "#pragma once\n"
         + f'#include "{args.support.parent.as_posix()}/shared_probe_support.h"\n'

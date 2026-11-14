@@ -21,6 +21,7 @@ class ProbeUI {
 public:
 	virtual ~ProbeUI() = default;
 	virtual bool opened() { return true; }
+	virtual void focusRegained() {}
 	void close();
 };
 extern ProbeUI* probeCurrentUI;
@@ -119,13 +120,26 @@ namespace deluge::hid::display::oled_canvas {
 class Canvas {
 public:
 	std::vector<std::string> lines;
-	void clear() { lines.clear(); }
-	void drawString(std::string_view text, int32_t, int32_t, int32_t, int32_t) { lines.emplace_back(text); }
+	std::vector<int> textY;
+	void clear() {
+		lines.clear();
+		textY.clear();
+	}
+	void drawString(std::string_view text, int32_t, int32_t y, int32_t, int32_t) {
+		lines.emplace_back(text);
+		textY.push_back(y);
+	}
 	int inversions = 0, underlines = 0, pixels = 0;
 	int getStringWidthInPixels(const char* text, int) { return std::string_view(text).size() * 6; }
-	void drawScreenTitle(std::string_view text, bool) { lines.emplace_back(text); }
+	void drawScreenTitle(std::string_view text, bool) {
+		lines.emplace_back(text);
+		textY.push_back(0);
+	}
 	void drawLine(int, int, int, int) {}
-	void drawStringCentered(const char* text, int, int, int, int, int) { lines.emplace_back(text); }
+	void drawStringCentered(const char* text, int, int y, int, int, int) {
+		lines.emplace_back(text);
+		textY.push_back(y);
+	}
 	void invertAreaRounded(int, int, int, int) { ++inversions; }
 	void drawHorizontalLine(int, int, int) { ++underlines; }
 	void drawPixel(int, int) { ++pixels; }
@@ -137,7 +151,7 @@ public:
 class LoopStationView : public ProbeUI {
 public:
 	bool opened() override;
-	void focusRegained();
+	void focusRegained() override;
 	void graphicsRoutine();
 	ActionResult timerCallback();
 	ActionResult padAction(int32_t, int32_t, int32_t);
@@ -152,29 +166,3 @@ public:
 	loop_station::SlotId pendingRestoreSlot_ = loop_station::kInvalidSlot;
 	bool pendingExit_ = false;
 };
-namespace deluge::gui::menu_item::loop_station {
-class SettingsMenu : public ProbeUI {
-public:
-	bool openGlobal();
-	bool openTrack(::loop_station::SlotId);
-	bool opened() override;
-	ActionResult buttonAction(deluge::hid::Button, bool, bool);
-	ActionResult padAction(int32_t, int32_t, int32_t);
-	ActionResult horizontalEncoderAction(int32_t);
-	void selectEncoderAction(int8_t);
-	void renderOLED(deluge::hid::display::oled_canvas::Canvas&);
-	bool open(::loop_station::MenuScope, ::loop_station::SlotId);
-	void changeValue(int32_t);
-	void selectCurrent();
-	void closeMenu();
-	void refreshDisplay();
-	::loop_station::MenuFields fields_{};
-	::loop_station::MenuScope scope_ = ::loop_station::MenuScope::Global;
-	::loop_station::SlotId slot_ = 0;
-	::loop_station::SlotId copyTarget_ = 1;
-	uint8_t row_ = 0;
-	bool editing_ = false;
-	bool choosingCopyTarget_ = false;
-};
-extern SettingsMenu loopStationSettingsMenu;
-} // namespace deluge::gui::menu_item::loop_station
