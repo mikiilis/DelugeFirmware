@@ -53,7 +53,7 @@ Track colors distinguish tracks. New tracks default to **Yellow, Cyan, Blue, Pur
 
 Global settings include Record Action, Start Mode/Interval and Stop Mode/Interval. Interval settings are shown when the related mode is Synced. Per-track settings include input source, monitoring, record duration, Loop or One Shot playback, transpose, color and Copy To Track. Transpose range is ±24.50 semitones in one-cent steps. Copy To Track copies settings only; it leaves the destination audio, name, output, effects and history intact.
 
-To change a ring's identity color: **SHIFT + track centre → Colour → SELECT to edit → turn SELECT → SELECT to finish → BACK**. The ring updates live and the menu shows the chosen color. White remains available, and multiple tracks may use the same color. Colors are saved and restored with normal Song **Save/load**; editing does not write to the SD card on each turn. Existing saved/custom colors are preserved, including White and copied or duplicate choices; the new defaults do not recolor saved Songs.
+To change a ring's identity color: **SHIFT + track centre → Colour → SELECT to edit → turn SELECT → SELECT to finish → BACK**. The ring updates live and the menu shows the chosen color. White remains available, and multiple tracks may use the same color. Return to Song/Session View and use normal Song **SAVE** to store changes; normal Song load restores them. Editing does not write to the SD card on each turn. Existing saved/custom colors are preserved, including White and copied or duplicate choices; the new defaults do not recolor saved Songs.
 
 Press **CLIP VIEW** to open the selected track's ordinary Audio Clip view and menus. Loop tracks use normal Song outputs and effects.
 

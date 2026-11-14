@@ -1,6 +1,6 @@
 # Loop Station layout and palette repair — verification and handoff
 
-Date: November 14, 2026. Status: **DONE_WITH_CONCERNS** for verification/handoff, not final integrated approval or hardware acceptance.
+Date: November 14, 2026. Status: implementation and final integrated code review complete. Dedicated browser-console clearance and hardware acceptance remain **NOT_RUN**.
 
 The user's November 14 instruction, "Implement this plan", authorized the [plan](../plans/2026-11-14-loop-station-layout.md) and [design](../specs/2026-11-14-loop-station-layout-design.md). Source verified: `e1026d627dd47e95c6a3d6c05e1f21d20daddbb4` on `feature/loop-station-implementation`; Task 1 is `c2e13e6e2dca738755de91d31329f2e89d09f28e`, Task 2 is `e1026d62`. Whole-change review base: `22b11a86ee4d80c8bd17070186a58ffc55b78e94`.
 
@@ -14,8 +14,8 @@ These are retained implementer/reviewer records, not historical failures replaye
 - Task 2: default slot 5 expected Pink ID 9 but got White ID 10; three RGB/default renderer failures; real Colour-menu test failed the missing root-redraw assertion; demo failed chromaticity on old `#e1e7dc`. Existing palette wrapping/BACK and persistence preservation already passed and were not represented as RED. A pulse-clock fixture correction was explicitly excluded from behavioral RED. Final GREEN: 336 tests / 3,573,591 checks, 20/20 CTest suites, including two Python demo assertions. Commit: `e1026d62`.
 - Task 1 independent review approved geometry/input/render/sidebar behavior with no Critical, Important or Minor findings; it independently ran focused groups, not the full suite or firmware build.
 - Task 2 independent review approved defaults, local Pink mapping, real menu/live redraw, persistence and demo contracts with no Critical, Important or Minor findings; it reviewed code without rerunning tests/builds.
-- Historical evidence and task reviews are retained locally in `.superpowers/sdd/2026-11-14-loop-station-layout/task-{1,2}-{report,review}.md`. This permanent summary preserves their outcomes if that ignored workspace is later removed.
-- **Final integrated independent review: PENDING, controller-owned.** Task review and this verification self-review do not replace it. No subagents/reviewers were dispatched by Task 3.
+- Historical evidence and task reviews were supplied through this plan's ignored workflow workspace. This permanent summary preserves their outcomes when temporary workflow artifacts are cleaned up.
+- **Final integrated independent review: APPROVED** for `22b11a86..3e1a06e1`, with no Critical, Important or Minor findings. The independent reviewer traced actual firmware input/LED ordering, overlay/compositor invalidation, and normal Song save/serialization/load integration in addition to the test changes. Task 3 did not dispatch its own reviewers; the controller obtained this separate final gate.
 
 ## Fresh host verification
 
@@ -32,7 +32,7 @@ All exited 0. Required six targets built successfully; incremental host build em
 
 Every CTest suite passed: `OledHandshakeDriverTests`, `OledCanvasTests`, `LoopStationOledTests`, `object_pool_spec`, `pulse_rendering_spec`, `rainfall_spec`, `reverb_spec`, `semver_spec`, `starfield_spec`, `string_spec`, `tracking_allocator_spec`, `UnitTests`, `LoopStationTests`, `LoopStationDemoContract`, `LoopPageAllocationGuard`, `LoopAudioAllocationGuard`, `LoopGestureAllocationGuard`, `LoopHistorySnapshotAllocationGuard`, `LoopFatFsAllocationTests`, `OledCVDriverTests`.
 
-Local full outputs: `task-3-host-build.log`, `task-3-ctest.log`, `task-3-loop-tests.log` in the ignored task workspace. Prior reports mention ETL version/generated OLED/host asm warnings; none appeared in this fresh incremental host build. This was not a clean-from-scratch rebuild.
+Full outputs were read from `task-3-host-build.log`, `task-3-ctest.log` and `task-3-loop-tests.log` in the temporary workflow workspace. Prior reports mention ETL version/generated OLED/host asm warnings; none appeared in this fresh incremental host build. This was not a clean-from-scratch rebuild.
 
 ## Actual browser inspection
 
@@ -42,7 +42,7 @@ Local full outputs: `task-3-host-build.log`, `task-3-ctest.log`, `task-3-loop-te
 - `browser.open` returned settled/drivable success with title `Deluge · Eight-track Loop Station`; document and grid `browser.snapshot` calls returned the real DOM/track labels. Inspected at desktop 1440×900 after an initial fill viewport.
 - Used Pause, Reset, Resume, and Pause, and captured the actual rendered page. Reset while paused showed track 1's first two bright top-edge pads; after resuming the later capture showed all four top-edge pads and the next right-edge pad bright, with the left edge still dim: clockwise progression from top-left. Both captures show tracks 1–4 across the upper tiles and 5–8 below, unchanged, with Start/Stop at the top sidebar.
 - Clicked track 6's border (`#grid > button:nth-of-type(81)`); the actual OLED changed to TRACK 6 / EMPTY. `browser.inspect` of `#track-strip > .track-status:nth-child(6)` returned `border-color: rgb(255, 0, 128) ...`, confirming the sixth swatch is the new saturated Pink rather than White. Empty track 6's identity border is visibly dim Pink, not a white centre.
-- Captures retained locally in the task workspace: `loop-station-frozen-reset-2026-11-14T00-02-34-095.jpg` and `loop-station-running-sixth-pink-2026-11-14T00-03-17-514.jpg`. Both were opened and visually inspected; they are not committed assets.
+- Temporary captures: `loop-station-frozen-reset-2026-11-14T00-02-34-095.jpg` and `loop-station-running-sixth-pink-2026-11-14T00-03-17-514.jpg`. Both were opened and visually inspected; they are not committed assets and are subject to workflow cleanup.
 - All browser actions returned `ok: true`; snapshots reported no errors. However, the exposed schema provides no dedicated console log/action, so **no-console-errors acceptance is not established**. The static server also logged an automatic `/favicon.ico` HTTP 404 (demo document requests were HTTP 200). This network observation is disclosed rather than silently treated as a clean console; no favicon/product change was added merely to quiet verification.
 - Closed only the owned tab `browser:browser:agent:1794614522495-1` using `browser.close` (`closed: true`), stopped only owned server PID 73878, and moved only the two owned captures out of the untracked `.openchamber/` folder. The user's unrelated `about:blank` tab was untouched.
 
@@ -69,9 +69,9 @@ Artifact measurement used Python `Path.read_bytes()`, `len`, `hashlib.sha256` an
 
 ## Self-review and remaining gates
 
-Reviewed the production repair diff `22b11a86..e1026d62`: physical Y normalization remains only in bounded `padAddress`; input/renderer share it; one sidebar row constant drives input and drawing; slot IDs, schema and persistence remain unchanged; Pink is private to this view; root invalidation is success/Colour-gated. Task 1's actual renderer tests and all other host tests ran green as part of the full suite, including untouched-row, phase/wrap/clear and per-track menu/persistence coverage. This is a verification self-review, **not** the pending independent integrated review.
+Reviewed the production repair diff `22b11a86..e1026d62`: physical Y normalization remains only in bounded `padAddress`; input/renderer share it; one sidebar row constant drives input and drawing; slot IDs, schema and persistence remain unchanged; Pink is private to this view; root invalidation is success/Colour-gated. Task 1's actual renderer tests and all other host tests ran green as part of the full suite, including untouched-row, phase/wrap/clear and per-track menu/persistence coverage. A separate final integrated independent review subsequently approved the complete range through `3e1a06e1`.
 
-Documentation aligns authorization and the accepted renderer test location, and checks off only supported steps. Browser Step 2 stays unchecked because dedicated console clearance is unavailable; Step 4 stays unchecked for controller review. No hardware checks are checked off. `git diff --check` passed with no output. A documentation-scoped `python3 -m pre_commit run --files` exited 0 with every hook correctly skipped (no matching files); this is not a C++/Python lint claim. Staged whitespace/scope checks and the normal commit hook gate the documentation-only handoff.
+Documentation aligns authorization and the accepted renderer test location, and checks off only supported steps. Browser Step 2 stays unchecked because dedicated console clearance is unavailable; Step 4 is now checked from the independent integrated review. No hardware checks are checked off. `git diff --check` passed with no output. A documentation-scoped `python3 -m pre_commit run --files` exited 0 with every hook correctly skipped (no matching files); this is not a C++/Python lint claim. The controller additionally rebuilt the six required host targets, reran full CTest (20/20 PASS, 10.76 seconds), and independently checked the BIN size/hash/embedded `e1026d62` version after review. Subsequent bookkeeping changes are documentation-only.
 
 ### Device checklist — all NOT_RUN
 
@@ -84,4 +84,6 @@ Host tests, browser screenshots and successful ARM linking are **not hardware ac
 - [ ] Start All/Stop All work only at physical top sidebar `(16,7)` / `(17,7)`; bottom/unused sidebar pads do nothing.
 - [ ] Existing song: logical slot/audio/custom White and duplicate colours remain unchanged; OLED/seven-segment/audio behavior remains correct.
 
-Controller handoff: obtain final integrated independent review from `22b11a86` through this documentation commit, resolve any findings, and retain the console/device limitations until separately observed. Keep the branch; no merge or push was performed.
+Final review boundaries accepted by the controller: physical orientation/contrast/audio/display and console clearance require observation; they are not certified by review. Direct SAVE/LOAD buttons inside Loop Station retain their existing behavior: return to Song/Session View before using normal Song SAVE/load. The existing "Saved" label tracks audio changes only and can remain "Saved" after a colour-only edit; explicit Song SAVE is still required. Adding shortcuts or a settings-dirty indicator is separate work, not silently included in this layout/palette repair.
+
+The branch is retained as requested; no merge or push was performed. Console/device limitations remain open project follow-ups, not passed acceptance checks.
