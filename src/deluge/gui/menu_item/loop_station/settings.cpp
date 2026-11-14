@@ -134,6 +134,10 @@ bool SettingsMenu::useHorizontalMenu() const {
 	return display && display->haveOLED() && runtimeFeatureSettings.isOn(HorizontalMenus);
 }
 
+SlotId SettingsMenu::focusedTrack() const {
+	return getCurrentUI() == this && scope_ == MenuScope::Track && validSlot(slot_) ? slot_ : kInvalidSlot;
+}
+
 bool SettingsMenu::opened() {
 	if (!currentSong || currentSong->ensureLoopStation(true) != Status::Ok)
 		return false;
@@ -153,6 +157,11 @@ bool SettingsMenu::opened() {
 	}
 	refreshDisplay();
 	return true;
+}
+
+void SettingsMenu::graphicsRoutine() {
+	if (getCurrentUI() == this && getRootUI() && getRootUI() != this)
+		uiNeedsRendering(getRootUI(), 0xff, 0); // Keep the pads moving, not the root OLED or menu LEDs.
 }
 
 ActionResult SettingsMenu::buttonAction(deluge::hid::Button button, bool on, bool inCardRoutine) {

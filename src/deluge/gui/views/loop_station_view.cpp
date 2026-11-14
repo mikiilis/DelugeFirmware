@@ -18,6 +18,7 @@
 #include "model/settings/runtime_feature_settings.h"
 #include "model/song/song.h"
 #include "processing/engines/audio_engine.h"
+#include <cstdio>
 
 using namespace deluge::hid::button;
 using namespace loop_station;
@@ -56,6 +57,11 @@ RGB colourFor(Colour c) {
 		return deluge::gui::colours::white_full;
 	}
 	return deluge::gui::colours::white;
+}
+RGB scaledColour(RGB colour, uint8_t level) {
+	return {static_cast<uint8_t>((static_cast<uint16_t>(colour.r) * level + 127) / 255),
+	        static_cast<uint8_t>((static_cast<uint16_t>(colour.g) * level + 127) / 255),
+	        static_cast<uint8_t>((static_cast<uint16_t>(colour.b) * level + 127) / 255)};
 }
 
 bool startPending(PendingAction action) {
@@ -291,6 +297,10 @@ bool LoopStationView::renderMainPads(uint32_t rows, RGB image[][kDisplayWidth + 
 	auto* m = model();
 	if (!m)
 		return true;
+	const auto now = AudioEngine::loopStationSampleClock();
+	const auto level = selectionPulseLevel(now);
+	const SlotId menuFocus = deluge::gui::menu_item::loop_station::loopStationSettingsMenu.focusedTrack();
+	const SlotId selected = validSlot(menuFocus) ? menuFocus : m->engine().selected();
 	for (int32_t y = 0; y < kDisplayHeight; ++y) {
 		if (!(rows & (1u << y)))
 			continue;
@@ -300,9 +310,9 @@ bool LoopStationView::renderMainPads(uint32_t rows, RGB image[][kDisplayWidth + 
 				continue;
 			const auto s = m->engine().state(pad.slot);
 			const RGB c = colourFor(m->engine().settings().tracks[pad.slot].colour);
-			const auto now = AudioEngine::loopStationSampleClock();
 			const bool pulse = visualPulseOn(now);
 			const bool fastPulse = visualPulseOn(now, 2205);
+			const bool focused = pad.slot == selected;
 			const auto held = m->engine().heldDurationSamples(pad.slot, now);
 			const auto clearSweep = !s.playing && !s.capture && !s.pending && s.hasPhrase
 			                            ? clearHoldSweepPads(held, 2ull * loop_station::kSampleRate)
@@ -338,11 +348,13 @@ bool LoopStationView::renderMainPads(uint32_t rows, RGB image[][kDisplayWidth + 
 				image[y][x] = pad.borderIndex < clearSweep ? clearColour : clearColour.dim(3);
 			}
 			else if (s.playing && s.phraseFrames) {
-				image[y][x] =
-				    pad.borderIndex < filledBorderPads(m->adapter().phase(pad.slot), s.phraseFrames) ? c : c.dim(3);
+				const bool filled = pad.borderIndex < filledBorderPads(m->adapter().phase(pad.slot), s.phraseFrames);
+				image[y][x] = focused  ? scaledColour(c, filled ? 128 + level / 2 : 32 + level / 8)
+				              : filled ? c
+				                       : c.dim(3);
 			}
 			else
-				image[y][x] = c.dim(3);
+				image[y][x] = focused ? scaledColour(c, 32 + level / 3) : c.dim(3);
 			mask[y][x] = 1;
 		}
 	}
@@ -381,8 +393,11 @@ bool LoopStationView::renderSidebar(uint32_t rows, RGB image[][kDisplayWidth + k
 
 void LoopStationView::renderOLED(deluge::hid::display::oled_canvas::Canvas& canvas) {
 	canvas.clear();
-	canvas.drawString("Loop Station", 0, OLED_MAIN_TOPMOST_PIXEL + 1, kTextTitleSpacingX, kTextTitleSizeY);
 	auto* m = model();
+	char title[24] = "Loop Station";
+	if (m && validSlot(m->engine().selected()))
+		snprintf(title, sizeof(title), "Loop Track %u", m->engine().selected() + 1);
+	canvas.drawString(title, 0, OLED_MAIN_TOPMOST_PIXEL + 1, kTextTitleSpacingX, kTextTitleSizeY);
 	if (!m)
 		return;
 	canvas.drawString(kConfiguredMemoryProfile == MemoryProfile::TenSecond ? "26.9 MiB / 10s" : "32 MiB / ~12s x8", 0,

@@ -57,6 +57,84 @@ void expectRing(const Pads& pads, const int32_t (&ring)[12][2], uint8_t brightPa
 
 TEST_GROUP(LoopPadRender){};
 
+TEST(LoopPadRender, SelectedEmptyRingBreathesAtRecordPulseRate) {
+	Fixture f;
+	CHECK(ActionResult::DEALT_WITH == f.view.padAction(4, 3, 100));
+	CHECK_EQUAL(5, f.model->engine().selected());
+	probeSampleClock = 0;
+	Pads low;
+	CHECK_TRUE(f.view.renderMainPads(0xff, low.image, low.mask, false));
+	probeSampleClock = 11025;
+	Pads high;
+	CHECK_TRUE(f.view.renderMainPads(0xff, high.image, high.mask, false));
+	probeSampleClock = 22050;
+	Pads cycle;
+	CHECK_TRUE(f.view.renderMainPads(0xff, cycle.image, cycle.mask, false));
+	CHECK(high.image[3][4].r > low.image[3][4].r);
+	CHECK_EQUAL(low.image[3][4].r, cycle.image[3][4].r);
+	CHECK_EQUAL(low.image[3][0].r, high.image[3][0].r); // Other track.
+	CHECK_EQUAL(low.image[2][5].r, high.image[2][5].r); // Centre.
+}
+
+TEST(LoopPadRender, EverySelectedRingBreathesWithoutChangingItsCentreOrOtherTracks) {
+	for (SlotId slot = 0; slot < 8; ++slot) {
+		Fixture f;
+		const int x = (slot % 4) * 4;
+		const int y = slot < 4 ? 7 : 3;
+		f.view.padAction(x, y, 100);
+		CHECK_EQUAL(slot, f.model->engine().selected());
+		probeSampleClock = 0;
+		Pads low;
+		f.view.renderMainPads(0xff, low.image, low.mask, false);
+		probeSampleClock = 11025;
+		Pads high;
+		f.view.renderMainPads(0xff, high.image, high.mask, false);
+		const auto& ring = slot < 4 ? topRing : bottomRing;
+		for (const auto& pad : ring) {
+			const int px = x + pad[0];
+			CHECK_FALSE(low.image[pad[1]][px] == high.image[pad[1]][px]);
+		}
+		for (int dx : {1, 2})
+			for (int dy : {1, 2})
+				CHECK_TRUE(low.image[y - dy][x + dx] == high.image[y - dy][x + dx]);
+		const int otherX = slot == 0 ? 4 : 0;
+		CHECK_TRUE(low.image[7][otherX] == high.image[7][otherX]);
+	}
+}
+
+TEST(LoopPadRender, SelectedPlayingRingKeepsProgressContrastAndColour) {
+	Fixture f;
+	record120Frames(f, 5, Colour::Pink);
+	f.view.padAction(4, 3, 100);
+	for (SampleClock time : {SampleClock{0}, SampleClock{11025}}) {
+		probeSampleClock = time;
+		Pads pads;
+		f.view.renderMainPads(0xff, pads.image, pads.mask, false);
+		CHECK(pads.image[3][4].r > pads.image[3][5].r); // First clockwise pad filled at phase zero.
+		CHECK_EQUAL(0, pads.image[3][4].g);
+		CHECK_EQUAL(0, pads.image[3][5].g);
+		pads.expect(5, 2, colours::green); // Playback centre does not pulse.
+	}
+}
+
+TEST(LoopPadRender, SelectedRingLeavesCaptureAndErrorPriorityIntact) {
+	Fixture f;
+	f.view.padAction(4, 3, 100); // Select and bind Track 6.
+	f.view.padAction(5, 2, 100); // Centre begins recording.
+	probeSampleClock = 11025;
+	Pads capture;
+	f.view.renderMainPads(0xff, capture.image, capture.mask, false);
+	capture.expect(4, 3, colours::red);
+	capture.expect(5, 2, colours::red);
+	Command error{CommandType::CaptureError, 5};
+	error.status = Status::SourceUnavailable;
+	CHECK(Status::SourceUnavailable == f.model->dispatch(error));
+	Pads failed;
+	f.view.renderMainPads(0xff, failed.image, failed.mask, false);
+	failed.expect(4, 3, colours::red.dim(3));
+	failed.expect(5, 2, colours::red);
+}
+
 // Catches achromatic/duplicate default identities in the real rendered borders.
 TEST(LoopPadRender, DefaultRenderedRingsAreDistinctAndChromatic) {
 	Fixture f;

@@ -23,12 +23,14 @@ public:
 	virtual ~ProbeUI() = default;
 	virtual bool opened() { return true; }
 	virtual void focusRegained() {}
+	virtual void graphicsRoutine();
 	void close();
 };
 extern ProbeUI* probeCurrentUI;
 extern ProbeUI* probeRootUI;
 extern unsigned probeRenderRequests;
 extern std::vector<ProbeUI*> probeRenderTargets;
+extern std::vector<std::pair<uint32_t, uint32_t>> probeRenderRows;
 extern unsigned probeOledRequests;
 extern uint64_t probeSampleClock;
 namespace AudioEngine {
@@ -38,7 +40,7 @@ bool openUI(ProbeUI* ui);
 void changeRootUI(ProbeUI* ui);
 ProbeUI* getCurrentUI();
 ProbeUI* getRootUI();
-void uiNeedsRendering(ProbeUI* ui);
+void uiNeedsRendering(ProbeUI* ui, uint32_t mainRows = 0xffffffff, uint32_t sideRows = 0xffffffff);
 void renderUIsForOled();
 
 class Song {
@@ -112,7 +114,7 @@ class LoopStationView : public ProbeUI {
 public:
 	bool opened() override;
 	void focusRegained() override;
-	void graphicsRoutine();
+	void graphicsRoutine() override;
 	ActionResult timerCallback();
 	ActionResult padAction(int32_t, int32_t, int32_t);
 	ActionResult buttonAction(deluge::hid::Button, bool, bool);

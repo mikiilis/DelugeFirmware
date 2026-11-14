@@ -50,6 +50,16 @@ TEST(LoopView, PendingAndErrorPulseUsesSampleClock) {
 	CHECK_FALSE(visualPulseOn(123, 0));
 }
 
+TEST(LoopView, SelectedRingUsesRecordPulsePeriod) {
+	CHECK_EQUAL(0, selectionPulseLevel(0));
+	CHECK_EQUAL(255, selectionPulseLevel(11025));
+	CHECK_EQUAL(0, selectionPulseLevel(22050));
+	CHECK_EQUAL(selectionPulseLevel(5000), selectionPulseLevel(27050));
+	CHECK_EQUAL(selectionPulseLevel(5000),
+	            selectionPulseLevel(std::numeric_limits<SampleClock>::max()
+	                                - (std::numeric_limits<SampleClock>::max() % 22050) - 22050 + 5000));
+}
+
 TEST(LoopView, PendingActionShowsItsRecordActionDependentDestination) {
 	CHECK_EQUAL(static_cast<int>(PendingDestination::Capture),
 	            static_cast<int>(pendingDestination(PendingAction::Initial, RecordAction::REC_PLAY_DUB)));

@@ -12,7 +12,7 @@ The demo starts with playing, recording, overdubbing, stopped and empty tracks. 
 
 ## What it can do
 
-The preview's **Track settings** shortcut and **SHIFT** toggle are browser-only conveniences. Settings edits are temporary; Reset Demo restores the examples. Audio and memory readouts are illustrative, not device measurements. Any selected/settings-focused ring pulse shown in the preview is illustrative and **not implemented in firmware**; that feature is deferred. The shared settings controls below are implemented and host-tested, not hardware-accepted.
+The preview's **Track settings** shortcut and **SHIFT** toggle are browser-only conveniences. Settings edits are temporary; Reset Demo restores the examples. Audio and memory readouts are illustrative, not device measurements. The selected/settings-focused ring pulse and selected-track OLED label are implemented and host-tested in firmware; physical brightness and legibility remain unverified. The shared settings controls are likewise host-tested, not hardware-accepted.
 
 - Record and play up to eight audio phrases at once.
 - Overdub a playing phrase and keep each track at its own length.

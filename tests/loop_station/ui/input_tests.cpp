@@ -52,6 +52,85 @@ struct RenderedPads {
 };
 } // namespace
 
+TEST(LoopUi, TrackSettingsPulsesAddressedRingWithoutChangingSelectedTrack) {
+	Fixture f;
+	f.view.padAction(0, 7, 100);
+	CHECK_EQUAL(0, f.model->engine().selected());
+	CHECK_TRUE(loopStationSettingsMenu.openTrack(5));
+	POINTERS_EQUAL(&loopStationSettingsMenu, getCurrentUI());
+	probeSampleClock = 0;
+	const RenderedPads low(f);
+	probeSampleClock = 11025;
+	const RenderedPads high(f);
+	CHECK(high.image[3][4].r > low.image[3][4].r);      // Track 6 is settings focus.
+	CHECK_EQUAL(low.image[7][0].r, high.image[7][0].r); // Engine-selected Track 1 is not.
+	CHECK_EQUAL(0, f.model->engine().selected());
+	loopStationSettingsMenu.buttonAction(BACK, true, false);
+	POINTERS_EQUAL(&f.view, getCurrentUI());
+	probeSampleClock = 0;
+	const RenderedPads rootLow(f);
+	probeSampleClock = 11025;
+	const RenderedPads rootHigh(f);
+	CHECK(rootHigh.image[7][0].r > rootLow.image[7][0].r);
+	CHECK_EQUAL(rootLow.image[3][4].r, rootHigh.image[3][4].r);
+}
+
+TEST(LoopUi, SettingsGraphicsTickRequestsOnlyUnderlyingMainPads) {
+	Fixture f;
+	CHECK_TRUE(loopStationSettingsMenu.openTrack(5));
+	probeRenderTargets.clear();
+	probeRenderRows.clear();
+	probeOledRequests = 0;
+	indicator_leds::states[IndicatorLED::SYNTH] = true;
+	for (auto time : {SampleClock{0}, SampleClock{11025}}) {
+		probeSampleClock = time;
+		getCurrentUI()->graphicsRoutine();
+	}
+	CHECK_EQUAL(2, probeRenderRows.size());
+	for (size_t i = 0; i < probeRenderRows.size(); ++i) {
+		POINTERS_EQUAL(&f.view, probeRenderTargets[i]);
+		CHECK_EQUAL(0xff, probeRenderRows[i].first);
+		CHECK_EQUAL(0, probeRenderRows[i].second);
+	}
+	CHECK_EQUAL(0, probeOledRequests);
+	CHECK_TRUE(indicator_leds::states[IndicatorLED::SYNTH]);
+}
+
+TEST(LoopUi, GlobalAndFailedTrackSettingsKeepSelectedFocus) {
+	Fixture f;
+	f.view.padAction(0, 7, 100);
+	CHECK_TRUE(loopStationSettingsMenu.openGlobal());
+	CHECK_EQUAL(kInvalidSlot, loopStationSettingsMenu.focusedTrack());
+	probeSampleClock = 0;
+	const RenderedPads low(f);
+	probeSampleClock = 11025;
+	const RenderedPads high(f);
+	CHECK(high.image[7][0].r > low.image[7][0].r);
+	loopStationSettingsMenu.buttonAction(BACK, true, false);
+	f.host.failAllocation = true;
+	CHECK_FALSE(loopStationSettingsMenu.openTrack(6));
+	POINTERS_EQUAL(&f.view, getCurrentUI());
+	CHECK_EQUAL(kInvalidSlot, loopStationSettingsMenu.focusedTrack());
+	CHECK_EQUAL(0, f.model->engine().selected());
+}
+
+TEST(LoopUi, FallbackCopyReviewKeepsAddressedFocusAndPadsOnlyTick) {
+	Fixture f;
+	f.view.padAction(0, 7, 100);
+	CHECK_TRUE(loopStationSettingsMenu.openTrack(5));
+	CHECK_EQUAL(5, loopStationSettingsMenu.focusedTrack());
+	loopStationSettingsMenu.requestCopyReview();
+	probeRenderTargets.clear();
+	probeRenderRows.clear();
+	probeOledRequests = 0;
+	getCurrentUI()->graphicsRoutine();
+	CHECK_EQUAL(5, loopStationSettingsMenu.focusedTrack());
+	CHECK_EQUAL(1, probeRenderRows.size());
+	CHECK_EQUAL(0xff, probeRenderRows.front().first);
+	CHECK_EQUAL(0, probeRenderRows.front().second);
+	CHECK_EQUAL(0, probeOledRequests);
+}
+
 // Catches wrong-track edits and menu-only invalidation that leaves the root ring stale.
 TEST(LoopUi, EveryTrackConfigOffersColourAndChangesOnlyItsRing) {
 	constexpr Colour next[] = {Colour::Lime, Colour::Sky,   Colour::Purple, Colour::Magenta,

@@ -112,9 +112,11 @@ void compareImages(const Canvas& actual, const Canvas& expected) {
 	}
 }
 
-void composeRootExpected(Canvas& canvas, MemoryProfile profile, bool unsaved, bool undo) {
+void composeRootExpected(Canvas& canvas, MemoryProfile profile, bool unsaved, bool undo, loop_station::SlotId slot) {
 	canvas.clear();
-	canvas.drawString("Loop Station", 0, 6, kTextTitleSpacingX, kTextTitleSizeY);
+	char title[24];
+	std::snprintf(title, sizeof(title), "Loop Track %u", slot + 1);
+	canvas.drawString(title, 0, 6, kTextTitleSpacingX, kTextTitleSizeY);
 	canvas.drawString(profile == MemoryProfile::TenSecond ? "26.9 MiB / 10s" : "32 MiB / ~12s x8", 0, 20, kTextSpacingX,
 	                  kTextSizeYUpdated);
 	canvas.drawString(unsaved ? "Unsaved audio" : "Saved", 0, 30, kTextSpacingX, kTextSizeYUpdated);
@@ -129,20 +131,38 @@ void testRootShowsAllStatusRows() {
 	LoopStationView view;
 	for (auto profile : {MemoryProfile::Preferred, MemoryProfile::TenSecond}) {
 		loop_station::testConfiguredMemoryProfile = profile;
-		for (bool unsaved : {false, true}) {
-			for (bool undo : {false, true}) {
-				model.unsaved = unsaved;
-				model.undoAvailable = undo;
-				Canvas actual, expected;
-				imageContext = "root rows";
-				initialize(actual);
-				composeRootExpected(expected, profile, unsaved, undo);
-				view.renderOLED(actual);
-				compareImages(actual, expected);
-				checkCanaries(actual);
+		for (loop_station::SlotId selected : {loop_station::SlotId{0}, loop_station::SlotId{7}}) {
+			model.testEngine.selectedSlot = selected;
+			for (bool unsaved : {false, true}) {
+				for (bool undo : {false, true}) {
+					model.unsaved = unsaved;
+					model.undoAvailable = undo;
+					Canvas actual, expected;
+					imageContext = "root rows";
+					initialize(actual);
+					composeRootExpected(expected, profile, unsaved, undo, selected);
+					view.renderOLED(actual);
+					compareImages(actual, expected);
+					checkCanaries(actual);
+				}
 			}
 		}
 	}
+	model.testEngine.selectedSlot = loop_station::kInvalidSlot;
+	Canvas actual, expected;
+	imageContext = "root invalid selection";
+	initialize(actual);
+	expected.clear();
+	expected.drawString("Loop Station", 0, 6, kTextTitleSpacingX, kTextTitleSizeY);
+	expected.drawString("32 MiB / ~12s x8", 0, 20, kTextSpacingX, kTextSizeYUpdated);
+	expected.drawString("Saved", 0, 30, kTextSpacingX, kTextSizeYUpdated);
+	expected.drawString("Undo ready", 0, 40, kTextSpacingX, kTextSizeYUpdated);
+	loop_station::testConfiguredMemoryProfile = MemoryProfile::Preferred;
+	model.unsaved = false;
+	model.undoAvailable = true;
+	view.renderOLED(actual);
+	compareImages(actual, expected);
+	checkCanaries(actual);
 }
 
 void testRootWithoutModelShowsOnlyTitle() {

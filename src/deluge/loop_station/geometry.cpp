@@ -43,4 +43,11 @@ bool visualPulseOn(SampleClock sample, SampleClock halfPeriodSamples) {
 	return halfPeriodSamples != 0 && ((sample / halfPeriodSamples) & 1u) != 0;
 }
 
+uint8_t selectionPulseLevel(SampleClock sample) {
+	constexpr SampleClock halfPeriod = 11025;
+	const SampleClock phase = sample % (2 * halfPeriod);
+	const SampleClock distance = phase <= halfPeriod ? phase : 2 * halfPeriod - phase;
+	return static_cast<uint8_t>((255 * distance) / halfPeriod);
+}
+
 } // namespace loop_station

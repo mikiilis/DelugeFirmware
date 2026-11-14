@@ -70,6 +70,7 @@ struct Fixture {
 		Buttons::shiftPressed = false;
 		probeRenderRequests = 0;
 		probeRenderTargets.clear();
+		probeRenderRows.clear();
 		probeOledRequests = 0;
 		probeSampleClock = host.time;
 		auto& menu = deluge::gui::menu_item::loop_station::loopStationSettingsMenu;
@@ -96,6 +97,7 @@ struct Fixture {
 		probeCurrentUI = nullptr;
 		probeRootUI = nullptr;
 		probeRenderTargets.clear();
+		probeRenderRows.clear();
 		sdRoutineLock = false;
 		Buttons::shiftPressed = false;
 		Buttons::selectPressed = Buttons::selectButtonPressUsedUp = false;

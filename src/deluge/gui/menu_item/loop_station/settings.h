@@ -13,7 +13,9 @@ public:
 	bool openGlobal();
 	bool openTrack(ls::SlotId slot);
 	bool opened() override;
+	void graphicsRoutine() override;
 	bool useHorizontalMenu() const;
+	ls::SlotId focusedTrack() const;
 	void requestCopyReview();
 	void confirmCopy();
 	void cancelCopyReview();

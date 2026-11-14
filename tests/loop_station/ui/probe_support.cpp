@@ -7,6 +7,7 @@ ProbeUI* probeCurrentUI = nullptr;
 ProbeUI* probeRootUI = nullptr;
 unsigned probeRenderRequests = 0;
 std::vector<ProbeUI*> probeRenderTargets;
+std::vector<std::pair<uint32_t, uint32_t>> probeRenderRows;
 unsigned probeOledRequests = 0;
 uint64_t probeSampleClock = 0;
 namespace AudioEngine {
@@ -47,9 +48,14 @@ void ProbeUI::close() {
 	if (probeCurrentUI)
 		probeCurrentUI->focusRegained();
 }
-void uiNeedsRendering(ProbeUI* ui) {
+void ProbeUI::graphicsRoutine() {
+	if (probeRootUI && probeRootUI != this)
+		probeRootUI->graphicsRoutine();
+}
+void uiNeedsRendering(ProbeUI* ui, uint32_t mainRows, uint32_t sideRows) {
 	++probeRenderRequests;
 	probeRenderTargets.push_back(ui);
+	probeRenderRows.emplace_back(mainRows, sideRows);
 }
 void renderUIsForOled() {
 	++probeOledRequests;

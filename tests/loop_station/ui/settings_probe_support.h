@@ -9,7 +9,9 @@ public:
 	bool openGlobal();
 	bool openTrack(::loop_station::SlotId);
 	bool opened() override;
+	void graphicsRoutine() override;
 	bool useHorizontalMenu() const;
+	::loop_station::SlotId focusedTrack() const;
 	void requestCopyReview();
 	void confirmCopy();
 	void cancelCopyReview();

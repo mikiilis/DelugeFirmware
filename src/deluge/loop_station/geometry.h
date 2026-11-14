@@ -36,4 +36,7 @@ uint8_t clearHoldSweepPads(SampleClock heldSamples, SampleClock holdDurationSamp
 // Stable visual phase for pending/error pulses, independent of audio tempo.
 bool visualPulseOn(SampleClock sample, SampleClock halfPeriodSamples = 11025);
 
+// Brightness phase sharing the existing record/overdub visual pulse period.
+uint8_t selectionPulseLevel(SampleClock sample);
+
 } // namespace loop_station

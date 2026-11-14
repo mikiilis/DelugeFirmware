@@ -549,8 +549,8 @@
       </p>
       <div class="toolbar">
         <div class="toolbar-left">
-          <span class="toolbar-label">Progress animation</span>
-          <span class="animation-mode">Clockwise filling ring</span>
+          <span class="toolbar-label">Progress + selection animation</span>
+          <span class="animation-mode">Clockwise ring · selected track pulses</span>
         </div>
         <div>
           <button type="button" class="text-button" id="freeze">
@@ -602,7 +602,7 @@
             <div class="display-bezel">
               <div class="oled" role="status" aria-label="Selected loop">
                 <div class="oled-title">
-                  <span id="oled-title">LOOP STATION</span><span id="oled-page">112 BPM</span>
+                   <span id="oled-title">LOOP · TRACK 1</span><span id="oled-page">112 BPM</span>
                 </div>
                 <div class="settings-columns" id="settings-columns"></div>
                 <div class="oled-row">
@@ -694,7 +694,7 @@
         </div>
       </div>
       <p class="hint">
-        Filling ring selected. Try the centre-pad gestures and sidebar controls.
+        Track 1 selected. Its ring pulses; tap another border to move the selection.
       </p>
     </main>
     <script>
@@ -769,6 +769,15 @@
         const sourceOptions = ["Left", "Right", "Stereo", "Balanced"]
         const wrap = (n, count) => ((n % count) + count) % count
         const shiftActive = () => shiftLatched || shiftHeld
+        function selectedTrackTitle(trackIndex) {
+          return "LOOP · TRACK " + (trackIndex + 1)
+        }
+        function selectionBrightness(trackIndex, selectedIndex, state, pulse, filled, reducedMotion) {
+          if (trackIndex !== selectedIndex || state === "recording" || state === "overdubbing") return null
+          const level = reducedMotion ? 1 : (pulse - 0.25) / 0.6
+          if (state === "playing") return filled ? 0.5 + 0.5 * level : 0.12 + 0.13 * level
+          return 0.14 + 0.36 * level
+        }
         const feedback = (text) => {
           document.getElementById("preview-feedback").textContent = text
         }
@@ -803,7 +812,7 @@
           settingIndex = Math.min(settingIndex, Math.max(0, fields.length - 1))
           const page = Math.floor(settingIndex / 4)
           const pages = Math.ceil(fields.length / 4)
-          document.getElementById("oled-title").textContent = opened ? (settingsScope === "track" ? "TRACK " + (selected + 1) + " SETTINGS" : "GLOBAL SETTINGS") : "LOOP STATION"
+          document.getElementById("oled-title").textContent = opened ? (settingsScope === "track" ? "TRACK " + (selected + 1) + " SETTINGS" : "GLOBAL SETTINGS") : selectedTrackTitle(selected)
           document.getElementById("oled-page").textContent = opened ? (page + 1) + "/" + pages : "112 BPM"
           const columns = document.getElementById("settings-columns")
           columns.replaceChildren()
@@ -946,7 +955,7 @@
         function updateUI() {
           const t = tracks[selected]
           document.getElementById("oled-track").textContent =
-            "TRACK " + (selected + 1)
+            "TRACK " + (selected + 1) + " · SELECTED"
           document.getElementById("oled-state").textContent = labels[t.state]
           document.getElementById("oled-source").textContent =
             "IN: " + sourceOptions[t.settings.source].toUpperCase()
@@ -1228,6 +1237,7 @@
           // LEDs update at 30 fps; each loop has its own actual demo length and phase.
           if (now - lastPaint >= 32 || lastPaint === -1) {
             lastPaint = now
+            const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches
             tracks.forEach((t, i) => {
               const s = t.state
               const phase =
@@ -1254,9 +1264,13 @@
                 else if (s === "recording" || s === "overdubbing")
                   color = dim(stateColors[s], pulse)
                 else if (s === "playing") {
-                  const intensity = p.ringIndex <= head ? 0.95 : 0.13
+                  const filled = p.ringIndex <= head
+                  const intensity = selectionBrightness(i, selected, s, pulse, filled, reducedMotion) ?? (filled ? 0.95 : 0.13)
                   color = dim(colourOptions[t.settings.colour][1], intensity)
-                } else color = dim(colourOptions[t.settings.colour][1], s === "empty" ? 0.1 : 0.2)
+                } else {
+                  const intensity = selectionBrightness(i, selected, s, pulse, false, reducedMotion) ?? (s === "empty" ? 0.1 : 0.2)
+                  color = dim(colourOptions[t.settings.colour][1], intensity)
+                }
                 if (color !== p.paint) {
                   p.element.style.background = color
                   p.element.style.boxShadow =
@@ -1276,7 +1290,7 @@
                 progressText(now)
             else
               document.getElementById("oled-hint").textContent =
-                "BORDER SELECTS TRACK / FX"
+                "TAP BORDER · RING PULSES"
           }
           requestAnimationFrame(animate)
         }
