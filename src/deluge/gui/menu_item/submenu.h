@@ -69,6 +69,7 @@ public:
 	[[nodiscard]] bool showNotification() const override { return false; }
 
 protected:
+	virtual bool isChildRelevant(MenuItem* item) const;
 	deluge::vector<MenuItem*> items;
 	typename decltype(items)::iterator current_item_;
 	uint32_t initial_index_ = 0;

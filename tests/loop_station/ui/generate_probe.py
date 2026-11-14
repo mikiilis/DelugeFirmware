@@ -53,6 +53,66 @@ def main() -> None:
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(text)
 
+    # Shared-menu declarations and bodies are taken from production, never reimplemented.
+    menu_dir = args.settings_view.parent.parent
+    declarations = []
+    for name in ("submenu", "horizontal_menu"):
+        header = (menu_dir / f"{name}.h").read_text()
+        declarations.append(
+            "\n".join(
+                line
+                for line in header.splitlines()
+                if not line.startswith("#include") and line != "#pragma once"
+            )
+        )
+    (args.output.parent / "shared_menu_declarations.h").write_text(
+        "\n".join(declarations)
+    )
+    submenu = (menu_dir / "submenu.cpp").read_text()
+    horizontal = (menu_dir / "horizontal_menu.cpp").read_text()
+    decimal = (menu_dir / "decimal.cpp").read_text()
+    menu_item = (menu_dir / "menu_item.cpp").read_text()
+    value = (menu_dir / "value.h").read_text()
+    bodies = [
+        section(
+            menu_item + "\n// probe end", "void MenuItem::endSession", "// probe end"
+        ),
+        section(
+            value,
+            "template <typename T>\nvoid Value<T>::selectEncoderAction",
+            "template <typename T>\nvoid Value<T>::readValueAgain",
+        ),
+        section(
+            submenu,
+            "bool Submenu::isChildRelevant",
+            "void Submenu::renderInHorizontalMenu",
+        ),
+        section(submenu, "bool Submenu::wrapAround", "void Submenu::unlearnAction"),
+        section(
+            submenu, "void Submenu::updatePadLights", "bool Submenu::usesAffectEntire"
+        ),
+        section(
+            horizontal,
+            "void HorizontalMenu::beginSession",
+            "} // namespace deluge::gui::menu_item",
+        ),
+        section(decimal, "int32_t Decimal::getNumberEditSize", "bool movingCursor"),
+        section(
+            decimal, "void Decimal::scrollToGoodPos", "void Decimal::drawPixelsForOled"
+        ),
+        section(
+            decimal,
+            "void Decimal::renderInHorizontalMenu",
+            "void DecimalWithoutScrolling::selectEncoderAction",
+        ),
+    ]
+    (args.output.parent / "shared_menu.cpp").write_text(
+        f'#include "{args.support.parent.as_posix()}/shared_probe_support.h"\n'
+        "namespace deluge::gui::menu_item {\nusing namespace hid::display;\n"
+        + "\n".join(bodies)
+        + "\n}\n"
+    )
+
 
 if __name__ == "__main__":
     main()

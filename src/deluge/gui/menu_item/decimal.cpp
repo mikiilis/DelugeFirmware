@@ -15,6 +15,7 @@
  * If not, see <https://www.gnu.org/licenses/>.
  */
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <stdint.h>
@@ -63,25 +64,12 @@ int32_t Decimal::getNumberEditSize() {
 }
 
 void Decimal::selectEncoderAction(int32_t offset) {
-	setValue(getValue() + offset * getNumberEditSize());
+	const int64_t next = static_cast<int64_t>(getValue()) + static_cast<int64_t>(offset) * getNumberEditSize();
+	setValue(std::clamp<int64_t>(next, getMinValue(), getMaxValue()));
 
-	// If turned down
-	if (offset < 0) {
-		int32_t minValue = getMinValue();
-		if (getValue() < minValue) {
-			setValue(minValue);
-		}
+	if (parent == nullptr || parent->renderingStyle() != Submenu::RenderingStyle::HORIZONTAL) {
+		scrollToGoodPos();
 	}
-
-	// If turned up
-	else {
-		int32_t maxValue = getMaxValue();
-		if (getValue() > maxValue) {
-			setValue(maxValue);
-		}
-	}
-
-	scrollToGoodPos();
 
 	Number::selectEncoderAction(offset);
 }

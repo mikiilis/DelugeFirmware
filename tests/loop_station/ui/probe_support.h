@@ -10,6 +10,8 @@
 #include <algorithm>
 #include <array>
 #include <cstdio>
+#include <initializer_list>
+#include <map>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -54,19 +56,33 @@ struct ProbeDisplay {
 	std::string text;
 	std::vector<std::string> popups;
 	bool haveOLED() const { return oled; }
+	bool have7SEG() const { return !oled; }
+	bool notification = false;
+	bool hasPopupOfType(auto) const { return notification; }
+	void cancelPopup() { notification = false; }
+	void displayNotification(const char*, const char*) { notification = true; }
 	void setText(const char* value) { text = value; }
 	void displayPopup(const char* value) { popups.emplace_back(value); }
 };
 extern ProbeDisplay* display;
 namespace Buttons {
 extern bool shiftPressed;
+inline bool selectPressed = false, selectButtonPressUsedUp = false;
+inline bool isButtonPressed(deluge::hid::Button b) {
+	return (b == deluge::hid::button::SHIFT && shiftPressed) || (b == deluge::hid::button::SELECT_ENC && selectPressed);
+}
+inline bool isAnyOfButtonsPressed(std::initializer_list<deluge::hid::Button> buttons) {
+	return std::ranges::any_of(buttons, isButtonPressed);
+}
 inline bool isShiftButtonPressed() {
 	return shiftPressed;
 }
 } // namespace Buttons
-enum class IndicatorLED { CROSS_SCREEN_EDIT, SESSION_VIEW };
+enum class IndicatorLED { CROSS_SCREEN_EDIT, SESSION_VIEW, SCALE_MODE, SYNTH, KIT, MIDI, CV };
 namespace indicator_leds {
-inline void setLedState(IndicatorLED, bool) {
+inline std::map<IndicatorLED, bool> states;
+inline void setLedState(IndicatorLED led, bool on) {
+	states[led] = on;
 }
 inline void blinkLed(IndicatorLED) {
 }
@@ -105,6 +121,14 @@ public:
 	std::vector<std::string> lines;
 	void clear() { lines.clear(); }
 	void drawString(std::string_view text, int32_t, int32_t, int32_t, int32_t) { lines.emplace_back(text); }
+	int inversions = 0, underlines = 0, pixels = 0;
+	int getStringWidthInPixels(const char* text, int) { return std::string_view(text).size() * 6; }
+	void drawScreenTitle(std::string_view text, bool) { lines.emplace_back(text); }
+	void drawLine(int, int, int, int) {}
+	void drawStringCentered(const char* text, int, int, int, int, int) { lines.emplace_back(text); }
+	void invertAreaRounded(int, int, int, int) { ++inversions; }
+	void drawHorizontalLine(int, int, int) { ++underlines; }
+	void drawPixel(int, int) { ++pixels; }
 };
 } // namespace deluge::hid::display::oled_canvas
 

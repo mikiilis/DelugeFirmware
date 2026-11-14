@@ -3,16 +3,22 @@ set(LOOP_UI_PROBE "${CMAKE_CURRENT_BINARY_DIR}/generated/production_ui.cpp")
 set(LOOP_UI_VIEW "${CMAKE_CURRENT_SOURCE_DIR}/../../src/deluge/gui/views/loop_station_view.cpp")
 set(LOOP_UI_SETTINGS "${CMAKE_CURRENT_SOURCE_DIR}/../../src/deluge/gui/menu_item/loop_station/settings.cpp")
 add_custom_command(
-    OUTPUT "${LOOP_UI_PROBE}"
+    OUTPUT "${LOOP_UI_PROBE}" "${CMAKE_CURRENT_BINARY_DIR}/generated/shared_menu.cpp" "${CMAKE_CURRENT_BINARY_DIR}/generated/shared_menu_declarations.h"
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/ui/generate_probe.py"
             --loop-view "${LOOP_UI_VIEW}" --settings-view "${LOOP_UI_SETTINGS}"
             --support "${CMAKE_CURRENT_SOURCE_DIR}/ui/probe_support.h" --output "${LOOP_UI_PROBE}"
     DEPENDS ui/generate_probe.py ui/probe_support.h "${LOOP_UI_VIEW}" "${LOOP_UI_SETTINGS}"
+            ../../src/deluge/gui/menu_item/submenu.h ../../src/deluge/gui/menu_item/submenu.cpp
+            ../../src/deluge/gui/menu_item/horizontal_menu.h ../../src/deluge/gui/menu_item/horizontal_menu.cpp
+            ../../src/deluge/gui/menu_item/decimal.cpp
+            ../../src/deluge/gui/menu_item/menu_item.cpp ../../src/deluge/gui/menu_item/value.h
     VERBATIM
 )
 
 add_executable(LoopStationTests
     "${LOOP_UI_PROBE}"
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/shared_menu.cpp"
+    ui/shared_menu_tests.cpp
     ui/probe_support.cpp
     ui/input_tests.cpp
     main.cpp
@@ -58,7 +64,7 @@ add_executable(LoopStationTests
     ../../src/deluge/loop_station/page_pool.cpp
     ../../src/deluge/loop_station/persistence.cpp
 )
-target_include_directories(LoopStationTests PRIVATE ../../src ../../src/deluge ../../build/src/deluge)
+target_include_directories(LoopStationTests PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated" ../../src ../../src/deluge ../../build/src/deluge)
 target_compile_definitions(LoopStationTests PRIVATE CPPUTEST_MEM_LEAK_DETECTION_DISABLED LOOP_STATION_TEST_MODE=1 LOOP_STATION_HOST_TEST=1)
 target_link_libraries(LoopStationTests PRIVATE CppUTest etl::etl)
 set_target_properties(LoopStationTests PROPERTIES CXX_STANDARD 23 CXX_STANDARD_REQUIRED ON)

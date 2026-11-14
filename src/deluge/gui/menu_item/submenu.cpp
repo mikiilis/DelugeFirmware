@@ -8,6 +8,10 @@
 #include <algorithm>
 
 namespace deluge::gui::menu_item {
+bool Submenu::isChildRelevant(MenuItem* item) const {
+	return isItemRelevant(item);
+}
+
 void Submenu::beginSession(MenuItem* navigatedBackwardFrom) {
 	soundEditor.currentMultiRange = nullptr;
 
@@ -26,14 +30,14 @@ bool Submenu::focusChild(const MenuItem* child) {
 		// if the specific child is passed, try to find it among the items
 		// if not found or not relevant, keep the previous selection
 		auto candidate = std::find(items.begin(), items.end(), child);
-		if (candidate != items.end() && isItemRelevant(*candidate)) {
+		if (candidate != items.end() && isChildRelevant(*candidate)) {
 			current_item_ = candidate;
 		}
 	}
 
 	// If the current item isn't valid or isn't relevant, set to first relevant one instead.
-	if (current_item_ == items.end() || !isItemRelevant(*current_item_)) {
-		current_item_ = std::ranges::find_if(items, isItemRelevant); // Find first relevant item.
+	if (current_item_ == items.end() || !isChildRelevant(*current_item_)) {
+		current_item_ = std::ranges::find_if(items, [this](auto* item) { return isChildRelevant(item); });
 	}
 
 	return current_item_ != items.end();
@@ -66,7 +70,7 @@ void Submenu::drawPixelsForOled() {
 	etl::vector<MenuItem*, kOLEDMenuNumOptionsVisible> before = {};
 	for (auto it = current_item_ - 1; it != items.begin() - 1 && before.size() < before.capacity(); it--) {
 		MenuItem* menuItem = (*it);
-		if (menuItem->isRelevant(soundEditor.currentModControllable, soundEditor.currentSourceIndex)) {
+		if (isChildRelevant(menuItem)) {
 			before.push_back(menuItem);
 		}
 	}
@@ -76,7 +80,7 @@ void Submenu::drawPixelsForOled() {
 	etl::vector<MenuItem*, kOLEDMenuNumOptionsVisible> after = {};
 	for (auto it = current_item_; it != items.end() && after.size() < after.capacity(); it++) {
 		MenuItem* menuItem = (*it);
-		if (menuItem->isRelevant(soundEditor.currentModControllable, soundEditor.currentSourceIndex)) {
+		if (isChildRelevant(menuItem)) {
 			after.push_back(menuItem);
 		}
 	}
@@ -155,7 +159,7 @@ void Submenu::selectEncoderAction(int32_t offset) {
 					break;
 				}
 			}
-			if ((*current_item_)->isRelevant(soundEditor.currentModControllable, soundEditor.currentSourceIndex)) {
+			if (isChildRelevant(*current_item_)) {
 				lastRelevant = current_item_;
 				offset--;
 			}
@@ -175,7 +179,7 @@ void Submenu::selectEncoderAction(int32_t offset) {
 				}
 			}
 			current_item_--;
-			if ((*current_item_)->isRelevant(soundEditor.currentModControllable, soundEditor.currentSourceIndex)) {
+			if (isChildRelevant(*current_item_)) {
 				lastRelevant = current_item_;
 				offset++;
 			}
@@ -191,6 +195,9 @@ bool Submenu::shouldForwardButtons() {
 }
 
 MenuItem* Submenu::selectButtonPress() {
+	if (current_item_ == items.end()) {
+		return nullptr;
+	}
 	if (shouldForwardButtons()) {
 		// In horizontal menus, some items (e.g. patch cable menus like vibrato)
 		// should enter their own full-screen session before handling SELECT.

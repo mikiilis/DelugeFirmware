@@ -59,11 +59,19 @@ public:
 
 	virtual bool hasItem(const MenuItem* item);
 	decltype(items)& getItems() { return items; }
-	MenuItem* getCurrentItem() const { return *current_item_; }
+	MenuItem* getCurrentItem() const { return current_item_ == items.end() ? nullptr : *current_item_; }
 	bool selectEncoderActionEditsInstrument() override;
 
 protected:
-	Paging paging;
+	// Override editor services together when embedding the menu in another UI host.
+	// Shared lifecycle methods retain parent-pointer and temporary LED ownership.
+	virtual void beginHostSession(MenuItem* from);
+	virtual void endHostSession();
+	virtual MenuPermission initializeItem(MenuItem* item);
+	virtual void handleItemAction(MenuItem* item);
+	virtual bool trySwitchHorizontalMenu(int32_t direction);
+	virtual double calcNextKnobSpeed(int8_t offset);
+	Paging paging{};
 	Layout layout{DYNAMIC};
 	int32_t lastSelectedItemPosition{kNoSelection};
 
@@ -77,15 +85,12 @@ protected:
 
 private:
 	void updateSelectedMenuItemLED(int32_t itemNumber) const;
-	static void handleItemAction(MenuItem* menuItem);
 	static void displayNotification(MenuItem* menuItem);
 	void renderTitle(const Paging& paging) const;
 	static void renderPageCounters(const Paging& paging);
 	static void renderColumnLabel(MenuItem* menuItem, int32_t labelY, int32_t slotStartX, int32_t slotWidth,
 	                              bool isSelected);
-	static MenuPermission initializeItem(MenuItem* menuItem);
 
 	static deluge::hid::encoders::EncoderAcceleration& acceleration();
-	double calcNextKnobSpeed(int8_t offset);
 };
 } // namespace deluge::gui::menu_item
