@@ -1,10 +1,10 @@
 # Loop Station shared settings UI — verification/device handoff
 
-November 14, 2026; branch `feature/loop-station-implementation`; source HEAD `ad68c6a7`.
+November 14, 2026; branch `feature/loop-station-implementation`; final reviewed source HEAD `f7e9905f`.
 
 ## Outcome and scope
 
-Integrated host verification and Release build **PASS**. Device acceptance **NOT_RUN**. Final independent whole-branch review **PENDING parent session**; implementer self-review is not independent approval. No feature edits, merge, push or device flashing occurred in Task 6.
+Integrated host verification and Release build **PASS**. Device acceptance **NOT_RUN**. Final independent whole-branch review: **APPROVED with Minor findings**; no Critical or Important findings. No feature edits, merge, push or device flashing occurred in Task 6.
 
 By user ruling, ring pulse, settings-focus override and pulse redraw scheduling are **OUT OF SCOPE**, for separate future planning/implementation. Pulse is **not implemented or accepted here**; its exclusion does not make the amended plan incomplete. CTest's general `pulse_rendering_spec` is unrelated to Loop Station pulse acceptance.
 
@@ -52,12 +52,12 @@ Static demo contract passed in CTest (2 tests per Task 5 report). Browser intera
 
 - `DBT_NO_SYNC=1 ./dbt build Release`: **PASS**; ARM version object compiled and ELF linked (incremental build).
 - BIN: `/Users/mikiilis/Documents/code/DelugeFirmware/build/Release/deluge-v1_3_0-dev+2026_11_14-43f7427a.bin`.
-- Size: **1,932,536 bytes**.
-- SHA-256: **`5c17742d89491898bd56367540b0a9f734844a40014010c8a74f62eb424ee13b`**.
-- Embedded NUL-terminated version, inspected directly in BIN: **`1.3.0-dev-ad68c6a7-dirty`**; build prints `v1.3.0-dev-ad68c6a7-dirty`.
-- ELF: `build/Release/deluge-v1_3_0-dev+2026_11_14-43f7427a.elf`; text **1,861,944**, data **70,544**, bss **402,596**.
+- After the final report/plan commit, a fresh incremental `DBT_NO_SYNC=1 ./dbt build Release` at HEAD `f7e9905f` succeeded. Current BIN size: **1,932,504 bytes**.
+- Current BIN SHA-256: **`df7c306bb5b5aceb81976d50b84f8511cb98f52d4b25c15560d89be722d356ee`**.
+- Embedded NUL-terminated version and build output: **`1.3.0-dev-f7e9905f-dirty`** / `v1.3.0-dev-f7e9905f-dirty`.
+- ELF: `build/Release/deluge-v1_3_0-dev+2026_11_14-43f7427a.elf`; text **1,861,932**, data **70,544**, bss **402,596**. The configured output filename still contains stale hash `43f7427a`; identify this artifact by its SHA-256 and embedded version.
 
-The filename retains the older configured hash `43f7427a`, **not** this handoff's source revision. Identify this BIN by SHA-256 and embedded version. Source HEAD was `ad68c6a7`; dirty status included the pre-existing approved plan adjustment/user HTML modification. This artifact predates the report/plan-only documentation commit and is not rebuilt/relabelled afterward. Older BINs coexist; do not substitute them.
+The filename retains the older configured hash `43f7427a`, **not** this handoff's source revision. Identify the current BIN by its SHA-256 and embedded version. Its build used source HEAD `f7e9905f`; dirty status reflects the pre-existing user HTML modification and `.openchamber/` artifacts. The generated output filename was not renamed. Older BINs coexist; do not substitute them.
 
 ### Warnings and baseline limitations
 
@@ -65,7 +65,7 @@ This Release run emitted the **RWX LOAD-segment** linker warning, already report
 
 ## Review gate
 
-Implementer self-review checked shared default hooks/editor isolation, stable item/parent lifetime, conditional selection, Copy latch and card-release ordering, per-item acceleration, checked real renderer extraction and fallback. No new actionable defect or feature edit resulted. Earlier Tasks 1–3 have approved independent reviews; Task 5 records self-review. **Final independent whole-branch review is PENDING parent session** under the user-selected reviewer model/reasoning policy. Task 6 Step 3 remains unchecked; this commit is not final review approval.
+Implementer self-review checked shared default hooks/editor isolation, stable item/parent lifetime, conditional selection, Copy latch and card-release ordering, per-item acceleration, checked real renderer extraction and fallback. Final whole-branch review used the selected `gpt-6-luna / high` model and approved with no Critical/Important findings. Two Minors are deferred per review policy: (1) some global plan constraints/review-focus/file-responsibility text still describes pulse as in scope despite the current user ruling moving it to a separate plan; (2) native option strings in `settings_items.cpp` remain hardcoded English. These are recorded in the SDD ledger and were not changed in the final review fix pass. Earlier Tasks 1–3 have approved independent reviews; Task 5's independent review also approved. Task 6 Step 3 is complete.
 
 ## Device acceptance — all NOT_RUN
 
