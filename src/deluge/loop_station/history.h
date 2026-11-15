@@ -55,6 +55,9 @@ private:
 	// `reclaimBoundary` applies the policy to a chosen boundary root.
 	void reclaimOldestBoundary();
 	void reclaimBoundary(unsigned root);
+	// Retire a boundary together with every dependent successor so a later Redo
+	// cannot skip the removed step. Used for interior boundaries.
+	void fenceForward(unsigned root);
 	struct Retirement {
 		unsigned current = none;
 		Generation identity = 0;

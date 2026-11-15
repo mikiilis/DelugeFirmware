@@ -352,3 +352,46 @@ TEST(LoopHistory, EvictedInitialBoundaryCannotReappearAfterDescriptorReuse) {
 		serviceRetirement(16);
 	CHECK_EQUAL(freeWithBaseOnly, pool.freePages());
 }
+// Losing a noninitial forward boundary must fence its dependent range: once the
+// initial boundary has been evicted under pressure (current audio nonempty) and
+// the cursor has been undone back to the start, evicting the next boundary must
+// not let a single Redo publish the cumulative later version.
+TEST(LoopHistory, NonemptyCurrentRedoCannotSkipAnEvictedInteriorBoundary) {
+	CHECK(Status::Ok == history.initialize(std::span(arena).first(2 * kPageBytes)));
+	phrase(0, 3); // Initial boundary I.
+	dub(0, 1);    // Boundary A captures one before-image page.
+	CHECK(Status::Ok == audio.setCaptureGate(0, false));
+	dub(0, 1); // Boundary B fills the two-page arena.
+	CHECK(Status::Ok == audio.setCaptureGate(0, false));
+	CHECK_EQUAL(2, history.retainedPages()); // The arena is now full.
+	CHECK_EQUAL(3, history.retainedSessions());
+	// Other-slot pressure during beforeWrite evicts the oldest boundary (the
+	// initial I) while the cursor stays on B and the current audio is nonempty.
+	phrase(1, 3);
+	dub(1, 1);
+	CHECK(Status::Ok == audio.setCaptureGate(1, false));
+	for (unsigned i = 0; i < 100 && history.retirementPending(); ++i)
+		serviceRetirement(16);
+	CHECK_EQUAL(3, history.retainedSessions()); // A and B remain; I is gone.
+	// Undo B then A: audio is I, cursor none, forward boundary A (single step).
+	restoreStep(0, false);
+	restoreStep(0, false);
+	CHECK(history.canRedo(0)); // Redo A is still exactly one step from I.
+	// Descriptor/page pressure on track 1 now evicts the remaining head A.
+	CHECK(Status::Ok == audio.setCaptureGate(1, true));
+	const Frame addition{7, -7};
+	Frame output{};
+	audio.render(1, {&addition, 1}, {&output, 1});
+	CHECK(Status::Ok == audio.setCaptureGate(1, false));
+	// B depends on the removed A: no Redo may publish the cumulative version.
+	CHECK_FALSE(history.canRedo(0));
+	CHECK_FALSE(history.canUndo(0)); // Cursor is at the start; nothing earlier remains.
+	RestoreId redo{};
+	CHECK(Status::SourceUnavailable == history.requestRestore(0, true, redo));
+	// The retained live audio is untouched and its dependent version is reclaimed.
+	CHECK_EQUAL(3, pool.length(pool.sealedHandle(0)));
+	CHECK_EQUAL(1, pool.frame(pool.sealedHandle(0), 0)->l);
+	for (unsigned i = 0; i < 200 && (history.retirementPending() || pool.retirementPending()); ++i)
+		serviceRetirement(16);
+	CHECK_FALSE(history.retirementPending());
+}

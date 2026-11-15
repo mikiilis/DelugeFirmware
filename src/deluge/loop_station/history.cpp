@@ -77,18 +77,49 @@ void History::reclaimBoundary(unsigned root) {
 		resetSlot(owner); // Never remove an incomplete fence alone.
 		return;
 	}
-	if (!sessions_[root].initial) {
-		discard(root);
+	// Contiguity: losing a boundary must never let a later Redo skip its edit.
+	// Removing the head while the cursor sits at the start (current audio is the
+	// pre-head base) makes the remaining range reachable only by a cumulative
+	// Redo, so retire the whole forward chain -- initial or not, empty or not.
+	// Removing the head with the cursor later in the chain re-roots a still
+	// contiguous retained range and only the head is spliced out. Any interior
+	// boundary always takes its dependent range with it.
+	if (sessions_[root].previous == none) {
+		if (validSlot(owner) && slots_[owner].active == none && slots_[owner].cursor == none)
+			resetSlot(owner);
+		else
+			discard(root);
 		return;
 	}
-	// An undone initial boundary is the base of a dependent Redo branch. Retire
-	// the whole unreachable range so Redo cannot publish across the lost base;
-	// otherwise only the base is dropped and canRedo/requestRestore fence the
-	// remaining branch (only a genuine initial may Redo onto an empty track).
-	if (validSlot(owner) && slots_[owner].active == none && slots_[owner].cursor == none)
-		resetSlot(owner);
-	else
-		discard(root);
+	fenceForward(root);
+}
+void History::fenceForward(unsigned root) {
+	if (root == none || root >= kMaxSessions || !sessions_[root].identity || sessions_[root].retiring)
+		return;
+	const auto previous = sessions_[root].previous;
+	const auto owner = sessions_[root].handle.slot;
+	if (validSlot(owner)) {
+		auto& slot = slots_[owner];
+		if (slot.head == root)
+			slot.head = none;
+		for (unsigned id = root; id != none; id = sessions_[id].next) {
+			if (slot.cursor == id)
+				slot.cursor = previous;
+			if (slot.tail == id)
+				slot.tail = previous;
+			if (slot.latest == id)
+				slot.latest = previous;
+		}
+	}
+	if (previous != none)
+		sessions_[previous].next = none;
+	unsigned id = root;
+	while (id != none) {
+		const auto next = sessions_[id].next;
+		sessions_[id].previous = sessions_[id].next = none;
+		enqueueRetirement(id);
+		id = next;
+	}
 }
 void History::beginSession(SlotId slot, Generation generation) {
 	if (!pages_.ready() || !validSlot(slot))
