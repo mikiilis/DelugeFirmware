@@ -92,6 +92,10 @@ private:
 	Generation sequence_ = 0;
 	unsigned retirementCursor_ = 0;
 	unsigned findRecord(PhraseHandle) const;
+	// Publication/mutation eligibility: only a live sealed record may become (or
+	// be pinned as) a slot's active provider. A retiring record stays readable
+	// through findRecord for pinned snapshot reads but is never a candidate here.
+	unsigned findPublicationRecord(PhraseHandle) const;
 	uint32_t& page(unsigned record, uint32_t ordinal) {
 		return pageMap_[static_cast<size_t>(record) * mapStride_ + ordinal];
 	}

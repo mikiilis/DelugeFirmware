@@ -379,3 +379,51 @@ TEST(LoopPages, pinnedRecordDefersRetirementUntilUnpinnedThenReclaimsBoundedly) 
 	CHECK(Status::Stale == pool.pin(invalid));
 	CHECK(Status::Invalid == pool.unpin(invalid));
 }
+
+// A retiring pinned version stays readable through the read-through lookup but is
+// never a publication or reuse candidate: replace must not install it, and a new
+// phrase must not alias its generation. Release/drain then reclaims it.
+TEST(LoopPages, retiredRecordIsNotAPublicationCandidate) {
+	alignas(Frame) std::byte storage[4 * kPageBytes]{};
+	PagePool pool;
+	CHECK(Status::Ok == pool.initialize(storage));
+	std::vector<Frame> frames(5);
+	for (unsigned i = 0; i < frames.size(); ++i)
+		frames[i] = {int32_t(i + 1), -int32_t(i + 1)};
+	const auto live = sealReservedPhrase(pool, 0, frames);
+	CHECK(Status::Ok == pool.pin(live));
+	CHECK(Status::Ok == pool.retire(live));
+
+	// Rejected as a publication candidate; no mapping change.
+	PhraseHandle previous{};
+	CHECK(Status::Stale == pool.replace(live, previous));
+	CHECK_FALSE(previous.valid());
+	CHECK_FALSE(pool.sealedHandle(0).valid());
+	// Still readable while pinned.
+	CHECK_EQUAL(5, pool.length(live));
+	CHECK_EQUAL(3, pool.frame(live, 2)->l);
+	CHECK_EQUAL(-5, pool.frame(live, 4)->r);
+
+	// A fresh take claims a different generation; the pinned one is untouched.
+	PhraseHandle fresh{};
+	CHECK(Status::Ok == pool.beginPhrase(0, 3));
+	const Frame input[] = {{7, -7}, {8, -8}, {9, -9}};
+	FrameIndex accepted = 0;
+	CHECK(Status::Ok == pool.append(0, input, accepted));
+	CHECK_EQUAL(3, accepted);
+	CHECK(Status::Ok == pool.seal(0, fresh));
+	CHECK(fresh.generation != live.generation);
+	CHECK_EQUAL(5, pool.length(live));
+	CHECK_EQUAL(3, pool.frame(live, 2)->l);
+	CHECK_EQUAL(9, pool.frame(fresh, 2)->l);
+
+	// Release/drain reclaims every expected page with no permanent retirement.
+	CHECK(Status::Ok == pool.unpin(live));
+	CHECK(Status::Ok == pool.release(fresh));
+	for (unsigned i = 0; i < 16; ++i)
+		pool.serviceRetirement(16);
+	CHECK_FALSE(pool.retirementPending());
+	CHECK_EQUAL(4, pool.freePages());
+	CHECK_EQUAL(0, pool.length(live));
+	CHECK_EQUAL(0, pool.length(fresh));
+}

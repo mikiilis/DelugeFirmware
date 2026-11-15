@@ -318,3 +318,48 @@ TEST(LoopSnapshots, PreservedSnapshotIsInvalidatedByExplicitClear) {
 		pool.serviceRetirement(64);
 	CHECK_FALSE(pool.retirementPending());
 }
+
+// A retired-but-pinned source is still readable and must never be republished or
+// aliased: replace rejects it, a new take claims a fresh generation, and the
+// preserved view keeps its original frames until release/drain reclaims it.
+TEST(LoopSnapshots, RetiredPinnedSourceIsNotAPublicationCandidate) {
+	CHECK(Status::Ok == snapshots.initialize(arena));
+	const auto base = phrase(0, 5);
+	SnapshotId id;
+	CHECK(Status::Ok == snapshots.request(0, base.generation, id));
+	CHECK(Status::Ok == snapshots.preserve(0));
+	CHECK(Status::Ok == pool.retire(base));
+	CHECK(snapshots.valid(id));
+	Frame staging[5]{};
+	CHECK(Status::Ok == snapshots.read(id, 0, staging));
+	CHECK_EQUAL(1, staging[0].l);
+
+	// Publication of the obsolete handle is rejected; the active mapping is empty.
+	PhraseHandle previous{};
+	CHECK(Status::Stale == pool.replace(base, previous));
+	CHECK_FALSE(previous.valid());
+	CHECK_FALSE(pool.sealedHandle(0).valid());
+
+	// A new take claims a different generation and must not alias the pinned one.
+	const Frame input[] = {{7, -7}, {8, -8}, {9, -9}};
+	PhraseHandle fresh{};
+	CHECK(Status::Ok == pool.beginPhrase(0, 3));
+	FrameIndex accepted = 0;
+	CHECK(Status::Ok == pool.append(0, input, accepted));
+	CHECK(Status::Ok == pool.seal(0, fresh));
+	CHECK(fresh.generation != base.generation);
+	CHECK(snapshots.valid(id));
+	CHECK(Status::Ok == snapshots.read(id, 0, staging));
+	for (int i = 0; i < 5; ++i) {
+		CHECK_EQUAL(i + 1, staging[i].l);
+		CHECK_EQUAL(-(i + 1), staging[i].r);
+	}
+
+	snapshots.release(id);
+	CHECK(Status::Ok == pool.release(fresh));
+	for (unsigned i = 0; i < 64; ++i)
+		pool.serviceRetirement(64);
+	CHECK_FALSE(pool.retirementPending());
+	CHECK_EQUAL(0, snapshots.activeSnapshots());
+	CHECK_EQUAL(16, pool.freePages());
+}

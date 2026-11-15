@@ -62,6 +62,26 @@ unsigned PagePool::findRecord(PhraseHandle handle) const {
 	return kRecordCount;
 }
 
+unsigned PagePool::findPublicationRecord(PhraseHandle handle) const {
+	if (!handle.valid())
+		return kRecordCount;
+	// Retiring/unsealed records are readable but are never publication candidates,
+	// so `replace` cannot install an obsolete handle into activeRecord_ and a later
+	// beginPhrase cannot overwrite a still-pinned generation.
+	auto eligible = [&](unsigned i) {
+		const auto& phrase = slots_[i];
+		return phrase.owner == handle.slot && phrase.generation == handle.generation && phrase.sealed
+		       && !phrase.retiring;
+	};
+	const auto active = activeRecord_[handle.slot];
+	if (active < kRecordCount && eligible(active))
+		return active;
+	for (unsigned i = 0; i < kRecordCount; ++i)
+		if (i != active && eligible(i))
+			return i;
+	return kRecordCount;
+}
+
 Status PagePool::beginRenderRound(uint8_t manualParticipants) {
 	if (!capacity_)
 		return Status::Invalid;
@@ -109,8 +129,8 @@ Status PagePool::beginPhrase(SlotId slot, FrameIndex reservedFrames) {
 			return Status::NoMemory;
 	}
 	auto& phrase = slots_[record];
-	if (phrase.active || phrase.sealed)
-		return Status::Busy;
+	if (phrase.active || phrase.sealed || phrase.retiring)
+		return Status::Busy; // Never overwrite a retiring (still-pinned) version.
 	const auto needed = pagesFor(reservedFrames);
 	if (needed > mapStride_ || needed > freeCount_)
 		return Status::NoMemory;
@@ -403,7 +423,7 @@ Status PagePool::sealDetached(PhraseHandle handle) {
 
 Status PagePool::replace(PhraseHandle candidate, PhraseHandle& previous) {
 	previous = {};
-	const auto record = findRecord(candidate);
+	const auto record = findPublicationRecord(candidate);
 	if (record == kRecordCount || !validSlot(candidate.slot) || activeRecord_[candidate.slot] == record)
 		return Status::Stale;
 	const auto active = activeRecord_[candidate.slot];
@@ -436,7 +456,7 @@ Status PagePool::detach(SlotId slot, PhraseHandle& retained) {
 }
 
 Status PagePool::pin(PhraseHandle handle) {
-	const auto record = findRecord(handle);
+	const auto record = findPublicationRecord(handle);
 	if (record == kRecordCount)
 		return Status::Stale;
 	++slots_[record].references;
