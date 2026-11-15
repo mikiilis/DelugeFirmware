@@ -17,7 +17,7 @@ The preview's **Track settings** shortcut and **SHIFT** toggle are browser-only 
 - Record and play up to eight audio phrases at once.
 - Overdub a playing phrase and keep each track at its own length.
 - Select tracks and watch their clockwise progress rings advance during playback.
-- Start or stop all tracks together, undo supported edits, and clear stopped tracks.
+- Start or stop all tracks together, undo and redo the selected track's recording layers, and clear stopped tracks.
 - Set input source, monitoring, duration, playback mode, transpose and track color for each track.
 - Open a track's normal Audio Clip view to use its standard output and effects.
 - Save loop audio with the normal Song save workflow and restore committed checkpoints when loading the Song.
@@ -43,7 +43,7 @@ The Deluge's 16×8 pad grid is divided into eight 4×4 tiles: tracks 1–4 acros
 4. Press a track's outer ring to select it. While it plays, the ring fills clockwise from the upper-left pad and resets each time the phrase loops.
 5. Use a track's centre pads to capture its first phrase and to start or finish overdubs. The physical top row of the sidebar independently provides loop-group Start All (left) and Stop All (right); the other sidebar rows are inactive. These loop controls work independently of Song transport.
 6. Stop a track, then hold its center for two seconds and release to clear it. A red sweep shows hold progress.
-7. Press **BACK** on a track with available history to request undo. The display indicates when undo is unavailable or still pending.
+7. Press **BACK** on a history-enabled track to ask to undo its most recent layer, then press **BACK** again to confirm; hold **SHIFT** and press **BACK** twice to redo. The display shows the pending operation and reports when it is unavailable or still working.
 
 Track colors distinguish tracks. New tracks default to **Yellow, Cyan, Blue, Purple, Magenta, Pink, Gold and Lime** for tracks 1–8 respectively. Center pads and rings show empty, recording, overdubbing, playing and stopped states. These temporary state colors take priority over the chosen identity color. A capture error appears on the affected track; press its center to acknowledge it.
 
@@ -72,12 +72,28 @@ To change a ring's identity color in horizontal mode: **SHIFT + track centre →
 
 Press **CLIP VIEW** to open the selected track's ordinary Audio Clip view and menus. Loop tracks use normal Song outputs and effects.
 
-## Save and undo
+## Undo and redo layers
 
-Use the normal Song **SAVE** workflow to save a durable loop checkpoint. A save can remain pending while a consistent audio snapshot is written. Audio recorded after that snapshot is not included until a later successful save. If the card reports an error, the current RAM audio remains available but is not durable.
+Undo and Redo act on the **selected track** only, through **BACK** and **SHIFT + BACK**. From idle, the first **BACK** arms Undo and shows the track and instruction; the second **BACK** performs it. From idle, the first **SHIFT + BACK** arms Redo and a second **SHIFT + BACK** performs it. Each step needs its own two presses: a held button cannot confirm repeatedly, and a release must separate the two press edges. There is no rapid-double-click requirement and no time limit, so the prompt stays until you confirm it, cancel it, or the operation becomes unavailable. Pressing the opposite shortcut replaces the pending prompt only if the other operation is eligible; it never confirms the first. Changing a modifier or releasing a button alone does not cancel. The **BACK** indicator reflects the selected track's eligible operation for the current modifier.
 
-Undo history is bounded. Under memory or storage pressure, older history may be discarded while current capture continues. Loading a Song restores its committed loop checkpoints; incomplete or failed saves do not replace the last committed manifest. Saved audio uses cumulative 24-bit, 44.1 kHz WAV checkpoints, so reload is not a bit-identical 32-bit RAM round trip.
+A layer is one continuous capture session: opening a track's capture gate through closing it. Several loop passes during one open gate count as one layer, not several. For a track recorded as its initial take and then overdubs A and B, confirming Undo repeatedly gives `initial + A`, then `initial`, then empty, and confirming Redo traverses those states forward.
+
+Undo is allowed while recording or overdubbing. The first press leaves capture running; only the confirmation press closes that capture session and removes exactly the target take. Opening a new recording or overdub discards that track's Redo branch, so Redo is unavailable while capturing. If an active overdub captured no new samples, confirmation closes the gate and reports that there is no layer to undo instead of removing an older layer.
+
+Undoing the initial recording leaves the track empty and stopped while keeping its settings, colour, output, clip binding and effects; the audio is retained for Redo. Redoing from empty republishes that recording and restores it **stopped**, starting from zero when you next start it — it does not resume playback unexpectedly. Ordinary overdub Undo and Redo preserve the current playing/stopped state and phase for the unchanged phrase length.
+
+The pending prompt is canceled by track selection, pad actions, unrelated controls (including tempo), transport changes, opening a menu or leaving Loop Station, or a change to the target Song, binding or capture session. It is revalidated when you confirm, and a stale prompt cancels with no audio change rather than acting on another track or take. The `UNDO?`/`REDO?` prompt and its result remain visible on the OLED, and on seven-segment hardware they use a persistent, view-owned scrolling message that survives periodic display refresh. An accepted operation keeps progressing in the foreground even if a menu opens or the root view changes, and it reports the committed result rather than assuming success.
+
+History is bounded and fenced. Under memory or storage pressure older layers may be evicted and that navigation becomes unavailable, but the track never skips a missing layer to remove an older one. Unavailable, incomplete or failed operations are reported honestly, and capture continues normally when history cannot be retained. If a restore fails after capture was closed, the audio captured so far is kept, capture stays closed, and the failure is reported.
+
+Stopping a track, then holding its centre for two seconds, clears it. Explicit Clear is destructive and is not an undoable step: it discards that track's Undo and Redo history. With no track selected, **BACK** gives concise no-track feedback and does not invoke an unrelated global Undo.
+
+## Save and load
+
+Use the normal Song **SAVE** workflow to save a durable loop checkpoint. A save can remain pending while a consistent audio snapshot is written. Audio recorded after that snapshot is not included until a later successful save; a snapshot taken before Undo keeps that earlier content. If the card reports an error, the current RAM audio remains available but is not durable.
+
+Saving an undone-empty track omits its old audio checkpoint while keeping its settings and binding, so loading that save does not resurrect the removed recording. Saving keeps volatile Redo available in RAM but does not make it durable. Loading a Song restores its committed loop checkpoints and starts a new volatile history whose base is the loaded recording; earlier overdubs cannot be recovered individually and no hidden undone audio returns. No persistence schema or memory-profile change is introduced. Incomplete or failed saves do not replace the last committed manifest. Saved audio uses cumulative 24-bit, 44.1 kHz WAV checkpoints, so reload is not a bit-identical 32-bit RAM round trip. A live snapshot taken before navigating away stays readable for that save through a bounded, owned reference.
 
 ## Validation status
 
-Host tests cover timing, recording actions, input/monitor routing, different phrase lengths, gestures, history pressure, archive faults and restart recovery. They do not measure hardware memory, full audio callback deadlines, physical input latency or recorded output quality. Physical hardware, OLED/seven-segment inspection, hardware memory/DSP measurements and audio-capture acceptance remain **NOT_RUN**.
+Host tests cover timing, recording actions, input/monitor routing, different phrase lengths, gestures, history pressure, archive faults and restart recovery. They also cover confirmed two-press undo and redo, active-capture confirmation, undo-to-empty and stopped redo, bounded and fenced history, snapshot retention across save, and save/load of an undone-empty track. They do not measure hardware memory, full audio callback deadlines, physical input latency or recorded output quality. Physical hardware, OLED/seven-segment inspection, hardware memory/DSP measurements and audio-capture acceptance remain **NOT_RUN**.
