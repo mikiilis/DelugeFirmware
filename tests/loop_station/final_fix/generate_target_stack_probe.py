@@ -68,6 +68,23 @@ def main() -> None:
         "void SessionView::focusRegained()",
         "ActionResult SessionView::buttonAction(",
     )
+    session_source = args.session_view.read_text()
+    transition_source = extract(
+        session_source,
+        "void SessionView::transitionToViewForClip(",
+        "void SessionView::transitionToSessionView(",
+    )
+    clip_scroll = extract(
+        transition_source,
+        "// it should already be this clip, but if it ever isn't it would be a disaster",
+        "if (currentSong->sessionLayout",
+    )
+    grid_guard = extract(
+        transition_source, "if (currentSong->sessionLayout", "bool onKeyboardScreen"
+    )
+    audio_transition = extract(
+        transition_source, "AudioClip* clip = getCurrentAudioClip();", "\n\t}\n}"
+    )
     audio_focus = extract(
         args.audio_view.read_text(),
         "void AudioClipView::focusRegained()",
@@ -78,6 +95,7 @@ def main() -> None:
         f'#include "{args.support.as_posix()}"\n'
         "Song* currentSong = nullptr;\nbool renderedVUMeter = false;\nView view{};\n"
         "DisplayProbe* display = nullptr;\nSessionView sessionView{};\nAudioClipView audioClipView{};\n"
+        "void* currentRoot = nullptr;\nWaveformRenderer waveformRenderer{};\n"
         + song_methods
         + song_setup
         + view
@@ -86,6 +104,12 @@ def main() -> None:
         + outgoing_cleanup
         + attempt_exit
         + session_focus
+        + "void SessionView::transitionToViewForClip(AudioClip* clip) {\n"
+        + clip_scroll
+        + grid_guard
+        + "{\n"
+        + audio_transition
+        + "\n}\n}\n"
         + audio_focus
         + "ActionResult LoopStationView::clipViewNavigation(deluge::hid::Button b, bool on, bool loopOwnsInput) {\n"
         + "auto* m = model();\nif (loopOwnsInput) {\nusing namespace deluge::hid::button;\n"

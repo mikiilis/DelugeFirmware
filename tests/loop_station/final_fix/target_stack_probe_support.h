@@ -1,4 +1,5 @@
 #pragma once
+#include <algorithm>
 #include <cassert>
 #include <cstdint>
 #include <cstdio>
@@ -63,6 +64,9 @@ inline TimelineCounter* ModelStackWithTimelineCounter::getTimelineCounter() {
 struct AudioClip : TimelineCounter {
 	int mod = 5;
 	int params = 6;
+	struct SampleHolder {
+		void* audioFile = nullptr;
+	} sampleHolder;
 	void getActiveModControllable(ModelStackWithTimelineCounter* stack) override {
 		stack->setTimelineCounter(this);
 		stack->addOtherTwoThingsButNoNoteRow(&mod, &params);
@@ -88,6 +92,8 @@ struct Song final : TimelineCounter {
 	AudioClip* currentClip = nullptr;
 	int lastClipInstanceEnteredStartPos = -1;
 	SessionLayoutType sessionLayout = SessionLayoutType::Other;
+	int32_t xScroll[4]{};
+	int32_t xZoom[4]{};
 	TimelineCounter* getTimelineCounterToRecordTo() override { return this; }
 	SongModel* loopStation() { return model; }
 	void setCurrentClip(AudioClip* clip) { currentClip = clip; }
@@ -110,6 +116,7 @@ extern Song* currentSong;
 extern bool renderedVUMeter;
 inline uint32_t currentUIMode = 0;
 inline constexpr uint32_t UI_MODE_STUTTERING = uint32_t{1} << 28;
+inline constexpr uint32_t UI_MODE_NONE = 0;
 inline constexpr uint32_t UI_MODE_ANIMATION_FADE = 2;
 inline constexpr uint32_t UI_MODE_CLIP_PRESSED_IN_SONG_VIEW = 4;
 inline bool isUIModeActive(uint32_t flag) {
@@ -182,8 +189,8 @@ struct SessionView : ClipNavigationTimelineView {
 	void redrawNumericDisplay() {}
 	void setLedStates() {}
 	void gridPulseSelectedClip() { gridSelectedClipPulsing = true; }
-	AudioClip* transitionedClip = nullptr;
-	void transitionToViewForClip(AudioClip* clip) { transitionedClip = clip; }
+	void transitionToViewForClip(AudioClip* clip);
+	void gridTransitionToViewForClip(AudioClip*) {}
 	void focusRegained();
 };
 struct ClipView {
@@ -193,11 +200,44 @@ struct AudioClipView : ClipView {
 	AudioClip* currentClip = nullptr;
 	bool endMarkerVisible = true;
 	bool startMarkerVisible = true;
-	AudioClip* getCurrentClip() { return currentClip; }
+	AudioClip* getCurrentClip() { return currentSong ? currentSong->currentClip : currentClip; }
 	void* getCurrentOutput() { return nullptr; }
 	void focusRegained();
 };
 extern SessionView sessionView;
 extern AudioClipView audioClipView;
-inline void changeRootUI(void*) {
+extern void* currentRoot;
+inline void changeRootUI(void* ui) {
+	currentRoot = ui;
 }
+inline constexpr int NAVIGATION_CLIP = 1;
+inline constexpr int kDisplayHeight = 8;
+constexpr int32_t operator""_i32(unsigned long long value) {
+	return static_cast<int32_t>(value);
+}
+inline int32_t getClipPlaceOnScreen(AudioClip*) {
+	return 3;
+}
+inline int32_t getClipLocalScroll(AudioClip*, int32_t scroll, int32_t) {
+	return scroll;
+}
+inline AudioClip* getCurrentAudioClip() {
+	return currentSong ? currentSong->currentClip : nullptr;
+}
+struct Sample {};
+inline int UI_MODE_AUDIO_CLIP_EXPANDING = 8;
+inline int kClipCollapseSpeed = 0;
+struct WaveformRenderer {
+	int collapseAnimationToWhichRow = 0;
+};
+extern WaveformRenderer waveformRenderer;
+namespace PadLEDs {
+inline void setupAudioClipCollapseOrExplodeAnimation(AudioClip*) {
+}
+inline void recordTransitionBegin(int) {
+}
+inline void renderAudioClipExpandOrCollapse() {
+}
+inline void clearSideBar() {
+}
+} // namespace PadLEDs

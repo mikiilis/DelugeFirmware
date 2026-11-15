@@ -113,11 +113,11 @@ int main() {
 	destinationSetupSequence = sourceRestoreSequence = probeSequence = 0;
 	check(loopView.clipViewNavigation(deluge::hid::button::CLIP_VIEW, true, true) == ActionResult::DEALT_WITH,
 	      "actual Loop Station Clip View branch handles navigation");
-	check(sessionView.transitionedClip == &clip, "real Clip View handler chooses selected bound clip");
+	check(song.currentClip == &clip, "production clip transition installs selected Song clip");
+	check(currentRoot == &audioClipView, "production no-sample transition changes root to Audio Clip UI");
 	check(songOwner.receivedParamManager == &songManager, "Clip View branch dispatches original-owner cleanup");
 	check(songStutterRate == oldSongRate, "Clip View navigation restores Song source rate");
 	check(songOwner.receivedParamManager == &songManager, "Clip View cleanup uses Song source manager");
-	audioClipView.currentClip = sessionView.transitionedClip;
 	audioClipView.focusRegained();
 	check(sourceRestoreSequence < destinationSetupSequence,
 	      "Song stutter restored before actual Clip branch and focus setup");
