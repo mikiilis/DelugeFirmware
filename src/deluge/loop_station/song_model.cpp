@@ -176,6 +176,12 @@ Status SongModel::requestViewExit() {
 		cancelRestore(slot);
 	return engine_.dispatch({CommandType::Exit}, host_.now(), clock_);
 }
+void SongModel::cancelHeldPadGestures() {
+	if (!ready())
+		return;
+	Boundary boundary(host_);
+	engine_.cancelHeldGestures();
+}
 bool SongModel::hasUnsavedAudio() const {
 	if (!ready_)
 		return false;

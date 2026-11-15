@@ -87,6 +87,14 @@ ActionResult buttonAction(deluge::hid::Button b, bool on, bool inCardRoutine) {
 	auto xy = deluge::hid::button::toXY(b);
 	buttonStates[xy.x][xy.y] = on;
 
+	// A canceled stutter release belongs to the physical encoder gesture, not
+	// whichever UI happens to be current. Intercept it before modal handlers can
+	// swallow the release. Keep this after button-state bookkeeping for retry
+	// correctness when an event is deferred from the card routine.
+	if (b == MOD_ENCODER_1 && view.consumePendingStutterEncoderRelease(1, on)) {
+		return ActionResult::DEALT_WITH;
+	}
+
 // This is a debug feature that allows us to output SYSEX debug logging button presses
 // See contributing.md for more information
 #if ENABLE_MATRIX_DEBUG

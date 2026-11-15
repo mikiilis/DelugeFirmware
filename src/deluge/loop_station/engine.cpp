@@ -227,6 +227,11 @@ std::optional<SampleClock> Engine::nextActionSample(const ClockMap& clock) const
 	}
 	return next;
 }
+void Engine::cancelHeldGestures() {
+	for (auto& slot : slots_)
+		slot.held = false;
+}
+
 Status Engine::copyTrackSettings(SlotId from, SlotId to) {
 	if (!validSlot(from) || !validSlot(to))
 		return Status::Invalid;

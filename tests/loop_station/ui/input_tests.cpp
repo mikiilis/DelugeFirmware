@@ -691,6 +691,36 @@ TEST(LoopUi, AcceptedCentreReleaseCompletesDuringSharedHold) {
 	currentUIMode = UI_MODE_NONE;
 }
 
+TEST(LoopUi, SharedModalTakeoverCancelsStoppedCentreHoldWithoutReplay) {
+	Fixture f;
+	f.recordPhrase();
+	f.view.padAction(5, 6, 100);
+	f.renderAudio();
+	f.view.padAction(5, 6, 0);
+	f.view.padAction(5, 6, 100);
+	CHECK_TRUE(f.model->engine().state(1).hasPhrase);
+	CHECK(Status::Ok == f.model->dispatch({CommandType::StopAll}));
+	CHECK_FALSE(f.model->engine().state(0).playing);
+	CHECK_FALSE(f.model->engine().state(1).playing);
+	f.view.padAction(1, 6, 100); // Accept a stopped-pad hold.
+	f.view.padAction(5, 6, 100); // Simultaneous accepted hold on another pad.
+	CHECK(f.model->engine().heldDurationSamples(0, f.host.time + 100) > 0);
+	CHECK(f.model->engine().heldDurationSamples(1, f.host.time + 100) > 0);
+
+	CHECK_TRUE(loopStationSettingsMenu.openGlobal()); // Modal now owns physical pad edges.
+	CHECK(f.view.buttonAction(LOAD, false, false) == ActionResult::NOT_DEALT_WITH);
+	CHECK_EQUAL(0, f.model->engine().heldDurationSamples(0, f.host.time + 2 * loop_station::kSampleRate));
+	CHECK_EQUAL(0, f.model->engine().heldDurationSamples(1, f.host.time + 2 * loop_station::kSampleRate));
+	// Even a delayed release routed back to the old view cannot start/clear it.
+	CHECK(Status::Ok == f.model->dispatch({CommandType::Release, 0}));
+	CHECK(Status::Ok == f.model->dispatch({CommandType::Release, 1}));
+	CHECK_FALSE(f.model->engine().state(0).playing);
+	CHECK_FALSE(f.model->engine().state(1).playing);
+	CHECK(f.model->engine().state(0).hasPhrase);
+	CHECK(f.model->engine().state(1).hasPhrase);
+	loopStationSettingsMenu.close();
+}
+
 TEST(LoopUi, UnshiftedSelectOpensGlobalSettingsAndShiftedSelectDelegates) {
 	{
 		Fixture f;
@@ -739,11 +769,45 @@ TEST(LoopUi, ClipViewAndExitRemainIdleLoopNavigation) {
 	CHECK(Status::Ok == f.model->ensureBound(0));
 	f.view.padAction(0, 7, 100);
 	CHECK_EQUAL(0, f.model->engine().selected());
+	ParamManagerForTimeline sourceParams;
+	constexpr int32_t rateParam = deluge::modulation::params::UNPATCHED_STUTTER_RATE;
+	constexpr int32_t sourceRate = 20 << 25;
+	sourceParams.params.params[rateParam].value = sourceRate;
+	ProbeAudioModControllable source;
+	view.activeModControllableModelStack.modControllable = &source;
+	view.activeModControllableModelStack.paramManager = &sourceParams;
+	CHECK(Error::NONE
+	      == stutterer.beginStutter(&source, &sourceParams, StutterConfig{.quantized = true}, 13, 0x40000000));
+	currentUIMode = UI_MODE_STUTTERING;
 	CHECK(f.view.buttonAction(CLIP_VIEW, true, false) == ActionResult::DEALT_WITH);
+	CHECK_EQUAL(sourceRate, sourceParams.params.getValue(rateParam));
+	CHECK_FALSE(currentUIMode & UI_MODE_STUTTERING);
+	CHECK_TRUE(targetChangeView.pendingStutterEncoderRelease_);
 	POINTERS_EQUAL(f.model->clip(0), sessionView.viewedClip);
 	CHECK(f.view.buttonAction(CROSS_SCREEN_EDIT, true, false) == ActionResult::DEALT_WITH);
 	POINTERS_EQUAL(&sessionView, getCurrentUI());
 	CHECK_EQUAL(0, ::view.calls.size());
+}
+
+TEST(LoopUi, StutterIsRestoredBeforeSuccessfulSessionExit) {
+	Fixture f;
+	CHECK(Status::Ok == f.model->ensureBound(0));
+	f.view.padAction(0, 7, 100);
+	ParamManagerForTimeline sourceParams;
+	constexpr int32_t rateParam = deluge::modulation::params::UNPATCHED_STUTTER_RATE;
+	constexpr int32_t sourceRate = -(18 << 25);
+	sourceParams.params.params[rateParam].value = sourceRate;
+	ProbeAudioModControllable source;
+	view.activeModControllableModelStack.modControllable = &source;
+	view.activeModControllableModelStack.paramManager = &sourceParams;
+	CHECK(Error::NONE
+	      == stutterer.beginStutter(&source, &sourceParams, StutterConfig{.quantized = true}, 13, 0x40000000));
+	currentUIMode = UI_MODE_STUTTERING;
+	CHECK(f.view.buttonAction(CROSS_SCREEN_EDIT, true, false) == ActionResult::DEALT_WITH);
+	CHECK_EQUAL(sourceRate, sourceParams.params.getValue(rateParam));
+	CHECK_FALSE(currentUIMode & UI_MODE_STUTTERING);
+	CHECK_TRUE(targetChangeView.pendingStutterEncoderRelease_);
+	POINTERS_EQUAL(&sessionView, getCurrentUI());
 }
 
 TEST(LoopUi, RepeatedCardRoutineRetriesDoNotDuplicateActions) {
@@ -1031,6 +1095,7 @@ TEST(LoopUi, EntryAndNoSelectionUseSafeSongTarget) {
 	CHECK_EQUAL(kInvalidSlot, f.model->engine().selected());
 	CHECK_EQUAL(1, ::view.targets.size());
 	POINTERS_EQUAL(&f.song, ::view.targets.back());
+	CHECK_TRUE(::view.forceSongGlobalEffectsTarget);
 	POINTERS_EQUAL(nullptr, f.song.currentClip);
 	CHECK(UIModControllableContext::SONG == f.view.getUIModControllableContext());
 	CHECK_FALSE(f.view.getAffectEntire());
@@ -1120,9 +1185,9 @@ TEST(LoopUi, StutterRetargetRestoresSourceRateAndConsumesRelease) {
 	view.activeModControllableModelStack.modControllable = &destination;
 	CHECK(loopStationSettingsMenu.openGlobal());
 	POINTERS_EQUAL(&loopStationSettingsMenu, getCurrentUI());
-	Buttons::probeDispatchModEncoderButtonAction(1, false);
-	CHECK_EQUAL(0, view.modEncoderButtonCalls);   // The current settings UI must consume the original release.
-	CHECK_EQUAL(1, view.automationNotifications); // No second endStutter on the destination manager.
+	// The settings handler consumes this release before the shared dispatcher;
+	// preserve the pending physical ownership until a fresh press arrives.
+	CHECK_TRUE(targetChangeView.pendingStutterEncoderRelease_);
 	CHECK_EQUAL(destinationRate, destinationParams.params.getValue(rateParam));
 	loopStationSettingsMenu.close();
 	POINTERS_EQUAL(&f.view, getCurrentUI());
@@ -1133,6 +1198,11 @@ TEST(LoopUi, StutterRetargetRestoresSourceRateAndConsumesRelease) {
 	    == stutterer.beginStutter(&destination, &destinationParams, StutterConfig{.quantized = true}, 13, 0x40000000));
 	CHECK_EQUAL(0, destinationParams.params.getValue(rateParam));
 	currentUIMode = UI_MODE_STUTTERING;
+	// A fresh physical press after an interrupted gesture must discard a stale
+	// release latch; its own release must reach the newly active stutter.
+	CHECK_TRUE(targetChangeView.pendingStutterEncoderRelease_);
+	CHECK_FALSE(view.consumePendingStutterEncoderRelease(1, true));
+	CHECK_FALSE(view.consumePendingStutterEncoderRelease(1, false));
 	Buttons::probeDispatchModEncoderButtonAction(1, true);
 	Buttons::probeDispatchModEncoderButtonAction(1, false);
 	CHECK_FALSE(stutterer.isStuttering(&destination));
@@ -1216,6 +1286,7 @@ TEST(LoopUi, AffectEntirePressTogglesOnceAndSelectionRetainsMode) {
 	CHECK_TRUE(f.view.getAffectEntire());
 	CHECK_EQUAL(1, ::view.targets.size());
 	POINTERS_EQUAL(&f.song, ::view.targets.back());
+	CHECK_TRUE(::view.forceSongGlobalEffectsTarget);
 	CHECK(UIModControllableContext::SONG == f.view.getUIModControllableContext());
 
 	CHECK(f.view.buttonAction(AFFECT_ENTIRE, false, false) == ActionResult::DEALT_WITH);

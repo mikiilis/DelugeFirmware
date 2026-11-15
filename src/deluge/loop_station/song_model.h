@@ -42,6 +42,8 @@ public:
 	void requestExit();
 	Status requestTransportStop();
 	Status requestViewExit();
+	// UI-only cancellation for accepted pad holds when a shared modal takes over.
+	void cancelHeldPadGestures();
 	Status requestSongReplacement(bool discardUnsaved);
 	Status requestSongReplacement(bool discardUnsaved, const std::array<Generation, kTrackCount>& confirmedRevisions,
 	                              uint8_t confirmedCaptureMask);

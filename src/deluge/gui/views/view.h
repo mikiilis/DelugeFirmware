@@ -75,7 +75,8 @@ public:
 	void setKnobIndicatorLevel(uint8_t whichModEncoder);
 	int32_t convertPatchCableKnobPosToIndicatorLevel(int32_t knobPos);
 	void setActiveModControllableTimelineCounter(TimelineCounter* playPositionCounter,
-	                                             bool shouldSendMidiFeedback = true);
+	                                             bool shouldSendMidiFeedback = true,
+	                                             bool forceSongGlobalEffects = false);
 	bool finishActiveStutterForModTargetChange();
 	bool consumePendingStutterEncoderRelease(uint8_t whichModEncoder, bool on);
 	void setActiveModControllableWithoutTimelineCounter(ModControllable* modControllable, ParamManager* paramManager);

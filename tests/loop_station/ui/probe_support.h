@@ -183,6 +183,7 @@ public:
 	void* lastAutomationParamManager = nullptr;
 	uint8_t activeModKnobMode = 0;
 	uint8_t nextTargetModKnobMode = 0;
+	bool forceSongGlobalEffectsTarget = false;
 	ParamManagerForTimeline* nextTargetParamManager = nullptr;
 	ActionResult buttonAction(deluge::hid::Button button, bool on, bool inCardRoutine) {
 		calls.push_back({button, on, inCardRoutine});
@@ -190,8 +191,10 @@ public:
 	}
 	// Exact pointer log for the shared modulation-target boundary. The real API
 	// refreshes effect LED/knob indicators; no effect processing is simulated here.
-	void setActiveModControllableTimelineCounter(TimelineCounter* target, bool = true) {
+	void setActiveModControllableTimelineCounter(TimelineCounter* target, bool = true,
+	                                             bool forceSongGlobalEffects = false) {
 		const bool targetChanged = activeModControllableModelStack.timelineCounter != target;
+		forceSongGlobalEffectsTarget = forceSongGlobalEffects;
 		targets.push_back(target);
 		activeModControllableModelStack.timelineCounter = target;
 		if (targetChanged) {
@@ -200,7 +203,8 @@ public:
 			activeModKnobMode = nextTargetModKnobMode;
 		}
 	}
-	void setActiveModControllableTimelineCounter(AudioClip* target, bool = true) {
+	void setActiveModControllableTimelineCounter(AudioClip* target, bool = true, bool = false) {
+		forceSongGlobalEffectsTarget = false;
 		TimelineCounter* timelineTarget = reinterpret_cast<TimelineCounter*>(target);
 		const bool targetChanged = activeModControllableModelStack.timelineCounter != timelineTarget;
 		targets.push_back(target);
@@ -211,7 +215,8 @@ public:
 			activeModKnobMode = nextTargetModKnobMode;
 		}
 	}
-	void setActiveModControllableTimelineCounter(std::nullptr_t, bool = true) {
+	void setActiveModControllableTimelineCounter(std::nullptr_t, bool = true, bool = false) {
+		forceSongGlobalEffectsTarget = false;
 		targets.push_back(nullptr);
 		activeModControllableModelStack.timelineCounter = nullptr;
 		activeModControllableModelStack.modControllable = nullptr;

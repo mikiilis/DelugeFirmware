@@ -43,6 +43,9 @@ public:
 	Engine(ResidentAudio& audio, GestureRollback& rollback) : audio_(audio), rollback_(rollback) {}
 	Status dispatch(Command command, SampleClock now, const ClockMap& clock);
 	Status copyTrackSettings(SlotId from, SlotId to);
+	// Cancel UI-owned pad holds at a modal handoff without synthesizing Release
+	// (which could start or clear a stopped phrase).
+	void cancelHeldGestures();
 	// Serialized sample-boundary owner: call before selecting each render window.
 	void service(SampleClock now, const ClockMap& clock);
 	// Detach a deleted/unbound slot immediately; bounded rollback retirement may defer clear.

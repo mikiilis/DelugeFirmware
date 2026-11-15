@@ -203,7 +203,9 @@ void LoopStationView::updateModTarget() {
 	}
 	else {
 		modTargetIsClip_ = false;
-		view.setActiveModControllableTimelineCounter(currentSong);
+		// Loop Station's explicit no-selection fallback always targets Song FX;
+		// this does not mutate affectEntire or alter generic Song policy.
+		view.setActiveModControllableTimelineCounter(currentSong, true, true);
 	}
 }
 void LoopStationView::finishStutterBeforeTargetChange() {
@@ -217,6 +219,9 @@ void LoopStationView::attemptExit() {
 	const auto status = m ? m->requestViewExit() : Status::Unavailable;
 	if (status == Status::Ok) {
 		pendingExit_ = false;
+		// Restore the outgoing modulation owner before the destination view
+		// installs its target stack.
+		finishStutterBeforeTargetChange();
 		changeRootUI(&sessionView);
 	}
 	else if (status == Status::Busy) {
@@ -354,8 +359,10 @@ ActionResult LoopStationView::buttonAction(deluge::hid::Button b, bool on, bool 
 			if (on && m) {
 				const SlotId slot = m->engine().selected();
 				if (validSlot(slot)) {
-					if (auto* clip = m->clip(slot))
+					if (auto* clip = m->clip(slot)) {
+						finishStutterBeforeTargetChange();
 						sessionView.transitionToViewForClip(clip);
+					}
 				}
 			}
 			return ActionResult::DEALT_WITH;
@@ -382,7 +389,10 @@ ActionResult LoopStationView::buttonAction(deluge::hid::Button b, bool on, bool 
 	// PLAY, RECORD, SHIFT and every other ordinary control are the shared/native
 	// handler's responsibility. Propagate its result so the native dispatcher sees
 	// NOT_DEALT_WITH unchanged.
-	return view.buttonAction(b, on, inCardRoutine);
+	const auto result = view.buttonAction(b, on, inCardRoutine);
+	if ((b == SAVE || b == LOAD) && getCurrentUI() != this && m)
+		m->cancelHeldPadGestures();
+	return result;
 }
 
 bool LoopStationView::renderMainPads(uint32_t rows, RGB image[][kDisplayWidth + kSideBarWidth],

@@ -1884,21 +1884,28 @@ void View::renderVUMeter(int32_t maxYDisplay, int32_t xDisplay, RGB thisImage[][
 	}
 }
 
-void View::setActiveModControllableTimelineCounter(TimelineCounter* timelineCounter, bool shouldSendMidiFeedback) {
+void View::setActiveModControllableTimelineCounter(TimelineCounter* timelineCounter, bool shouldSendMidiFeedback,
+                                                   bool forceSongGlobalEffects) {
 	if (timelineCounter) {
 		timelineCounter = timelineCounter->getTimelineCounterToRecordTo();
 	}
 	pretendModKnobsUntouchedForAWhile();
 
-	ModelStackWithTimelineCounter* modelStack =
-	    setupModelStackWithSong(&activeModControllableModelStack, currentSong)->addTimelineCounter(timelineCounter);
-
-	if (timelineCounter) {
-		timelineCounter->getActiveModControllable(modelStack);
+	ModelStackWithTimelineCounter* modelStack = nullptr;
+	if (forceSongGlobalEffects && timelineCounter == currentSong) {
+		// A caller may explicitly request the Song/global-effects target without
+		// changing the persisted AFFECT ENTIRE policy used by other views.
+		currentSong->setupModelStackWithSongAsTimelineCounter(&activeModControllableModelStack);
 	}
-
 	else {
-		modelStack->addOtherTwoThingsButNoNoteRow(nullptr, nullptr);
+		modelStack =
+		    setupModelStackWithSong(&activeModControllableModelStack, currentSong)->addTimelineCounter(timelineCounter);
+		if (timelineCounter) {
+			timelineCounter->getActiveModControllable(modelStack);
+		}
+		else {
+			modelStack->addOtherTwoThingsButNoNoteRow(nullptr, nullptr);
+		}
 	}
 
 	setModLedStates();
@@ -1928,7 +1935,13 @@ bool View::finishActiveStutterForModTargetChange() {
 }
 
 bool View::consumePendingStutterEncoderRelease(uint8_t whichModEncoder, bool on) {
-	if (whichModEncoder != 1 || on || !pendingStutterEncoderRelease_) {
+	if (whichModEncoder != 1 || !pendingStutterEncoderRelease_) {
+		return false;
+	}
+	// A fresh press proves the interrupted gesture's release was handled by
+	// another UI. Do not let its stale latch swallow this gesture's release.
+	if (on) {
+		pendingStutterEncoderRelease_ = false;
 		return false;
 	}
 	pendingStutterEncoderRelease_ = false;
