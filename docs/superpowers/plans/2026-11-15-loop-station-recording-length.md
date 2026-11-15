@@ -65,7 +65,7 @@ Use the existing `build/tests` CMake build. If unconfigured, use `cmake -S tests
 - Consumes: `FrameIndex`, `kSampleRate`, raw `ClockMap::tempoQ16()` representation; no ClockMap object or Engine state required.
 - Produces: `inline void loop_station::formatPhraseLength(FrameIndex frames, uint32_t tempoQ16, char* out, size_t size)`. A nonzero-sized valid destination receives a bounded NUL-terminated label; `size == 0` performs no access, including for `out == nullptr`.
 
-- [ ] **Step 1: Add failing table-driven tests.** Register the new test file in `LoopStationTests`. Include the proposed header and add `TEST_GROUP(LoopLengthDisplay)` with a helper that calls the real formatter and `STRCMP_EQUAL`s the expected output. Pin these exact cases at `120U * 65536U`:
+- [x] **Step 1: Add failing table-driven tests.** Register the new test file in `LoopStationTests`. Include the proposed header and add `TEST_GROUP(LoopLengthDisplay)` with a helper that calls the real formatter and `STRCMP_EQUAL`s the expected output. Pin these exact cases at `120U * 65536U`:
 
 ```cpp
 struct LengthCase { FrameIndex frames; const char* expected; };
@@ -110,9 +110,9 @@ expect(16317, 1U, "0.37 s");
 
 Define `expect(FrameIndex,uint32_t,const char*)` locally in the test file to compare a 24-byte buffer against the given string and assert `strlen <= 8`. For destination safety, surround a 4-byte destination with canaries, expect `1/1` plus NUL for `(5513,120<<16)`, preserve canaries; with a 1-byte destination expect only NUL; call `(1,0,nullptr,0)` and require no crash. Do not treat truncation as a complete UI label; production uses a 24-byte destination.
 
-- [ ] **Step 2: Establish RED.** Run `cmake --build build/tests --target LoopStationTests -j4`; expect a missing `length_display.h` failure. Introduce the header with the declared signature and a minimal stub that writes an empty string when `size > 0`, rebuild, and run `build/tests/loop_station/LoopStationTests -sg LoopLengthDisplay`. Require genuine failed output assertions before implementing the algorithm; compilation alone is not evidence for the arithmetic tests.
+- [x] **Step 2: Establish RED.** Run `cmake --build build/tests --target LoopStationTests -j4`; expect a missing `length_display.h` failure. Introduce the header with the declared signature and a minimal stub that writes an empty string when `size > 0`, rebuild, and run `build/tests/loop_station/LoopStationTests -sg LoopLengthDisplay`. Require genuine failed output assertions before implementing the algorithm; compilation alone is not evidence for the arithmetic tests.
 
-- [ ] **Step 3: Implement the formatter in the new header.** Include only standard integer/string formatting/GCD utilities and `config.h`. Keep any helper functions/constants inline in a feature-specific detail namespace. No heap allocation or floating point.
+- [x] **Step 3: Implement the formatter in the new header.** Include only standard integer/string formatting/GCD utilities and `config.h`. Keep any helper functions/constants inline in a feature-specific detail namespace. No heap allocation or floating point.
 
 Use this algorithm to avoid misclassification from a repeatedly rounded `framesPerBar()` value:
 
@@ -137,9 +137,9 @@ Seconds fallback:
 
 Use a local temporary large enough for the full candidate label before checking length, then copy into the caller's bounded destination. Do not inspect the length of an already truncated candidate. For unsigned distance, subtract smaller from larger. Calculate ceiling by quotient/remainder (not floating point). The largest products for uint32 frames, Q16 BPM <=1000, and D<=48 fit uint64; retain the casts before multiplication and test the maximum case.
 
-- [ ] **Step 4: Establish GREEN.** Run `cmake --build build/tests --target LoopStationTests -j4` and `build/tests/loop_station/LoopStationTests -sg LoopLengthDisplay`; require zero failed tests. Run the full `LoopStationTests` once before committing.
+- [x] **Step 4: Establish GREEN.** Run `cmake --build build/tests --target LoopStationTests -j4` and `build/tests/loop_station/LoopStationTests -sg LoopLengthDisplay`; require zero failed tests. Run the full `LoopStationTests` once before committing.
 
-- [ ] **Step 5: Commit only this task.** Run `git diff --check`, stage the three named files explicitly, and commit `feat: format measured loop lengths as fractions or seconds`.
+- [x] **Step 5: Commit only this task.** Run `git diff --check`, stage the three named files explicitly, and commit `feat: format measured loop lengths as fractions or seconds`.
 
 ### Task 2: Integrate measured lengths into the OLED and both probes
 
@@ -149,7 +149,7 @@ Use a local temporary large enough for the full candidate label before checking 
 - Consumes: Task 1's `formatPhraseLength(FrameIndex,uint32_t,char*,size_t)`, `SlotState`, `ClockMap::tempoQ16()`, and existing Canvas primitives.
 - Produces: view-local `void formatTrackLength(const SlotState& state, uint32_t tempoQ16, char* out, size_t size)`, plus the updated `renderOLED` call. Capture precedes empty; only a completed phrase delegates to Task 1.
 
-- [ ] **Step 1: Write failing OLED expectations.** Replace `testBarCountRoundsToNearestAndNeverShowsZero` with `testCompletedPhraseUsesMeasuredLength` using the cases below. Set `model.testClock.bpmQ16 = 120U*65536U`; do not fake the old `framesPerBarValue` to control this formatter.
+- [x] **Step 1: Write failing OLED expectations.** Replace `testBarCountRoundsToNearestAndNeverShowsZero` with `testCompletedPhraseUsesMeasuredLength` using the cases below. Set `model.testClock.bpmQ16 = 120U*65536U`; do not fake the old `framesPerBarValue` to control this formatter.
 
 ```cpp
 // Selected slot 0, hasPhrase true: expectMainScreen(..., "TRACK 1", "120 BPM", "IN: LEFT", expected)
@@ -166,11 +166,11 @@ Add `testLengthTransitionsClearPreviousPixels`: initialize one actual Canvas onc
 
 Extend the width test with every unique label from Task 1's tables plus `READY`, `REC`, `999.99 s`, and `97392 s`: require `width("IN: BALANCED") + width(label) < 128`. Preserve title, BPM, settings-menu, and copy-confirmation tests.
 
-- [ ] **Step 2: Establish RED.** Build/run `LoopStationOledTests`; require successful compilation followed by mismatches for the short/off-grid labels against the old `1 BAR` formatter. Record those failures.
+- [x] **Step 2: Establish RED.** Build/run `LoopStationOledTests`; require successful compilation followed by mismatches for the short/off-grid labels against the old `1 BAR` formatter. Record those failures.
 
-- [ ] **Step 3: Integrate, without copying the algorithm.** Include `deluge/loop_station/length_display.h` in the production view and both probe-support headers. Replace `formatBarCount` with the exact `formatTrackLength` signature from this task's Interfaces; emit `REC`, then `READY`, otherwise delegate. Pass `m->clock().tempoQ16()` instead of `framesPerBar()` from `renderOLED`. Leave helper extraction markers and all other rendering code unchanged. Both probe generators already extract the helpers and will see the new header via their support headers; do not edit generated sources or duplicate the implementation in stubs.
+- [x] **Step 3: Integrate, without copying the algorithm.** Include `deluge/loop_station/length_display.h` in the production view and both probe-support headers. Replace `formatBarCount` with the exact `formatTrackLength` signature from this task's Interfaces; emit `REC`, then `READY`, otherwise delegate. Pass `m->clock().tempoQ16()` instead of `framesPerBar()` from `renderOLED`. Leave helper extraction markers and all other rendering code unchanged. Both probe generators already extract the helpers and will see the new header via their support headers; do not edit generated sources or duplicate the implementation in stubs.
 
-- [ ] **Step 4: Establish GREEN across both probes.** Run:
+- [x] **Step 4: Establish GREEN across both probes.** Run:
 
 ```bash
 cmake --build build/tests --target LoopStationTests OledCanvasTests LoopStationOledTests -j4
@@ -179,7 +179,7 @@ ctest --test-dir build/tests -R '^(LoopStationTests|OledCanvasTests|LoopStationO
 
 Require all three suites to pass, including settings and existing start/stop timing tests. Review the diff to confirm no Engine, ResidentAudio, ClockMap, persistence, gesture, or quantization changes.
 
-- [ ] **Step 5: Commit.** Run `git diff --check`, stage only the four named files, commit `feat: show measured recording lengths on the loop station OLED`.
+- [x] **Step 5: Commit.** Run `git diff --check`, stage only the four named files, commit `feat: show measured recording lengths on the loop station OLED`.
 
 ### Task 3: Match the preview, document the labels, and verify the integrated change
 
@@ -189,7 +189,7 @@ Require all three suites to pass, including settings and existing start/stop tim
 - Consumes: Task 1's formatting contract and Task 2's unchanged three-line screen.
 - Produces: pure JS `formatPhraseLength(frames, tempoQ16)` returning the same labels; existing `barsText(track)` delegates after preserving empty/capture states. Demo `track.length` is seconds, converted with `Math.round(track.length * 44100)`; pass `Math.round(tempoBPM * 65536)`.
 
-- [ ] **Step 1: Add failing preview tests.** Replace `test_bars_text_reports_capture_and_rounded_bars` with `test_bars_text_reports_measured_length`, extracting `barsText` and the new formatter via the existing `run_demo_helpers` API. Supply `tempoBPM = 120`. Assert:
+- [x] **Step 1: Add failing preview tests.** Replace `test_bars_text_reports_capture_and_rounded_bars` with `test_bars_text_reports_measured_length`, extracting `barsText` and the new formatter via the existing `run_demo_helpers` API. Supply `tempoBPM = 120`. Assert:
 
 ```python
 # barsText states/lengths in seconds:
@@ -200,13 +200,13 @@ Require all three suites to pass, including settings and existing start/stop tim
 
 Add `test_length_formatter_matches_firmware_contract` with the complete literal sample/tempo/label tables from Task 1 (including tolerance, fractional tempo, zero/invalid tempo, and maximum-frame cases). Keep existing deselection, global-settings, and pulse tests intact. Use actual extracted JS helpers, not a Python reimplementation as the oracle.
 
-- [ ] **Step 2: Establish RED.** Run `python3 tests/loop_station/ui/selection_preview_test.py`; require the missing formatter marker or old whole-bar output to fail the new assertions.
+- [x] **Step 2: Establish RED.** Run `python3 tests/loop_station/ui/selection_preview_test.py`; require the missing formatter marker or old whole-bar output to fail the new assertions.
 
-- [ ] **Step 3: Update the preview.** Implement JS `formatPhraseLength` with the same integer/rational rules as Task 1. Use BigInt for intermediate arithmetic so the large-frame parity cases do not lose precision in JavaScript Number multiplication; convert the measured frame count and Q16 tempo to BigInt before multiplying. Return strings only. Use integer quotient/remainder, local Euclidean GCD, and the same 8-character fallback. Preserve the public `barsText(track)` name and capture/empty handling. Reuse `barsText` for completed track-strip length text so the strip does not contradict the OLED; retain the existing state prefix and `live` indication for initial capture. Do not change recording simulation, track defaults, colors, rings, or selection behavior. The planning environment has no Node executable, but JXA reports `typeof BigInt == "function"`; preserve the test runner's existing Node/JXA fallback, do not install Node or silently skip the new cases here.
+- [x] **Step 3: Update the preview.** Implement JS `formatPhraseLength` with the same integer/rational rules as Task 1. Use BigInt for intermediate arithmetic so the large-frame parity cases do not lose precision in JavaScript Number multiplication; convert the measured frame count and Q16 tempo to BigInt before multiplying. Return strings only. Use integer quotient/remainder, local Euclidean GCD, and the same 8-character fallback. Preserve the public `barsText(track)` name and capture/empty handling. Reuse `barsText` for completed track-strip length text so the strip does not contradict the OLED; retain the existing state prefix and `live` indication for initial capture. Do not change recording simulation, track defaults, colors, rings, or selection behavior. The planning environment has no Node executable, but JXA reports `typeof BigInt == "function"`; preserve the test runner's existing Node/JXA fallback, do not install Node or silently skip the new cases here.
 
-- [ ] **Step 4: Document the behavior.** In the existing feature guide, explain completed-phrase fractions/seconds with `1/16 BAR` and `0.37 s` examples; `REC` during recording/overdub; one-sample recognition tolerance; current-tempo interpretation; and that no recorded audio is rounded, trimmed, or padded by this display change. Distinguish existing synced Start/Stop scheduling from nearest-size post-recording rounding.
+- [x] **Step 4: Document the behavior.** In the existing feature guide, explain completed-phrase fractions/seconds with `1/16 BAR` and `0.37 s` examples; `REC` during recording/overdub; one-sample recognition tolerance; current-tempo interpretation; and that no recorded audio is rounded, trimmed, or padded by this display change. Distinguish existing synced Start/Stop scheduling from nearest-size post-recording rounding.
 
-- [ ] **Step 5: Establish GREEN and run integration verification.** Run:
+- [x] **Step 5: Establish GREEN and run integration verification.** Run:
 
 ```bash
 python3 tests/loop_station/ui/demo_contract_test.py
@@ -219,7 +219,7 @@ git diff --check
 
 Require both Python suites, every registered CTest suite, and ARM compile/link to pass. Record actual counts and any pre-existing warnings; do not promise warning-free output. Use a direct `file://` browser preview if tooling supports it; otherwise mark browser verification NOT_RUN. Never restart the stopped HTTP server. Device checks remain NOT_RUN until observed.
 
-- [ ] **Step 6: Commit and obtain final review.** Stage only this task's three files and commit `docs: match loop length preview and explain measured durations`. Obtain the agreed independent whole-change review, focused on arithmetic, no audio mutation, the two extraction probes, JS parity, and row width. Report the actual BIN path and build evidence if execution produces a firmware artifact; a stale hashed filename is not proof of the embedded version. Keep the branch without merge/push unless the user requests integration.
+- [x] **Step 6: Commit and obtain final review.** Stage only this task's three files and commit `docs: match loop length preview and explain measured durations`. Obtain the agreed independent whole-change review, focused on arithmetic, no audio mutation, the two extraction probes, JS parity, and row width. Report the actual BIN path and build evidence if execution produces a firmware artifact; a stale hashed filename is not proof of the embedded version. Keep the branch without merge/push unless the user requests integration.
 
 ## Self-review
 
