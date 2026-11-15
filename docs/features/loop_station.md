@@ -31,7 +31,7 @@ Loop audio is held in a shared memory pool. The configured profile reserves 32 M
 3. Return to the idle Song/Session View root.
 4. Press **CROSS-SCREEN** once without holding Shift.
 
-Loop Station reserves its configured audio memory when opening. If the reservation fails, the current view remains open and the device reports the failure. Entering Loop Station does not start transport or recording. Press **CROSS-SCREEN** or **SONG** to exit; an active capture may delay exit until it is safe.
+Loop Station reserves its configured audio memory when opening. If the reservation fails, the current view remains open and the device reports the failure. Entering Loop Station does not start transport, recording, or the loop group. Press **CROSS-SCREEN** or **SONG** to exit; an active capture may delay exit until it is safe.
 
 ## Use the eight track pads
 
@@ -41,11 +41,20 @@ The Deluge's 16×8 pad grid is divided into eight 4×4 tiles: tracks 1–4 acros
 2. Press the center again to finish the take. **Record Action** decides whether the phrase starts playing or moves directly into overdub.
 3. Press the center of a playing track to begin overdubbing; press it again to close the capture gate. A quick double press on a playing track stops it.
 4. Press a track's outer ring to select it. While it plays, the ring fills clockwise from the upper-left pad and resets each time the phrase loops.
-5. Press **PLAY** to Start All and **RECORD** to record on the selected track. The physical top row of the sidebar provides Start All (left) and Stop All (right); the other sidebar rows are inactive.
+5. Use a track's centre pads to capture its first phrase and to start or finish overdubs. The physical top row of the sidebar independently provides loop-group Start All (left) and Stop All (right); the other sidebar rows are inactive. These loop controls work independently of Song transport.
 6. Stop a track, then hold its center for two seconds and release to clear it. A red sweep shows hold progress.
 7. Press **BACK** on a track with available history to request undo. The display indicates when undo is unavailable or still pending.
 
 Track colors distinguish tracks. New tracks default to **Yellow, Cyan, Blue, Purple, Magenta, Pink, Gold and Lime** for tracks 1–8 respectively. Center pads and rings show empty, recording, overdubbing, playing and stopped states. These temporary state colors take priority over the chosen identity color. A capture error appears on the affected track; press its center to acknowledge it.
+
+## Standard Song controls
+
+- **PLAY** uses normal Song transport; it is not loop-group Start All. Starting transport does not automatically launch the loop group, whether you enter Loop Station or press PLAY. Use the sidebar's Start All when you want to launch the loops together. Stopping Song transport immediately stops loops and closes active loop captures.
+- **RECORD** uses normal Deluge recording behavior, including its usual count-in and supported modifiers. It does not record the selected loop; use that loop's centre pads for loop capture and overdub.
+- **TAP** sets Song tempo; **SHIFT + TAP** toggles the metronome. Tempo-button actions retain their normal shared behavior.
+- **SAVE** and **LOAD** use the normal Song workflows for saving and restoring Loop Station checkpoints. When a shared menu is open, its modal controls take precedence over loop gestures.
+- The gold modulation knobs and their presses target the selected loop's bound clip effects. Turn on **AFFECT ENTIRE** for Song-wide effects; turning it off returns control to the selected loop. The selected loop's ordinary Audio Clip and detailed track FX menus remain available through **CLIP VIEW**.
+- Unshifted **SELECT** opens Loop Station settings; **SHIFT + SELECT** retains the normal shared device-settings action. **SHIFT + track centre** opens that track's Loop Station settings. Selection and settings navigation do not clear the current **AFFECT ENTIRE** state.
 
 ## Change settings
 

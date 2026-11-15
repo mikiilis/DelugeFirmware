@@ -15,7 +15,7 @@ The silent browser preview does not capture audio. Timing, audio and memory read
 1. Open **Settings → Community Features** and turn on **Enable Loop Station**.
 2. Return to the idle Song/Session View root. Press **CROSS-SCREEN** once, without holding Shift, to open Loop Station.
 
-The mode reserves its configured audio memory before it opens. If memory cannot be reserved, it stays in the current view and reports the failure. Starting the view does not start transport or recording. CROSS-SCREEN or SONG exits to Song/Session View; an in-progress capture can make exit wait until it is safe.
+The mode reserves its configured audio memory before it opens. If memory cannot be reserved, it stays in the current view and reports the failure. Starting the view does not start transport, recording, or the loop group. CROSS-SCREEN or SONG exits to Song/Session View; an in-progress capture can make exit wait until it is safe.
 
 ## Track layout
 
@@ -25,10 +25,19 @@ The 16×8 pad grid contains eight 4×4 track tiles. Tracks 1–4 are across the 
 - Press the centre of a playing track to begin overdubbing. Press again to close the capture gate. A quick double press on a playing track stops it.
 - Select a track from its border ring. The ring fills clockwise from the upper-left pad as the phrase plays and resets on each wrap.
 - Stop a track, then hold its centre for two seconds and release to clear it. The red sweep shows the hold progress.
-- Use **PLAY** for Start All and **RECORD** for Record on the selected track. The physical top row of the sidebar has Start All (left) and Stop All (right); other sidebar rows are inactive.
+- Use a track's centre pads to capture its first phrase and to start or finish overdubs. The physical top row of the sidebar independently provides loop-group Start All (left) and Stop All (right); other sidebar rows are inactive. These loop controls work independently of Song transport.
 - Press **BACK** on a track with available history to request undo. History restoration can take time; the display reports when undo is unavailable or pending.
 
 Track colours identify tracks. New tracks default to **Yellow, Cyan, Blue, Purple, Magenta, Pink, Gold and Lime** for tracks 1–8 respectively. The centre and ring also distinguish empty, recording, overdubbing, playing and stopped states; these temporary state colours take priority over the chosen identity colour. A capture error is shown on its track and acknowledged by pressing its centre.
+
+## Standard Song controls
+
+- **PLAY** uses normal Song transport; it is not loop-group Start All. Starting transport does not automatically launch the loop group, whether you enter Loop Station or press PLAY. Use the sidebar's Start All when you want to launch the loops together. Stopping Song transport immediately stops loops and closes active loop captures.
+- **RECORD** uses normal Deluge recording behavior, including its usual count-in and supported modifiers. It does not record the selected loop; use that loop's centre pads for loop capture and overdub.
+- **TAP** sets Song tempo; **SHIFT + TAP** toggles the metronome. Tempo-button actions retain their normal shared behavior.
+- **SAVE** and **LOAD** use the normal Song workflows for saving and restoring Loop Station checkpoints. When a shared menu is open, its modal controls take precedence over loop gestures.
+- The gold modulation knobs and their presses target the selected loop's bound clip effects. Turn on **AFFECT ENTIRE** for Song-wide effects; turning it off returns control to the selected loop. The selected loop's ordinary Audio Clip and detailed track FX menus remain available through **CLIP VIEW**.
+- Unshifted **SELECT** opens Loop Station settings; **SHIFT + SELECT** retains the normal shared device-settings action. **SHIFT + track centre** opens that track's Loop Station settings. Selection and settings navigation do not clear the current **AFFECT ENTIRE** state.
 
 ## Recording length on OLED
 
