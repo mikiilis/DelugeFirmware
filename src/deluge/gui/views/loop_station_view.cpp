@@ -159,6 +159,13 @@ bool LoopStationView::opened() {
 	return true;
 }
 void LoopStationView::focusRegained() {
+	// A shared modal is made current before its opened() runs, so an accepted centre
+	// release can be consumed during that I/O. If opening then fails, openUI restores
+	// this view and calls here. Clear the stale hold through the current active model
+	// before the ordinary refresh, so a later release cannot start or clear the
+	// interrupted gesture. The physically still-held gesture must be repeated.
+	if (auto* m = model(); m)
+		m->cancelHeldPadGestures();
 	updateLed();
 	updateModTarget();
 }
@@ -336,7 +343,9 @@ ActionResult LoopStationView::buttonAction(deluge::hid::Button b, bool on, bool 
 	const bool loopOwnsInput = !sharedExclusiveModeActive();
 	auto* m = model();
 
-	// Retained loop shortcuts own both edges while no shared exclusive mode is active.
+	// While no shared exclusive mode is active, these loop shortcuts act on the
+	// edge routed by the current mode and modifiers. Ownership is recomputed per
+	// event, not remembered across mode, modifier, or current-UI changes.
 	if (loopOwnsInput) {
 		if (b == AFFECT_ENTIRE) {
 			if (on && currentSong) {

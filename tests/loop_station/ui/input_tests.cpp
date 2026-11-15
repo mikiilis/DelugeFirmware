@@ -721,6 +721,25 @@ TEST(LoopUi, SharedModalTakeoverCancelsStoppedCentreHoldWithoutReplay) {
 	loopStationSettingsMenu.close();
 }
 
+TEST(LoopUi, SharedModalTakeoverCancelsLongStoppedCentreHoldWithoutClear) {
+	Fixture f;
+	f.recordPhrase();
+	CHECK(Status::Ok == f.model->dispatch({CommandType::StopAll}));
+	CHECK_FALSE(f.model->engine().state(0).playing);
+	f.view.padAction(1, 6, 100);                      // Accept a stopped-pad hold.
+	f.host.time += 2 * loop_station::kSampleRate + 1; // A release now would clear the phrase.
+	CHECK(f.model->engine().heldDurationSamples(0, f.host.time) >= 2 * loop_station::kSampleRate);
+
+	CHECK_TRUE(loopStationSettingsMenu.openGlobal()); // Modal now owns physical pad edges.
+	CHECK(f.view.buttonAction(LOAD, false, false) == ActionResult::NOT_DEALT_WITH);
+	CHECK_EQUAL(0, f.model->engine().heldDurationSamples(0, f.host.time));
+	// The long hold's release would have cleared the phrase; after takeover it must not.
+	CHECK(Status::Ok == f.model->dispatch({CommandType::Release, 0}));
+	CHECK_FALSE(f.model->engine().state(0).playing);
+	CHECK(f.model->engine().state(0).hasPhrase);
+	loopStationSettingsMenu.close();
+}
+
 TEST(LoopUi, UnshiftedSelectOpensGlobalSettingsAndShiftedSelectDelegates) {
 	{
 		Fixture f;
@@ -1185,8 +1204,10 @@ TEST(LoopUi, StutterRetargetRestoresSourceRateAndConsumesRelease) {
 	view.activeModControllableModelStack.modControllable = &destination;
 	CHECK(loopStationSettingsMenu.openGlobal());
 	POINTERS_EQUAL(&loopStationSettingsMenu, getCurrentUI());
-	// The settings handler consumes this release before the shared dispatcher;
-	// preserve the pending physical ownership until a fresh press arrives.
+	// This lifecycle case intentionally simulates a missing/stale release: it sends
+	// no physical release here, so pending ownership is retained until a fresh press
+	// arrives. The complete Buttons probe covers the real path, where an owned
+	// canceled release is consumed before the settings handler.
 	CHECK_TRUE(targetChangeView.pendingStutterEncoderRelease_);
 	CHECK_EQUAL(destinationRate, destinationParams.params.getValue(rateParam));
 	loopStationSettingsMenu.close();

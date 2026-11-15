@@ -40,27 +40,99 @@ inline constexpr int UI_MODE_HOLDING_SAVE_BUTTON = 51;
 inline constexpr int UI_MODE_HOLDING_LOAD_BUTTON = 52;
 inline constexpr int UI_MODE_AUDITIONING = 9;
 inline constexpr int kShortPressTime = 1000;
+inline constexpr int kDisplayWidth = 16;
+inline constexpr int kSideBarWidth = 2;
+inline constexpr int kDisplayHeight = 8;
 inline int currentUIMode = UI_MODE_NONE;
 inline uint32_t timeSaveButtonPressed = 0;
+inline bool sdRoutineLock = false;
 namespace AudioEngine {
 inline uint32_t audioSampleTimer = 1;
 }
+enum class TimerName { UI_SPECIFIC };
+struct TimerManager {
+	void unsetTimer(TimerName) {}
+};
+inline TimerManager uiTimerManager{};
+struct PadLEDs {
+	static void reassessGreyout() {}
+};
+
+// The real UI base and navigation-hierarchy boundary mirror production ui.cpp
+// semantics: openUI pushes the new UI before opened() and pops it on failure.
 struct UI {
 	virtual ~UI() = default;
+	virtual UI* getUI() { return this; }
+	virtual bool opened() { return true; }
+	virtual void focusRegained() {}
+	virtual ActionResult padAction(int32_t, int32_t, int32_t) { return ActionResult::DEALT_WITH; }
 };
-extern UI* currentUI;
+constexpr size_t kUiNavigationHistoryLength = 16;
+inline std::array<UI*, kUiNavigationHistoryLength> uiNavigationHierarchy{};
+inline int32_t numUIsOpen = 0;
+inline UI* lastUIBeforeNullifying = nullptr;
 inline UI* getCurrentUI() {
-	return currentUI;
+	if (numUIsOpen == 0)
+		return lastUIBeforeNullifying;
+	return uiNavigationHierarchy[numUIsOpen - 1];
 }
-extern UI* rootUI;
 inline UI* getRootUI() {
-	return rootUI;
+	if (numUIsOpen == 0)
+		return nullptr;
+	return uiNavigationHierarchy[0];
 }
-inline UI performanceView{}, saveSongUI{}, loadSongUI{};
-inline bool openUI(UI* ui) {
-	currentUI = ui;
-	return true;
+inline void renderUIsForOled() {
 }
+bool openUI(UI* ui);
+
+// Narrow modal boundary. opened() is the failure-injection point: the test callback
+// delivers the real physical matrix release while this modal is current, then
+// reports whether opening succeeded. Only ownership/rollback is modeled here.
+struct SaveSongUI : UI {
+	bool (*openedCallback)(SaveSongUI&) = nullptr;
+	bool opened() override { return openedCallback ? openedCallback(*this) : true; }
+	unsigned padCalls = 0;
+	unsigned releases = 0;
+	ActionResult padAction(int32_t, int32_t, int32_t velocity) override {
+		++padCalls;
+		if (velocity == 0)
+			++releases;
+		return ActionResult::DEALT_WITH;
+	}
+};
+inline SaveSongUI saveSongUI{};
+struct LoadUI {
+	virtual ~LoadUI() = default;
+	virtual ActionResult padAction(int32_t, int32_t, int32_t) {
+		++baseCalls;
+		return ActionResult::DEALT_WITH;
+	}
+	unsigned baseCalls = 0;
+};
+struct LoadSongUI : LoadUI, UI {
+	bool (*openedCallback)(LoadSongUI&) = nullptr;
+	bool opened() override { return openedCallback ? openedCallback(*this) : true; }
+	ActionResult padAction(int32_t x, int32_t y, int32_t on) override;
+	bool qwertyVisible = true;
+	int favouriteRow = 1;
+	unsigned displayTextCalls = 0;
+	void displayText(bool) { ++displayTextCalls; }
+	void* getCurrentFileItem() const { return nullptr; }
+	void drawKeys() {}
+};
+inline LoadSongUI loadSongUI{};
+struct StemExport {
+	bool processStarted = false;
+};
+extern StemExport stemExport;
+class MatrixDriver {
+public:
+	ActionResult padAction(int32_t x, int32_t y, int32_t velocity);
+	bool padStates[kDisplayWidth + kSideBarWidth][kDisplayHeight]{};
+};
+extern MatrixDriver matrixDriver;
+
+inline UI performanceView{};
 namespace context_menu {
 struct ClearSong : UI {
 	bool setupAndCheckAvailability() { return true; }
@@ -68,6 +140,7 @@ struct ClearSong : UI {
 inline ClearSong clearSong{};
 } // namespace context_menu
 struct ProbeDisplay {
+	bool haveOLED() const { return false; }
 	void displayPopup(const char*) {}
 };
 extern ProbeDisplay* display;
@@ -138,9 +211,25 @@ struct View {
 extern View view;
 struct LoopStationView : UI {
 	ActionResult buttonAction(deluge::hid::Button, bool, bool);
+	void focusRegained() override;
+	ActionResult padAction(int32_t, int32_t, int32_t velocity) override {
+		if (velocity == 0)
+			++padReleases;
+		else
+			++padPresses;
+		return ActionResult::DEALT_WITH;
+	}
 	void attemptExit() {}
-	void updateModTarget() {}
+	void updateLed() {}
+	void updateModTarget() {
+		refreshed = true;
+		cancellationsAtRefresh = model() ? model()->cancellations : 0;
+	}
 	void finishStutterBeforeTargetChange() {}
 	RestoreId pendingRestore_{};
 	uint8_t pendingRestoreSlot_ = 255;
+	unsigned padPresses = 0;
+	unsigned padReleases = 0;
+	bool refreshed = false;
+	unsigned cancellationsAtRefresh = 0;
 };

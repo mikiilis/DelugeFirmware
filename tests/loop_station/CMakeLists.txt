@@ -66,12 +66,16 @@ add_custom_command(
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/final_fix/generate_save_load_handoff_probe.py"
             --view "${CMAKE_CURRENT_SOURCE_DIR}/../../src/deluge/gui/views/view.cpp"
             --loop-view "${CMAKE_CURRENT_SOURCE_DIR}/../../src/deluge/gui/views/loop_station_view.cpp"
+            --ui "${CMAKE_CURRENT_SOURCE_DIR}/../../src/deluge/gui/ui/ui.cpp"
+            --matrix "${CMAKE_CURRENT_SOURCE_DIR}/../../src/deluge/hid/matrix/matrix_driver.cpp"
+            --load-ui "${CMAKE_CURRENT_SOURCE_DIR}/../../src/deluge/gui/ui/load/load_song_ui.cpp"
             --support "${CMAKE_CURRENT_SOURCE_DIR}/final_fix/save_load_handoff_probe_support.h"
             --tests "${CMAKE_CURRENT_SOURCE_DIR}/final_fix/save_load_handoff_probe_tests.cpp"
             --output "${FINAL_SAVE_LOAD_HANDOFF_PROBE}"
     DEPENDS final_fix/generate_save_load_handoff_probe.py final_fix/save_load_handoff_probe_support.h
             final_fix/save_load_handoff_probe_tests.cpp ../../src/deluge/gui/views/view.cpp
-            ../../src/deluge/gui/views/loop_station_view.cpp
+            ../../src/deluge/gui/views/loop_station_view.cpp ../../src/deluge/gui/ui/ui.cpp
+            ../../src/deluge/hid/matrix/matrix_driver.cpp ../../src/deluge/gui/ui/load/load_song_ui.cpp
     VERBATIM
 )
 add_executable(LoopStationFinalSaveLoadHandoffProbe "${FINAL_SAVE_LOAD_HANDOFF_PROBE}")
