@@ -150,6 +150,7 @@ bool LoopStationView::opened() {
 	if (!currentSong || currentSong->ensureLoopStation(true) != Status::Ok)
 		return false;
 	updateLed();
+	updateModTarget();
 	if (display && !display->haveOLED()) {
 		display->setText("LOOP");
 		display->displayPopup(kConfiguredMemoryProfile == MemoryProfile::TenSecond ? "10 SEC" : "12 SEC");
@@ -159,6 +160,41 @@ bool LoopStationView::opened() {
 }
 void LoopStationView::focusRegained() {
 	updateLed();
+	updateModTarget();
+}
+bool LoopStationView::getAffectEntire() {
+	return currentSong && currentSong->affectEntire;
+}
+UIModControllableContext LoopStationView::getUIModControllableContext() {
+	if (!currentSong)
+		return UIModControllableContext::NONE;
+	return modTargetIsClip_ ? UIModControllableContext::CLIP : UIModControllableContext::SONG;
+}
+void LoopStationView::updateModTarget() {
+	if (!currentSong) {
+		modTargetIsClip_ = false;
+		view.setActiveModControllableTimelineCounter(nullptr);
+		return;
+	}
+	// Honor the existing song-wide mode. Only a persistent selected binding may
+	// retarget effects; refreshing must never allocate a clip of its own.
+	AudioClip* clip = nullptr;
+	if (!currentSong->affectEntire) {
+		if (auto* m = model(); m) {
+			const SlotId slot = m->engine().selected();
+			if (validSlot(slot))
+				clip = m->clip(slot);
+		}
+	}
+	if (clip) {
+		currentSong->setCurrentClip(clip);
+		modTargetIsClip_ = true;
+		view.setActiveModControllableTimelineCounter(clip);
+	}
+	else {
+		modTargetIsClip_ = false;
+		view.setActiveModControllableTimelineCounter(currentSong);
+	}
 }
 void LoopStationView::updateLed() {
 	indicator_leds::setLedState(IndicatorLED::CROSS_SCREEN_EDIT, true);
@@ -250,6 +286,7 @@ ActionResult LoopStationView::padAction(int32_t x, int32_t y, int32_t velocity) 
 	if (pad.region == PadRegion::Border) {
 		if (velocity > 0) {
 			(void)m->dispatch({CommandType::Select, pad.slot});
+			updateModTarget();
 			graphicsRoutine();
 		}
 		return ActionResult::DEALT_WITH;
@@ -268,6 +305,8 @@ ActionResult LoopStationView::padAction(int32_t x, int32_t y, int32_t velocity) 
 	else {
 		(void)m->dispatch({CommandType::Release, pad.slot});
 	}
+	if (velocity > 0)
+		updateModTarget();
 	graphicsRoutine();
 	return ActionResult::DEALT_WITH;
 }
@@ -281,6 +320,13 @@ ActionResult LoopStationView::buttonAction(deluge::hid::Button b, bool on, bool 
 
 	// Retained loop shortcuts own both edges while no shared exclusive mode is active.
 	if (loopOwnsInput) {
+		if (b == AFFECT_ENTIRE) {
+			if (on && currentSong) {
+				currentSong->affectEntire = !currentSong->affectEntire;
+				updateModTarget();
+			}
+			return ActionResult::DEALT_WITH;
+		}
 		if (b == CROSS_SCREEN_EDIT) {
 			if (on && !Buttons::isShiftButtonPressed())
 				attemptExit();
@@ -467,6 +513,7 @@ void LoopStationView::selectEncoderAction(int8_t offset) {
 		const auto slot = static_cast<SlotId>(selected);
 		if (prepareTrack(slot)) {
 			(void)m->dispatch({CommandType::Select, slot});
+			updateModTarget();
 			graphicsRoutine();
 		}
 	}

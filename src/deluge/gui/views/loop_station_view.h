@@ -20,12 +20,16 @@ public:
 	void renderOLED(deluge::hid::display::oled_canvas::Canvas& canvas) override;
 	void selectEncoderAction(int8_t offset) override;
 	UIType getUIType() override { return UIType::LOOP_STATION; }
+	bool getAffectEntire() override;
+	UIModControllableContext getUIModControllableContext() override;
 
 private:
 	loop_station::RestoreId pendingRestore_{};
 	loop_station::SlotId pendingRestoreSlot_ = loop_station::kInvalidSlot;
 	bool pendingExit_ = false;
+	bool modTargetIsClip_ = false;
 	void updateLed();
+	void updateModTarget();
 	void attemptExit();
 	bool prepareTrack(loop_station::SlotId slot);
 };

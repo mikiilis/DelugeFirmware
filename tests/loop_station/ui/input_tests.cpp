@@ -1008,3 +1008,190 @@ TEST(LoopUi, SevenSegmentPerformanceGraphicsRefreshDoesNotRequestOled) {
 	CHECK(probeRenderRequests > 0);
 	CHECK_EQUAL(0, probeOledRequests);
 }
+
+namespace {
+int32_t borderX(SlotId slot) {
+	return (slot % 4) * 4;
+}
+int32_t borderY(SlotId slot) {
+	return slot < 4 ? 7 : 3;
+}
+void selectBorder(Fixture& f, SlotId slot) {
+	f.view.padAction(borderX(slot), borderY(slot), 100);
+}
+void expectLastTarget(void* expected) {
+	CHECK_FALSE(::view.targets.empty());
+	POINTERS_EQUAL(expected, ::view.targets.back());
+}
+} // namespace
+
+TEST(LoopUi, EntryAndNoSelectionUseSafeSongTarget) {
+	Fixture f;
+	CHECK_EQUAL(kInvalidSlot, f.model->engine().selected());
+	CHECK_EQUAL(1, ::view.targets.size());
+	POINTERS_EQUAL(&f.song, ::view.targets.back());
+	POINTERS_EQUAL(nullptr, f.song.currentClip);
+	CHECK(UIModControllableContext::SONG == f.view.getUIModControllableContext());
+	CHECK_FALSE(f.view.getAffectEntire());
+	CHECK_EQUAL(0, f.host.allocationAttempts);
+
+	// A persisted song-wide mode survives entry rather than being cleared.
+	f.song.affectEntire = true;
+	::view.targets.clear();
+	CHECK_TRUE(f.view.opened());
+	CHECK_TRUE(f.song.affectEntire);
+	expectLastTarget(&f.song);
+	CHECK(UIModControllableContext::SONG == f.view.getUIModControllableContext());
+
+	currentSong = nullptr;
+	::view.targets.clear();
+	f.view.focusRegained();
+	CHECK_EQUAL(1, ::view.targets.size());
+	POINTERS_EQUAL(nullptr, ::view.targets.back());
+	CHECK(UIModControllableContext::NONE == f.view.getUIModControllableContext());
+	CHECK_FALSE(f.view.getAffectEntire());
+	CHECK_FALSE(f.view.opened());
+}
+
+TEST(LoopUi, EveryBorderAndEncoderSelectionTargetsItsOwnClip) {
+	Fixture f;
+	for (SlotId slot = 0; slot < 8; ++slot) {
+		::view.targets.clear();
+		selectBorder(f, slot);
+		CHECK_EQUAL(slot, f.model->engine().selected());
+		auto* clip = f.model->clip(slot);
+		CHECK(clip);
+		expectLastTarget(clip);
+		POINTERS_EQUAL(clip, f.song.currentClip);
+		CHECK(UIModControllableContext::CLIP == f.view.getUIModControllableContext());
+	}
+	selectBorder(f, 7); // Deselect the current loop.
+	CHECK_EQUAL(kInvalidSlot, f.model->engine().selected());
+
+	::view.targets.clear();
+	f.view.selectEncoderAction(1); // Invalid selection starts at 0, then moves to 1.
+	CHECK_EQUAL(1, f.model->engine().selected());
+	auto* encoderClip = f.model->clip(1);
+	POINTERS_EQUAL(encoderClip, ::view.targets.back());
+	POINTERS_EQUAL(encoderClip, f.song.currentClip);
+
+	// Centre actions run through the real engine; if it changes selection the
+	// target must follow, and otherwise the selected clip target must remain.
+	::view.targets.clear();
+	f.view.padAction(centres[5][0], centres[5][1], 100);
+	CHECK_EQUAL(1, f.model->engine().selected());
+	expectLastTarget(encoderClip);
+	f.view.padAction(centres[5][0], centres[5][1], 0);
+}
+
+TEST(LoopUi, DeselectionAndFailedBindingNeverRetainUnrelatedTarget) {
+	Fixture f;
+	selectBorder(f, 1);
+	auto* first = f.model->clip(1);
+	CHECK(first);
+	POINTERS_EQUAL(first, f.song.currentClip);
+
+	selectBorder(f, 1); // Toggle the selection off.
+	CHECK_EQUAL(kInvalidSlot, f.model->engine().selected());
+	::view.targets.clear();
+	f.view.focusRegained();
+	expectLastTarget(&f.song);
+	CHECK(UIModControllableContext::SONG == f.view.getUIModControllableContext());
+
+	::view.targets.clear();
+	f.host.failAllocation = true;
+	selectBorder(f, 4);
+	CHECK_FALSE(f.model->clip(4));
+	CHECK_EQUAL(kInvalidSlot, f.model->engine().selected());
+	CHECK_EQUAL(0, ::view.targets.size()); // A failed binding refreshes nothing.
+	CHECK(UIModControllableContext::SONG == f.view.getUIModControllableContext());
+
+	f.host.failAllocation = false;
+	selectBorder(f, 1);
+	POINTERS_EQUAL(first, f.song.currentClip);
+	::view.targets.clear();
+	f.host.failAllocation = true;
+	selectBorder(f, 4);
+	CHECK_EQUAL(1, f.model->engine().selected());
+	CHECK_EQUAL(0, ::view.targets.size());
+	POINTERS_EQUAL(first, f.song.currentClip);
+	CHECK(UIModControllableContext::CLIP == f.view.getUIModControllableContext());
+}
+
+TEST(LoopUi, AffectEntirePressTogglesOnceAndSelectionRetainsMode) {
+	Fixture f;
+	selectBorder(f, 0);
+	CHECK(f.model->clip(0));
+	::view.targets.clear();
+
+	CHECK(f.view.buttonAction(AFFECT_ENTIRE, true, false) == ActionResult::DEALT_WITH);
+	CHECK_TRUE(f.song.affectEntire);
+	CHECK_TRUE(f.view.getAffectEntire());
+	CHECK_EQUAL(1, ::view.targets.size());
+	POINTERS_EQUAL(&f.song, ::view.targets.back());
+	CHECK(UIModControllableContext::SONG == f.view.getUIModControllableContext());
+
+	CHECK(f.view.buttonAction(AFFECT_ENTIRE, false, false) == ActionResult::DEALT_WITH);
+	CHECK_TRUE(f.song.affectEntire);
+	CHECK_EQUAL(1, ::view.targets.size()); // Releases never toggle or refresh.
+
+	selectBorder(f, 1);
+	auto* latest = f.model->clip(1);
+	CHECK(latest);
+	CHECK_TRUE(f.song.affectEntire);
+	expectLastTarget(&f.song);
+	CHECK(UIModControllableContext::SONG == f.view.getUIModControllableContext());
+
+	CHECK(f.view.buttonAction(AFFECT_ENTIRE, true, false) == ActionResult::DEALT_WITH);
+	CHECK_FALSE(f.song.affectEntire);
+	expectLastTarget(latest);
+	POINTERS_EQUAL(latest, f.song.currentClip);
+	CHECK(UIModControllableContext::CLIP == f.view.getUIModControllableContext());
+
+	::view.reset();
+	currentUIMode = UI_MODE_HOLDING_SAVE_BUTTON;
+	CHECK(f.view.buttonAction(AFFECT_ENTIRE, true, false) == ActionResult::NOT_DEALT_WITH);
+	CHECK_FALSE(f.song.affectEntire);
+	CHECK_EQUAL(0, ::view.targets.size());
+	CHECK_EQUAL(1, ::view.calls.size());
+	currentUIMode = UI_MODE_NONE;
+
+	currentUIMode = UI_MODE_STUTTERING;
+	CHECK(f.view.buttonAction(AFFECT_ENTIRE, true, false) == ActionResult::DEALT_WITH);
+	CHECK_TRUE(f.song.affectEntire);
+	expectLastTarget(&f.song);
+	currentUIMode = UI_MODE_NONE;
+}
+
+TEST(LoopUi, FocusRegainRestoresTargetAfterMenus) {
+	Fixture f;
+	selectBorder(f, 0);
+	CHECK(f.model->clip(0));
+	CHECK(f.view.buttonAction(SELECT_ENC, true, false) == ActionResult::DEALT_WITH);
+	POINTERS_EQUAL(&loopStationSettingsMenu, getCurrentUI());
+
+	CHECK(Status::Ok == f.model->ensureBound(1));
+	CHECK(Status::Ok == f.model->engine().dispatch({CommandType::Select, 1}, f.host.time, f.model->clock()));
+	CHECK_EQUAL(1, f.model->engine().selected());
+	loopStationSettingsMenu.buttonAction(BACK, true, false);
+	POINTERS_EQUAL(&f.view, getCurrentUI());
+
+	auto* restored = f.model->clip(1);
+	CHECK(restored);
+	expectLastTarget(restored);
+	POINTERS_EQUAL(restored, f.song.currentClip);
+
+	const auto allocations = f.host.allocationAttempts;
+	::view.targets.clear();
+	for (int i = 0; i < 3; ++i)
+		f.view.focusRegained();
+	CHECK_EQUAL(3, ::view.targets.size());
+	for (auto* target : ::view.targets)
+		POINTERS_EQUAL(restored, target);
+	CHECK_EQUAL(allocations, f.host.allocationAttempts);
+
+	::view.targets.clear();
+	f.view.graphicsRoutine();
+	CHECK_EQUAL(0, ::view.targets.size());
+	CHECK_EQUAL(allocations, f.host.allocationAttempts);
+}

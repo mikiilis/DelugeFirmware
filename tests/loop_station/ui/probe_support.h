@@ -11,6 +11,7 @@
 #include "strings_declarations.h"
 #include <algorithm>
 #include <array>
+#include <cstddef>
 #include <cstdio>
 #include <initializer_list>
 #include <map>
@@ -33,6 +34,8 @@ public:
 	                           uint8_t mask[][kDisplayWidth + kSideBarWidth] = nullptr) {
 		return false;
 	}
+	virtual bool getAffectEntire() { return false; }
+	virtual UIModControllableContext getUIModControllableContext() { return UIModControllableContext::NONE; }
 	void close();
 };
 struct ProbePadFrame {
@@ -58,9 +61,17 @@ ProbeUI* getRootUI();
 void uiNeedsRendering(ProbeUI* ui, uint32_t mainRows = 0xffffffff, uint32_t sideRows = 0xffffffff);
 void renderUIsForOled();
 
-class Song {
+class TimelineCounter {
+public:
+	virtual ~TimelineCounter() = default;
+};
+
+class Song : public TimelineCounter {
 public:
 	loop_station::SongModel* model = nullptr;
+	void* currentClip = nullptr;
+	bool affectEntire = false;
+	void setCurrentClip(void* clip) { currentClip = clip; }
 	loop_station::SongModel* loopStation() { return model; }
 	loop_station::Status ensureLoopStation(bool) {
 		if (!model)
@@ -140,12 +151,19 @@ class ProbeView {
 public:
 	ActionResult result = ActionResult::NOT_DEALT_WITH;
 	std::vector<ProbeSharedCall> calls;
+	std::vector<void*> targets;
 	ActionResult buttonAction(deluge::hid::Button button, bool on, bool inCardRoutine) {
 		calls.push_back({button, on, inCardRoutine});
 		return result;
 	}
+	// Exact pointer log for the shared modulation-target boundary. The real API
+	// refreshes effect LED/knob indicators; no effect processing is simulated here.
+	void setActiveModControllableTimelineCounter(TimelineCounter* target, bool = true) { targets.push_back(target); }
+	void setActiveModControllableTimelineCounter(AudioClip* target, bool = true) { targets.push_back(target); }
+	void setActiveModControllableTimelineCounter(std::nullptr_t, bool = true) { targets.push_back(nullptr); }
 	void reset() {
 		calls.clear();
+		targets.clear();
 		result = ActionResult::NOT_DEALT_WITH;
 	}
 };
@@ -163,15 +181,19 @@ public:
 	ActionResult timerCallback();
 	ActionResult padAction(int32_t, int32_t, int32_t);
 	ActionResult buttonAction(deluge::hid::Button, bool, bool);
+	bool getAffectEntire() override;
+	UIModControllableContext getUIModControllableContext() override;
 	bool renderMainPads(uint32_t, RGB[][kDisplayWidth + kSideBarWidth], uint8_t[][kDisplayWidth + kSideBarWidth],
 	                    bool) override;
 	bool renderSidebar(uint32_t, RGB[][kDisplayWidth + kSideBarWidth],
 	                   uint8_t[][kDisplayWidth + kSideBarWidth]) override;
 	void selectEncoderAction(int8_t);
 	bool prepareTrack(loop_station::SlotId);
+	void updateModTarget();
 	void updateLed();
 	void attemptExit();
 	loop_station::RestoreId pendingRestore_{};
 	loop_station::SlotId pendingRestoreSlot_ = loop_station::kInvalidSlot;
 	bool pendingExit_ = false;
+	bool modTargetIsClip_ = false;
 };
