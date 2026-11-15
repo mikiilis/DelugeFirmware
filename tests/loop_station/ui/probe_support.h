@@ -121,6 +121,34 @@ struct ProbeSessionView : ProbeUI {
 };
 extern ProbeSessionView sessionView;
 
+// Shared View boundary. The spy records exact forwarded arguments and returns a
+// configurable result; it deliberately implements no transport or metronome behavior.
+#define UI_MODE_NONE 0
+#define UI_MODE_MIDI_LEARN 11
+#define UI_MODE_RECORD_COUNT_IN 45
+#define UI_MODE_HOLDING_SAVE_BUTTON 51
+#define UI_MODE_HOLDING_LOAD_BUTTON 52
+extern uint32_t currentUIMode;
+struct ProbeSharedCall {
+	deluge::hid::Button button;
+	bool on;
+	bool inCardRoutine;
+};
+class ProbeView {
+public:
+	ActionResult result = ActionResult::NOT_DEALT_WITH;
+	std::vector<ProbeSharedCall> calls;
+	ActionResult buttonAction(deluge::hid::Button button, bool on, bool inCardRoutine) {
+		calls.push_back({button, on, inCardRoutine});
+		return result;
+	}
+	void reset() {
+		calls.clear();
+		result = ActionResult::NOT_DEALT_WITH;
+	}
+};
+extern ProbeView view;
+
 #include "real_canvas.h"
 
 // Probe declarations avoid firmware RootUI dependencies. Firmware compilation separately

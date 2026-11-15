@@ -17,6 +17,8 @@ uint64_t loopStationSampleClock() {
 }
 } // namespace AudioEngine
 ProbeSessionView sessionView;
+uint32_t currentUIMode = 0;
+ProbeView view;
 namespace Buttons {
 bool shiftPressed = false;
 }

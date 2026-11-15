@@ -50,6 +50,16 @@ struct RenderedPads {
 	uint8_t mask[kDisplayHeight][kDisplayWidth + kSideBarWidth]{};
 	explicit RenderedPads(Fixture& f) { CHECK_TRUE(f.view.renderMainPads(0xff, image, mask, false)); }
 };
+
+void expectDelegated(Fixture& f, deluge::hid::Button button, bool on, ActionResult expected) {
+	::view.reset();
+	::view.result = expected;
+	CHECK(f.view.buttonAction(button, on, false) == expected);
+	CHECK_EQUAL(1, ::view.calls.size());
+	CHECK(button == ::view.calls.front().button);
+	CHECK_EQUAL(on, ::view.calls.front().on);
+	CHECK_FALSE(::view.calls.front().inCardRoutine);
+}
 } // namespace
 
 TEST(LoopUi, TrackSettingsPulsesAddressedRingWithoutChangingSelectedTrack) {
@@ -288,27 +298,43 @@ TEST(LoopUi, BorderPreparesAndTogglesSelectionWithoutCapture) {
 	CHECK_EQUAL(1, f.host.allocationAttempts);
 }
 
-TEST(LoopUi, EncoderPreparesIntendedSlotAndRecordUsesThatSelection) {
+TEST(LoopUi, EncoderPreparesIntendedSlotWithoutLoopCapture) {
 	Fixture f;
 	f.view.selectEncoderAction(2);
 	f.onlyBound(2);
-	CHECK_EQUAL(2, f.model->engine().selected());
-	f.view.buttonAction(RECORD, true, false);
-	CHECK_TRUE(f.model->engine().state(2).capture);
 	CHECK_EQUAL(1, f.host.allocationAttempts);
+	CHECK_EQUAL(2, f.model->engine().selected());
+	CHECK_FALSE(f.model->engine().state(2).capture);
 	f.view.selectEncoderAction(-1);
 	CHECK_EQUAL(1, f.model->engine().selected());
 	CHECK_TRUE(f.model->clip(1));
 	CHECK_EQUAL(2, f.host.allocationAttempts);
+	CHECK_FALSE(f.model->engine().state(1).capture);
 }
 
-TEST(LoopUi, RecordPreparesAnUnboundSelectedTrack) {
+TEST(LoopUi, RecordEdgesReachNativeHandlerWithoutLoopCapture) {
+	Fixture f;
+	f.view.selectEncoderAction(2);
+	f.onlyBound(2);
+	CHECK_FALSE(f.model->engine().state(2).capture);
+	const auto allocations = f.host.allocationAttempts;
+	expectDelegated(f, RECORD, true, ActionResult::NOT_DEALT_WITH);
+	expectDelegated(f, RECORD, false, ActionResult::NOT_DEALT_WITH);
+	CHECK_EQUAL(2, f.model->engine().selected());
+	CHECK_FALSE(f.model->engine().state(2).capture);
+	CHECK_EQUAL(allocations, f.host.allocationAttempts);
+}
+
+TEST(LoopUi, RecordEdgesDoNotBindOrCaptureEngineSelectedUnboundSlot) {
 	Fixture f;
 	// Engine selection may exist independently of a firmware clip binding.
 	CHECK(Status::Ok == f.model->engine().dispatch({CommandType::Select, 3}, f.host.time, f.model->clock()));
-	f.view.buttonAction(RECORD, true, false);
-	f.onlyBound(3);
-	CHECK_TRUE(f.model->engine().state(3).capture);
+	expectDelegated(f, RECORD, true, ActionResult::NOT_DEALT_WITH);
+	expectDelegated(f, RECORD, false, ActionResult::NOT_DEALT_WITH);
+	CHECK_EQUAL(3, f.model->engine().selected());
+	CHECK_FALSE(f.model->clip(3));
+	CHECK_FALSE(f.model->engine().state(3).capture);
+	CHECK_EQUAL(0, f.host.allocationAttempts);
 }
 
 TEST(LoopUi, RepeatedCentreUseKeepsClipIdentity) {
@@ -429,13 +455,229 @@ TEST(LoopUi, SettingsShiftEdgesReachSharedProcessing) {
 	CHECK_EQUAL(0, f.host.allocationAttempts);
 }
 
-TEST(LoopUi, OnlyShiftPropagatesAndCardRoutineButtonDeferralIsPreserved) {
+TEST(LoopUi, UnhandledRootButtonsDelegateAndCardRoutineDefers) {
 	Fixture f;
-	CHECK(f.view.buttonAction(SYNTH, true, false) == ActionResult::DEALT_WITH);
-	CHECK(loopStationSettingsMenu.buttonAction(SYNTH, true, false) == ActionResult::DEALT_WITH);
+	::view.result = ActionResult::NOT_DEALT_WITH;
+	CHECK(f.view.buttonAction(SYNTH, true, false) == ActionResult::NOT_DEALT_WITH);
+	CHECK_EQUAL(1, ::view.calls.size());
+	CHECK(SYNTH == ::view.calls.front().button);
+	CHECK_TRUE(::view.calls.front().on);
+	CHECK_FALSE(::view.calls.front().inCardRoutine);
+	::view.reset();
 	CHECK(f.view.buttonAction(RECORD, true, true) == ActionResult::REMIND_ME_OUTSIDE_CARD_ROUTINE);
+	CHECK_EQUAL(0, ::view.calls.size());
+	CHECK_EQUAL(0, f.host.allocationAttempts);
+}
+
+TEST(LoopUi, SettingsMenuCardRoutineDeferralIsPreserved) {
+	Fixture f;
+	CHECK_TRUE(loopStationSettingsMenu.openGlobal());
 	CHECK(loopStationSettingsMenu.buttonAction(SELECT_ENC, true, true) == ActionResult::REMIND_ME_OUTSIDE_CARD_ROUTINE);
 	CHECK_EQUAL(0, f.host.allocationAttempts);
+}
+
+TEST(LoopUi, SharedButtonsDelegateExactEdgesAndResults) {
+	Fixture f;
+	expectDelegated(f, TAP_TEMPO, true, ActionResult::DEALT_WITH);
+	expectDelegated(f, TAP_TEMPO, false, ActionResult::NOT_DEALT_WITH);
+	expectDelegated(f, SAVE, true, ActionResult::DEALT_WITH);
+	expectDelegated(f, SAVE, false, ActionResult::DEALT_WITH);
+	expectDelegated(f, LOAD, true, ActionResult::DEALT_WITH);
+	expectDelegated(f, LOAD, false, ActionResult::NOT_DEALT_WITH);
+	expectDelegated(f, TEMPO_ENC, true, ActionResult::DEALT_WITH);
+	expectDelegated(f, TEMPO_ENC, false, ActionResult::DEALT_WITH);
+
+	::view.result = ActionResult::NOT_DEALT_WITH;
+	CHECK(f.sharedShift(f.view, true) == ActionResult::NOT_DEALT_WITH);
+	CHECK_TRUE(Buttons::shiftPressed);
+	expectDelegated(f, SELECT_ENC, true, ActionResult::DEALT_WITH);
+	expectDelegated(f, SELECT_ENC, false, ActionResult::NOT_DEALT_WITH);
+	CHECK(f.sharedShift(f.view, false) == ActionResult::NOT_DEALT_WITH);
+	CHECK_FALSE(Buttons::shiftPressed);
+}
+
+TEST(LoopUi, TransportEdgesReachNativeHandlerWithoutLoopActions) {
+	Fixture f;
+	f.recordPhrase();
+	f.view.padAction(17, 7, 100);
+	CHECK_FALSE(f.model->engine().state(0).playing);
+	auto allocations = f.host.allocationAttempts;
+
+	expectDelegated(f, PLAY, true, ActionResult::NOT_DEALT_WITH);
+	expectDelegated(f, PLAY, false, ActionResult::NOT_DEALT_WITH);
+	CHECK_FALSE(f.model->engine().state(0).playing);
+	CHECK_EQUAL(allocations, f.host.allocationAttempts);
+
+	// Engine selection may exist independently of a firmware clip binding.
+	CHECK(Status::Ok == f.model->engine().dispatch({CommandType::Select, 3}, f.host.time, f.model->clock()));
+	expectDelegated(f, RECORD, true, ActionResult::NOT_DEALT_WITH);
+	expectDelegated(f, RECORD, false, ActionResult::NOT_DEALT_WITH);
+	CHECK_EQUAL(3, f.model->engine().selected());
+	CHECK_FALSE(f.model->clip(3));
+	CHECK_FALSE(f.model->engine().state(3).capture);
+	CHECK_EQUAL(allocations, f.host.allocationAttempts);
+
+	expectDelegated(f, SHIFT, true, ActionResult::NOT_DEALT_WITH);
+	expectDelegated(f, SHIFT, false, ActionResult::NOT_DEALT_WITH);
+
+	// Native SHIFT + RECORD combinations must survive intact.
+	::view.result = ActionResult::NOT_DEALT_WITH;
+	CHECK(f.sharedShift(f.view, true) == ActionResult::NOT_DEALT_WITH);
+	expectDelegated(f, RECORD, true, ActionResult::NOT_DEALT_WITH);
+	expectDelegated(f, RECORD, false, ActionResult::NOT_DEALT_WITH);
+	CHECK_FALSE(f.model->engine().state(3).capture);
+	CHECK_FALSE(f.model->clip(3));
+	CHECK_EQUAL(allocations, f.host.allocationAttempts);
+	CHECK(f.sharedShift(f.view, false) == ActionResult::NOT_DEALT_WITH);
+}
+
+TEST(LoopUi, StandardFallbackWithoutSongOrLoopModel) {
+	Fixture f;
+	::view.result = ActionResult::DEALT_WITH;
+	currentSong = nullptr;
+	CHECK(f.view.buttonAction(TAP_TEMPO, true, false) == ActionResult::DEALT_WITH);
+	CHECK_EQUAL(1, ::view.calls.size());
+	CHECK(f.view.padAction(1, 6, 100) == ActionResult::DEALT_WITH);
+	CHECK_EQUAL(0, f.host.allocationAttempts);
+
+	currentSong = &f.song;
+	f.song.model = nullptr;
+	::view.reset();
+	::view.result = ActionResult::DEALT_WITH;
+	CHECK(f.view.buttonAction(SAVE, true, false) == ActionResult::DEALT_WITH);
+	CHECK_EQUAL(1, ::view.calls.size());
+	CHECK(f.view.padAction(1, 6, 100) == ActionResult::DEALT_WITH);
+	CHECK_EQUAL(0, f.host.allocationAttempts);
+}
+
+TEST(LoopUi, SharedModesDoNotTriggerLoopActions) {
+	constexpr uint32_t modes[] = {UI_MODE_HOLDING_SAVE_BUTTON, UI_MODE_HOLDING_LOAD_BUTTON, UI_MODE_MIDI_LEARN,
+	                              UI_MODE_RECORD_COUNT_IN};
+	for (uint32_t mode : modes) {
+		Fixture f;
+		f.recordPhrase();
+		f.view.padAction(17, 7, 100);
+		CHECK_FALSE(f.model->engine().state(0).playing);
+		const auto allocations = f.host.allocationAttempts;
+		const auto selected = f.model->engine().selected();
+		currentUIMode = mode;
+
+		// New tile and sidebar presses are ignored without disturbing accepted state.
+		CHECK(f.view.padAction(1, 6, 100) == ActionResult::DEALT_WITH);
+		CHECK_FALSE(f.model->engine().state(0).capture);
+		CHECK_FALSE(f.model->engine().state(0).playing);
+		CHECK_EQUAL(allocations, f.host.allocationAttempts);
+		f.view.padAction(16, 7, 100);
+		CHECK_FALSE(f.model->engine().state(0).playing);
+
+		f.view.selectEncoderAction(1);
+		CHECK_EQUAL(selected, f.model->engine().selected());
+
+		::view.reset();
+		::view.result = ActionResult::NOT_DEALT_WITH;
+		CHECK(f.view.buttonAction(BACK, true, false) == ActionResult::NOT_DEALT_WITH);
+		CHECK_EQUAL(1, ::view.calls.size());
+		CHECK(BACK == ::view.calls.front().button);
+		CHECK_FALSE(f.view.pendingRestore_.valid());
+
+		POINTERS_EQUAL(&f.view, getCurrentUI());
+		::view.reset();
+		::view.result = ActionResult::NOT_DEALT_WITH;
+		CHECK(f.view.buttonAction(CROSS_SCREEN_EDIT, true, false) == ActionResult::NOT_DEALT_WITH);
+		POINTERS_EQUAL(&f.view, getCurrentUI());
+		CHECK_EQUAL(1, ::view.calls.size());
+
+		expectDelegated(f, TAP_TEMPO, true, ActionResult::DEALT_WITH);
+		if (mode == UI_MODE_MIDI_LEARN) {
+			expectDelegated(f, PLAY, true, ActionResult::DEALT_WITH);
+			expectDelegated(f, RECORD, true, ActionResult::DEALT_WITH);
+		}
+		currentUIMode = UI_MODE_NONE;
+	}
+}
+
+TEST(LoopUi, AcceptedCentreReleaseCompletesDuringSharedHold) {
+	Fixture f;
+	f.recordPhrase();
+	f.view.padAction(17, 7, 100);
+	CHECK_FALSE(f.model->engine().state(0).playing);
+	// This press is accepted while idle and latches a held gesture.
+	CHECK(f.view.padAction(1, 6, 100) == ActionResult::DEALT_WITH);
+	CHECK_FALSE(f.model->engine().state(0).playing);
+	currentUIMode = UI_MODE_HOLDING_SAVE_BUTTON;
+	f.view.padAction(1, 6, 0);
+	CHECK_TRUE(f.model->engine().state(0).playing);
+	currentUIMode = UI_MODE_NONE;
+}
+
+TEST(LoopUi, UnshiftedSelectOpensGlobalSettingsAndShiftedSelectDelegates) {
+	{
+		Fixture f;
+		CHECK(f.view.buttonAction(SELECT_ENC, true, false) == ActionResult::DEALT_WITH);
+		POINTERS_EQUAL(&loopStationSettingsMenu, getCurrentUI());
+		CHECK_EQUAL(kInvalidSlot, loopStationSettingsMenu.focusedTrack());
+		CHECK(f.view.buttonAction(SELECT_ENC, false, false) == ActionResult::DEALT_WITH);
+		CHECK_EQUAL(0, ::view.calls.size());
+	}
+	{
+		Fixture f;
+		::view.result = ActionResult::NOT_DEALT_WITH;
+		CHECK(f.sharedShift(f.view, true) == ActionResult::NOT_DEALT_WITH);
+		CHECK_TRUE(Buttons::shiftPressed);
+		expectDelegated(f, SELECT_ENC, true, ActionResult::DEALT_WITH);
+		POINTERS_EQUAL(&f.view, getCurrentUI());
+		::view.result = ActionResult::NOT_DEALT_WITH;
+		CHECK(f.sharedShift(f.view, false) == ActionResult::NOT_DEALT_WITH);
+		CHECK_FALSE(Buttons::shiftPressed);
+	}
+}
+
+TEST(LoopUi, ShiftCentreOpensTrackSettingsWithoutCapture) {
+	Fixture f;
+	CHECK(f.sharedShift(f.view, true) == ActionResult::NOT_DEALT_WITH);
+	CHECK(f.view.padAction(13, 6, 100) == ActionResult::DEALT_WITH);
+	POINTERS_EQUAL(&loopStationSettingsMenu, getCurrentUI());
+	CHECK_EQUAL(3, loopStationSettingsMenu.slot_);
+	CHECK_FALSE(f.model->engine().state(3).capture);
+	f.onlyBound(3);
+	::view.result = ActionResult::NOT_DEALT_WITH;
+	CHECK(f.sharedShift(f.view, false) == ActionResult::NOT_DEALT_WITH);
+}
+
+TEST(LoopUi, SidebarStartAllAndStopAllRemainLoopControls) {
+	Fixture f;
+	f.recordPhrase();
+	f.view.padAction(17, 7, 100);
+	CHECK_FALSE(f.model->engine().state(0).playing);
+	f.view.padAction(16, 7, 100);
+	CHECK_TRUE(f.model->engine().state(0).playing);
+}
+
+TEST(LoopUi, ClipViewAndExitRemainIdleLoopNavigation) {
+	Fixture f;
+	CHECK(Status::Ok == f.model->ensureBound(0));
+	f.view.padAction(0, 7, 100);
+	CHECK_EQUAL(0, f.model->engine().selected());
+	CHECK(f.view.buttonAction(CLIP_VIEW, true, false) == ActionResult::DEALT_WITH);
+	POINTERS_EQUAL(f.model->clip(0), sessionView.viewedClip);
+	CHECK(f.view.buttonAction(CROSS_SCREEN_EDIT, true, false) == ActionResult::DEALT_WITH);
+	POINTERS_EQUAL(&sessionView, getCurrentUI());
+	CHECK_EQUAL(0, ::view.calls.size());
+}
+
+TEST(LoopUi, RepeatedCardRoutineRetriesDoNotDuplicateActions) {
+	Fixture f;
+	sdRoutineLock = true;
+	for (int i = 0; i < 3; ++i)
+		CHECK(f.view.padAction(1, 6, 100) == ActionResult::REMIND_ME_OUTSIDE_CARD_ROUTINE);
+	CHECK_EQUAL(0, f.host.allocationAttempts);
+	CHECK_FALSE(f.model->engine().state(0).capture);
+	sdRoutineLock = false;
+	f.view.padAction(1, 6, 100);
+	f.onlyBound(0);
+	CHECK_TRUE(f.model->engine().state(0).capture);
+	CHECK_EQUAL(1, f.host.allocationAttempts);
+	CHECK_EQUAL(1, f.host.published.size());
 }
 
 // Each regression pairs the real handler's state transition with its OLED request;
@@ -595,13 +837,13 @@ TEST(LoopUi, PerformanceEncoderSelectionInvalidatesOled) {
 	CHECK(probeOledRequests > 0);
 }
 
-TEST(LoopUi, PerformanceRecordCaptureInvalidatesOled) {
+TEST(LoopUi, PerformanceRecordDelegationDoesNotStartLoopCapture) {
 	Fixture f;
 	f.view.selectEncoderAction(2);
 	probeOledRequests = 0;
-	f.view.buttonAction(RECORD, true, false);
-	CHECK_TRUE(f.model->engine().state(2).capture);
-	CHECK(probeOledRequests > 0);
+	expectDelegated(f, RECORD, true, ActionResult::NOT_DEALT_WITH);
+	CHECK_FALSE(f.model->engine().state(2).capture);
+	CHECK_EQUAL(0, probeOledRequests);
 }
 
 TEST(LoopUi, PerformanceGroupStopInvalidatesOled) {
@@ -623,14 +865,14 @@ TEST(LoopUi, PerformanceGroupStartInvalidatesOled) {
 	CHECK(probeOledRequests > 0);
 }
 
-TEST(LoopUi, PerformancePlayButtonInvalidatesOled) {
+TEST(LoopUi, PerformancePlayDelegationDoesNotLaunchGroup) {
 	Fixture f;
 	f.recordPhrase();
 	f.view.padAction(17, 7, 100);
 	probeOledRequests = 0;
-	f.view.buttonAction(PLAY, true, false);
-	CHECK_TRUE(f.model->engine().state(0).playing);
-	CHECK(probeOledRequests > 0);
+	expectDelegated(f, PLAY, true, ActionResult::NOT_DEALT_WITH);
+	CHECK_FALSE(f.model->engine().state(0).playing);
+	CHECK_EQUAL(0, probeOledRequests);
 }
 
 TEST(LoopUi, OnlyPhysicalTopSidebarControlsDispatch) {

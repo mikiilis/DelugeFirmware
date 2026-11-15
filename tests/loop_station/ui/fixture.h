@@ -67,6 +67,9 @@ struct Fixture {
 		currentSong = &song;
 		display = &screen;
 		sdRoutineLock = false;
+		currentUIMode = UI_MODE_NONE;
+		::view.reset();
+		sessionView.viewedClip = nullptr;
 		Buttons::shiftPressed = false;
 		probeRenderRequests = 0;
 		probeRenderTargets.clear();
@@ -97,6 +100,9 @@ struct Fixture {
 		display = nullptr;
 		probeCurrentUI = nullptr;
 		probeRootUI = nullptr;
+		currentUIMode = UI_MODE_NONE;
+		::view.reset();
+		sessionView.viewedClip = nullptr;
 		probeRenderTargets.clear();
 		probeRenderRows.clear();
 		probeSentPadFrames.clear();

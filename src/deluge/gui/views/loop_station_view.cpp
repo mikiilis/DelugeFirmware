@@ -11,6 +11,7 @@
 #include "gui/menu_item/loop_station/settings.h"
 #include "gui/ui/ui.h"
 #include "gui/views/session_view.h"
+#include "gui/views/view.h"
 #include "hid/buttons.h"
 #include "hid/display/display.h"
 #include "hid/display/oled_canvas/canvas.h"
@@ -218,6 +219,10 @@ ActionResult LoopStationView::padAction(int32_t x, int32_t y, int32_t velocity) 
 	auto* m = model();
 	if (!m || !m->ready())
 		return ActionResult::DEALT_WITH;
+	// Shared exclusive modes own the input. Consume new presses, but still pass
+	// releases through so a gesture accepted before the mode changed can finish.
+	if (velocity > 0 && currentUIMode != UI_MODE_NONE)
+		return ActionResult::DEALT_WITH;
 	if (x >= kDisplayWidth) {
 		if (velocity > 0 && y == kSidebarControlY) {
 			if (x == kDisplayWidth)
@@ -263,54 +268,55 @@ ActionResult LoopStationView::padAction(int32_t x, int32_t y, int32_t velocity) 
 ActionResult LoopStationView::buttonAction(deluge::hid::Button b, bool on, bool inCardRoutine) {
 	if (inCardRoutine)
 		return ActionResult::REMIND_ME_OUTSIDE_CARD_ROUTINE;
-	if (b == SHIFT)
-		return ActionResult::NOT_DEALT_WITH;
+
+	const bool loopIdle = currentUIMode == UI_MODE_NONE;
 	auto* m = model();
-	if (b == CROSS_SCREEN_EDIT) {
-		if (on && !Buttons::isShiftButtonPressed())
-			attemptExit();
-		return ActionResult::DEALT_WITH;
-	}
-	if (b == SESSION_VIEW && on && !Buttons::isShiftButtonPressed()) {
-		attemptExit();
-		return ActionResult::DEALT_WITH;
-	}
-	if (b == CLIP_VIEW && on && m) {
-		const SlotId slot = m->engine().selected();
-		if (validSlot(slot)) {
-			if (auto* clip = m->clip(slot))
-				sessionView.transitionToViewForClip(clip);
+
+	// Retained loop shortcuts own both edges only while no shared mode is active.
+	if (loopIdle) {
+		if (b == CROSS_SCREEN_EDIT) {
+			if (on && !Buttons::isShiftButtonPressed())
+				attemptExit();
+			return ActionResult::DEALT_WITH;
 		}
-		return ActionResult::DEALT_WITH;
-	}
-	if (b == SELECT_ENC && on) {
-		(void)deluge::gui::menu_item::loop_station::loopStationSettingsMenu.openGlobal();
-		return ActionResult::DEALT_WITH;
-	}
-	if (b == RECORD && on && m) {
-		const SlotId slot = m->engine().selected();
-		if (validSlot(slot) && prepareTrack(slot)) {
-			(void)m->dispatch({CommandType::Press, slot});
-			graphicsRoutine();
+		if (b == SESSION_VIEW) {
+			if (on && !Buttons::isShiftButtonPressed())
+				attemptExit();
+			return ActionResult::DEALT_WITH;
 		}
-		return ActionResult::DEALT_WITH;
-	}
-	if (b == PLAY && on && m) {
-		(void)m->dispatch({CommandType::StartAll});
-		graphicsRoutine();
-		return ActionResult::DEALT_WITH;
-	}
-	if (b == BACK && on && m) {
-		const SlotId slot = m->engine().selected();
-		RestoreId restore{};
-		if (validSlot(slot) && m->canUndo(slot) && !pendingRestore_.valid()
-		    && m->requestRestore(slot, false, restore) == Status::Ok) {
-			pendingRestore_ = restore;
-			pendingRestoreSlot_ = slot;
+		if (b == CLIP_VIEW) {
+			if (on && m) {
+				const SlotId slot = m->engine().selected();
+				if (validSlot(slot)) {
+					if (auto* clip = m->clip(slot))
+						sessionView.transitionToViewForClip(clip);
+				}
+			}
+			return ActionResult::DEALT_WITH;
 		}
-		return ActionResult::DEALT_WITH;
+		if (b == SELECT_ENC && !Buttons::isShiftButtonPressed()) {
+			if (on)
+				(void)deluge::gui::menu_item::loop_station::loopStationSettingsMenu.openGlobal();
+			return ActionResult::DEALT_WITH;
+		}
+		if (b == BACK) {
+			if (on && m) {
+				const SlotId slot = m->engine().selected();
+				RestoreId restore{};
+				if (validSlot(slot) && m->canUndo(slot) && !pendingRestore_.valid()
+				    && m->requestRestore(slot, false, restore) == Status::Ok) {
+					pendingRestore_ = restore;
+					pendingRestoreSlot_ = slot;
+				}
+			}
+			return ActionResult::DEALT_WITH;
+		}
 	}
-	return ActionResult::DEALT_WITH;
+
+	// PLAY, RECORD, SHIFT and every other ordinary control are the shared/native
+	// handler's responsibility. Propagate its result so the native dispatcher sees
+	// NOT_DEALT_WITH unchanged.
+	return view.buttonAction(b, on, inCardRoutine);
 }
 
 bool LoopStationView::renderMainPads(uint32_t rows, RGB image[][kDisplayWidth + kSideBarWidth],
@@ -444,6 +450,8 @@ void LoopStationView::renderOLED(deluge::hid::display::oled_canvas::Canvas& canv
 	canvas.drawStringAlignRight(line, 30, kTextSpacingX, kTextSizeYUpdated);
 }
 void LoopStationView::selectEncoderAction(int8_t offset) {
+	if (currentUIMode != UI_MODE_NONE)
+		return;
 	if (auto* m = model()) {
 		int selected = m->engine().selected();
 		if (!validSlot(selected))
