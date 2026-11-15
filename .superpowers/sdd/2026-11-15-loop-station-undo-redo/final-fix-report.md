@@ -42,8 +42,8 @@ Those commits are progress, not independent review closure. The prior host run r
 - RED command, initial shortage: `build/tests/loop_station/LoopStationTests -t LoopBindings.DescriptorExhaustionRejectsNonzeroInitialUndoBeforeClosing` with the `historyTarget` availability preflight temporarily removed → expected status `4` (`SourceUnavailable`), got `0` (`Ok`). The preflight was restored before proceeding.
 - Focused GREEN command: `build/tests/loop_station/LoopStationTests -t LoopEpochs.exhaustedNavigationEpochsCannotAuthorizeTargets -t LoopBindings.DescriptorExhaustedChangedOverdubRemainsRunningAndUnavailable -t LoopBindings.DescriptorExhaustedUnchangedOverdubClosesWithoutFallingThrough -t LoopBindings.DescriptorExhaustionRejectsNonzeroInitialUndoBeforeClosing -t LoopBindings.DirectTransportStopInvalidatesArmedTarget` → `OK (509 tests, 5 ran, 714 checks, 0 ignored, 504 filtered out, 12 ms)`.
 - Build command: `PATH="$PWD/toolchain/current/python/bin:$PWD/toolchain/current/cmake/bin:$PWD/toolchain/current/ninja-build/bin:$PWD/toolchain/current/clang-format:$PATH" cmake --build build/tests --target LoopStationTests LoopPageAllocationGuard LoopAudioAllocationGuard LoopGestureAllocationGuard LoopHistorySnapshotAllocationGuard -j4` → all requested targets built.
-- CTest command: `ctest --test-dir build/tests --output-on-failure -R '^(LoopStationTests|LoopPageAllocationGuard|LoopAudioAllocationGuard|LoopGestureAllocationGuard|LoopHistorySnapshotAllocationGuard)$'` → 5/5 passed; LoopStationTests 4.77 s, four allocation guards passed.
-- `git diff --check` passed. The bundled `toolchain/current/clang-format/clang-format` binary is non-executable in this checkout, so clang-format dry-run could not be run (permission denied); changed C++ uses the surrounding formatting and this is reported rather than changing tool permissions.
+- Final post-format CTest command: `ctest --test-dir build/tests --output-on-failure -R '^(LoopStationTests|LoopPageAllocationGuard|LoopAudioAllocationGuard|LoopGestureAllocationGuard|LoopHistorySnapshotAllocationGuard)$'` → 5/5 passed; LoopStationTests 4.69 s, four allocation guards passed, 5.30 s total. The focused command was rerun afterward and again returned `OK (509 tests, 5 ran, 714 checks, 0 ignored, 504 filtered out, 9 ms)`.
+- `git diff --check` passed. The direct bundled clang-format dry-run entry was not executable, but the intact pre-commit clang-format hook formatted the one affected test macro on its first attempt and passed on the retry; no hook was bypassed or changed.
 - Full CTest, firmware builds, and final artifact/hash are pending later slices/final wave verification.
 
 ## Remaining wave scope
@@ -52,4 +52,4 @@ I4, I7 and practical M3–M7 are not completed by this checkpoint. Other than th
 
 ## Commits
 
-Slice commit pending.
+Slice commit: `7402130e` (`fix: track unrecorded loop capture changes`). The user-staged `.gitignore` remains staged and was excluded with `git commit --only`.
