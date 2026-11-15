@@ -2,6 +2,7 @@
 #include "archive.h"
 #include "audio_adapter.h"
 #include "history.h"
+#include "history_navigation.h"
 #include "memory_reservation.h"
 #include "snapshot.h"
 #include "transpose.h"
@@ -27,7 +28,7 @@ public:
 class SongModel {
 public:
 	SongModel(ReservationAllocator& allocator, BindingHost& host, ArchiveStorage* storage = nullptr)
-	    : host_(host), memory_(allocator) {
+	    : host_(host), memory_(allocator), modelIdentity_(nextModelIdentity()) {
 		archive_.setStorage(storage);
 	}
 	~SongModel();
@@ -60,8 +61,23 @@ public:
 	void serviceArchive(uint32_t maxBytes);
 	Status requestArchive(SlotId slot);
 	Status requestRestore(SlotId slot, bool redo, RestoreId& id);
-	bool canUndo(SlotId slot) const { return ready() && history_.canUndo(slot); }
-	bool canRedo(SlotId slot) const { return ready() && history_.canRedo(slot); }
+	// Confirmed model-level navigation. `historyTarget` describes eligibility
+	// (including a removable active initial/overdub and empty-state Redo);
+	// `historyTargetCurrent` revalidates stable identity without treating added
+	// frames or a changed free-page count as a different session.
+	Status historyTarget(SlotId slot, bool redo, HistoryTarget& target) const;
+	bool historyTargetCurrent(const HistoryTarget& target) const;
+	Status requestHistoryNavigation(const HistoryTarget& target, RestoreId& id);
+	void serviceHistoryNavigation(uint32_t maxFrames);
+	HistoryNavigationResult historyNavigationResult() const { return navigationResult_; }
+	bool canUndo(SlotId slot) const {
+		HistoryTarget target;
+		return historyTarget(slot, false, target) == Status::Ok;
+	}
+	bool canRedo(SlotId slot) const {
+		HistoryTarget target;
+		return historyTarget(slot, true, target) == Status::Ok;
+	}
 	Status requestCheckpointRestore(SlotId slot, Generation checkpointIdentity, RestoreId& id);
 	Status serviceRestore(RestoreId id, uint32_t maxFrames);
 	Status commitRestore(RestoreId id);
@@ -84,6 +100,9 @@ public:
 	bool replacing(SlotId slot) const;
 
 private:
+	// Distinct monotonic identity per constructed model; exhaustion (zero) makes
+	// navigation unavailable rather than reusing a previous identity.
+	static Generation nextModelIdentity();
 	class Boundary {
 	public:
 		explicit Boundary(BindingHost& host) : host_(host), previous_(host.enterBoundary()) {}
@@ -113,6 +132,8 @@ private:
 	std::array<Generation, kTrackCount> savedRevisions_{};
 	std::array<bool, kTrackCount> hasSavedRevision_{};
 	Generation generation_ = 0;
+	Generation modelIdentity_ = 0;
+	Generation transportEpoch_ = 0;
 	struct RestoreOwner {
 		SlotId slot = kInvalidSlot;
 		Generation request = 0, slotGeneration = 0, checkpointIdentity = 0, modelGeneration = 0, sourceRevision = 0;
@@ -130,6 +151,23 @@ private:
 	bool restoreServicing_ = false;
 	bool restoreIoServicing_ = false;
 	bool sdPreferRestore_ = false;
+	// Accepted confirmed-navigation job. It shares the single restore admission
+	// gate through restoreOwner_ (checkpoint and user work cannot double-service)
+	// and owns its own bounded identity, admission retry and terminal result.
+	struct NavigationJob {
+		bool active = false, admitted = false;
+		RestoreId id{};
+		SlotId slot = kInvalidSlot;
+		bool redo = false;
+		Generation modelGeneration = 0, slotGeneration = 0;
+	} navigation_{};
+	HistoryNavigationResult navigationResult_{};
+	bool navigationServicing_ = false;
+	// Finish the accepted job (success or terminal failure), cancelling any
+	// underlying History step and publishing exactly one terminal result.
+	void finishHistoryNavigation(Status status, bool complete);
+	void cancelHistoryNavigation(Status status);
+	void advanceTransportEpoch();
 	unsigned inFlight_ = 0;
 	bool ready_ = false, registered_ = false, releasing_ = false, running_ = false;
 	uint32_t tempo_ = 0;

@@ -219,6 +219,9 @@ void Song::serviceLoopStationArchive(uint32_t maxBytes) {
 	if (!loopStationOwner_)
 		return;
 	loopStationOwner_->model.serviceArchive(maxBytes);
+	// Foreground owner for accepted confirmed history navigation: a bounded
+	// quantum on every archive tick, independent of the root view or SD progress.
+	loopStationOwner_->model.serviceHistoryNavigation(128);
 	loopStationPersistence().serviceArchiveCandidates(loopStationOwner_->model);
 	loopStationOwner_->serviceCheckpointRestore();
 }

@@ -4,6 +4,43 @@
 #include <algorithm>
 #include <limits>
 namespace loop_station {
+Generation SongModel::nextModelIdentity() {
+	static Generation next = 0;
+	if (next == std::numeric_limits<Generation>::max())
+		return 0; // Exhaustion: navigation stays unavailable; identities never recycle.
+	return ++next;
+}
+void SongModel::advanceTransportEpoch() {
+	if (++transportEpoch_ == 0)
+		++transportEpoch_;
+}
+void SongModel::finishHistoryNavigation(Status status, bool complete) {
+	if (!navigation_.active)
+		return;
+	const auto result =
+	    HistoryNavigationResult{navigation_.id, navigation_.slot, navigation_.redo,
+	                            complete ? HistoryNavigationState::Complete : HistoryNavigationState::Failed, status};
+	if (restoreOwner_.request && restoreOwner_.request == navigation_.id.generation)
+		cancelRestore(navigation_.slot);
+	navigation_ = {};
+	navigationResult_ = result;
+}
+void SongModel::cancelHistoryNavigation(Status status) {
+	if (!navigation_.active)
+		return;
+	const auto id = navigation_.id;
+	const auto slot = navigation_.slot;
+	const auto redo = navigation_.redo;
+	{
+		Boundary boundary(host_);
+		if (restoreOwner_.request && restoreOwner_.request == id.generation) {
+			history_.cancelRestore(slot);
+			restoreOwner_ = {};
+		}
+	}
+	navigation_ = {};
+	navigationResult_ = {id, slot, redo, HistoryNavigationState::Failed, status};
+}
 SongModel::~SongModel() {
 	requestRelease();
 	detail::invariant(safeToRelease());
@@ -121,6 +158,8 @@ Status SongModel::unbind(SlotId slot) {
 		return Status::Invalid;
 	Boundary boundary(host_);
 	cancelRestore(slot);
+	if (navigation_.active && navigation_.slot == slot)
+		cancelHistoryNavigation(Status::Stale);
 	history_.resetSlot(slot);
 	++slotGenerations_[slot]; // Other slots' setup transactions remain independent.
 	archive_.cancel(slot);
@@ -174,6 +213,7 @@ Status SongModel::requestViewExit() {
 	++generation_;
 	for (SlotId slot = 0; slot < kTrackCount; ++slot)
 		cancelRestore(slot);
+	cancelHistoryNavigation(Status::Cancelled);
 	return engine_.dispatch({CommandType::Exit}, host_.now(), clock_);
 }
 void SongModel::cancelHeldPadGestures() {
@@ -294,6 +334,172 @@ Status SongModel::requestRestore(SlotId slot, bool redo, RestoreId& id) {
 		restoreOwner_.historyId = historyId;
 	}
 	return status;
+}
+
+Status SongModel::historyTarget(SlotId slot, bool redo, HistoryTarget& target) const {
+	target = {};
+	if (!ready())
+		return Status::Unavailable;
+	if (!validSlot(slot))
+		return Status::Invalid;
+	target.slot = slot;
+	target.redo = redo;
+	target.modelIdentity = modelIdentity_;
+	target.slotGeneration = slotGenerations_[slot];
+	target.historyEpoch = engine_.historyEpoch(slot);
+	target.transportEpoch = transportEpoch_;
+	if (!modelIdentity_)
+		return Status::Unavailable;
+	if (!bindings_[slot])
+		return Status::SourceUnavailable;
+	if (replacing(slot))
+		return Status::Busy;
+	const auto state = engine_.state(slot);
+	if (redo) {
+		// Redo while capturing is unavailable; a new recording invalidates the branch.
+		if (state.capture || state.pending)
+			return Status::SourceUnavailable;
+		return history_.canRedo(slot) ? Status::Ok : Status::SourceUnavailable;
+	}
+	// An active initial/overdub may be armed: confirmation closes it and reports
+	// honestly if no layer resulted. A pending non-capture action is not armable.
+	if (state.capture)
+		return Status::Ok;
+	if (state.pending)
+		return Status::SourceUnavailable;
+	return history_.canUndo(slot) ? Status::Ok : Status::SourceUnavailable;
+}
+
+bool SongModel::historyTargetCurrent(const HistoryTarget& target) const {
+	if (!target.modelIdentity || target.modelIdentity != modelIdentity_)
+		return false;
+	if (!ready() || !validSlot(target.slot))
+		return false;
+	if (!bindings_[target.slot])
+		return false;
+	if (target.slotGeneration != slotGenerations_[target.slot])
+		return false;
+	if (target.historyEpoch != engine_.historyEpoch(target.slot))
+		return false;
+	if (target.transportEpoch != transportEpoch_)
+		return false;
+	// Added frames within one capture session and a changing free-page count are
+	// deliberately not part of identity.
+	return true;
+}
+
+Status SongModel::requestHistoryNavigation(const HistoryTarget& target, RestoreId& id) {
+	id = {};
+	if (!ready())
+		return Status::Unavailable;
+	if (!validSlot(target.slot))
+		return Status::Invalid;
+	Boundary boundary(host_);
+	if (navigation_.active || restoreOwner_.request)
+		return Status::Busy; // Reject repeated requests; never queue button presses.
+	if (!historyTargetCurrent(target))
+		return Status::Stale;
+	if (restoreSequence_ == std::numeric_limits<Generation>::max())
+		return Status::Unavailable;
+	const auto slot = target.slot;
+	const auto state = engine_.state(slot);
+	if (target.redo && state.capture)
+		return Status::SourceUnavailable; // Redo while capturing is unavailable.
+	const bool activeCapture = !target.redo && state.capture;
+	const bool activeOverdub = activeCapture && state.playing;
+	const bool overdubChanged = activeOverdub && history_.activeSessionChanged(slot);
+	if (activeCapture) {
+		// Recheck the same target immediately before closing; a change during any
+		// earlier work must leave capture running rather than close a different session.
+		if (!historyTargetCurrent(target))
+			return Status::Stale;
+		const auto closed = engine_.closeCaptureForHistory(slot);
+		if (closed == Status::Busy)
+			return Status::Stale; // Capture vanished; never target an older boundary.
+		if (closed != Status::Ok)
+			return closed;
+	}
+	if (activeOverdub && !overdubChanged) {
+		// The just-closed gate contributed no layer. Report honestly instead of
+		// falling through to an older boundary; the capture stays closed.
+		return Status::SourceUnavailable;
+	}
+	id = {++restoreSequence_};
+	navigation_ = {};
+	navigation_.active = true;
+	navigation_.id = id;
+	navigation_.slot = slot;
+	navigation_.redo = target.redo;
+	navigation_.modelGeneration = generation_;
+	navigation_.slotGeneration = slotGenerations_[slot];
+	restoreOwner_ = {};
+	restoreOwner_.slot = slot;
+	restoreOwner_.request = id.generation;
+	restoreOwner_.slotGeneration = slotGenerations_[slot];
+	restoreOwner_.modelGeneration = generation_;
+	navigationResult_ = {id, slot, target.redo, HistoryNavigationState::Applying, Status::Ok};
+	return Status::Ok;
+}
+
+void SongModel::serviceHistoryNavigation(uint32_t maxFrames) {
+	if (!navigation_.active)
+		return;
+	if (navigationServicing_ || restoreServicing_ || restoreIoServicing_)
+		return; // Never recursively service or commit another request.
+	navigationServicing_ = true;
+	struct NavigationGuard {
+		bool& active;
+		~NavigationGuard() { active = false; }
+	} guard{navigationServicing_};
+	const auto slot = navigation_.slot;
+	if (!ready() || navigation_.modelGeneration != generation_ || !validSlot(slot)
+	    || navigation_.slotGeneration != slotGenerations_[slot] || !bindings_[slot]) {
+		finishHistoryNavigation(Status::Stale, false);
+		return;
+	}
+	if (!restoreOwner_.request || restoreOwner_.request != navigation_.id.generation) {
+		// Cancelled by transport, rebinding, replacement or release.
+		finishHistoryNavigation(Status::Stale, false);
+		return;
+	}
+	if (!navigation_.admitted) {
+		Status admitted;
+		{
+			Boundary boundary(host_);
+			// A confirmed capture closure leaves pending rollback entries that fence
+			// History admission. Retire them with bounded foreground work only.
+			rollback_.service(64);
+			if (rollback_.provisional(slot) || rollback_.pending(slot))
+				return; // Wait for bounded retirement; keep the job and its ID.
+			RestoreId historyId{};
+			admitted = history_.requestRestore(slot, navigation_.redo, historyId);
+			if (admitted == Status::Ok) {
+				restoreOwner_.historyId = historyId;
+				navigation_.admitted = true;
+			}
+		}
+		if (admitted == Status::Busy)
+			return;
+		if (admitted != Status::Ok) {
+			finishHistoryNavigation(admitted, false);
+			return;
+		}
+	}
+	const auto serviced = serviceRestore(navigation_.id, maxFrames);
+	if (serviced == Status::Busy)
+		return; // Retain the job and its ID; the foreground owner retries.
+	if (serviced != Status::Ok) {
+		finishHistoryNavigation(serviced, false);
+		return;
+	}
+	const auto committed = commitRestore(navigation_.id);
+	if (committed == Status::Busy)
+		return; // Retain on commit Busy; do not drop the ID or claim success.
+	if (committed != Status::Ok) {
+		finishHistoryNavigation(committed, false);
+		return;
+	}
+	finishHistoryNavigation(Status::Ok, true);
 }
 
 Status SongModel::requestCheckpointRestore(SlotId slot, Generation checkpointIdentity, RestoreId& id) {
@@ -556,6 +762,19 @@ Status SongModel::commitRestore(RestoreId id) {
 		return status;
 	}
 	const auto handle = pool_.sealedHandle(slot);
+	if (!handle.valid() || !pool_.length(handle)) {
+		// Initial Undo detached and retained the recording; the empty state is a
+		// successful publication, not Stale. History owns the pool detach, so this
+		// only forgets the provider, then refreshes the mapping revision and engine.
+		const auto detached = audio_.detachForHistory(slot);
+		if (detached != Status::Ok)
+			return Status::Stale; // Internal breach after a committed pool detach.
+		history_.mappingReplaced(slot);
+		engine_.phraseRemoved(slot);
+		transpose_.reset(slot);
+		restoreOwner_ = {};
+		return Status::Ok;
+	}
 	const auto length = pool_.length(handle);
 	const auto rebound = audio_.replace(slot, handle);
 	if (rebound != Status::Ok) {
@@ -698,6 +917,7 @@ void SongModel::requestRelease() {
 	Boundary boundary(host_);
 	++generation_;
 	releasing_ = true;
+	cancelHistoryNavigation(Status::Cancelled);
 	for (SlotId slot = 0; slot < kTrackCount; ++slot)
 		cancelRestore(slot);
 	for (SlotId slot = 0; slot < kTrackCount; ++slot) {
@@ -719,8 +939,9 @@ void SongModel::requestRelease() {
 	}
 }
 bool SongModel::safeToRelease() const {
-	return !registered_ && inFlight_ == 0 && !restoreOwner_.request && archive_.idle() && archive_.checkpointReadIdle()
-	       && !history_.restorePending() && !history_.retirementPending() && !pool_.retirementPending();
+	return !registered_ && inFlight_ == 0 && !restoreOwner_.request && !navigation_.active && archive_.idle()
+	       && archive_.checkpointReadIdle() && !history_.restorePending() && !history_.retirementPending()
+	       && !pool_.retirementPending();
 }
 uint16_t SongModel::maxDurationBarsForTrack(SlotId slot, uint32_t framesPerBar) {
 	if (!validSlot(slot) || !ready())
@@ -770,6 +991,12 @@ Status SongModel::dispatch(Command command) {
 			cancelRestore(slot);
 		}
 	}
+	if (navigation_.active
+	    && (command.type == CommandType::TransportStop || command.type == CommandType::Exit
+	        || (validSlot(command.slot) && navigation_.slot == command.slot
+	            && (command.type == CommandType::Press || command.type == CommandType::Release
+	                || command.type == CommandType::Select))))
+		cancelHistoryNavigation(Status::Stale);
 	if (command.type == CommandType::TransportStop || command.type == CommandType::Exit)
 		++generation_;
 	if ((command.type == CommandType::Press || command.type == CommandType::Release
@@ -794,8 +1021,11 @@ void SongModel::updateClock(SampleClock now, uint32_t bpmQ16, bool running, int6
 		++generation_;
 		for (SlotId slot = 0; slot < kTrackCount; ++slot)
 			cancelRestore(slot);
+		cancelHistoryNavigation(Status::Cancelled);
 		engine_.dispatch({CommandType::TransportStop}, now, clock_);
 	}
+	if (running_ != running)
+		advanceTransportEpoch();
 	clock_.setTransport(running, now);
 	if (running)
 		clock_.setMetronomePositionQ16(now, metronomeTickQ16);

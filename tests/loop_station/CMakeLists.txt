@@ -81,6 +81,22 @@ add_custom_command(
 add_executable(LoopStationFinalSaveLoadHandoffProbe "${FINAL_SAVE_LOAD_HANDOFF_PROBE}")
 set_target_properties(LoopStationFinalSaveLoadHandoffProbe PROPERTIES CXX_STANDARD 23 CXX_STANDARD_REQUIRED ON)
 add_test(NAME LoopStationFinalSaveLoadHandoffProbe COMMAND LoopStationFinalSaveLoadHandoffProbe)
+set(FOREGROUND_SERVICE_PROBE "${CMAKE_CURRENT_BINARY_DIR}/generated/foreground_service_probe.cpp")
+add_custom_command(
+    OUTPUT "${FOREGROUND_SERVICE_PROBE}"
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/navigation/generate_foreground_service_probe.py"
+            --firmware "${CMAKE_CURRENT_SOURCE_DIR}/../../src/deluge/loop_station/song_model_firmware.cpp"
+            --support "${CMAKE_CURRENT_SOURCE_DIR}/navigation/foreground_service_probe_support.h"
+            --tests "${CMAKE_CURRENT_SOURCE_DIR}/navigation/foreground_service_probe_tests.cpp"
+            --output "${FOREGROUND_SERVICE_PROBE}"
+    DEPENDS navigation/generate_foreground_service_probe.py navigation/foreground_service_probe_support.h
+            navigation/foreground_service_probe_tests.cpp
+            ../../src/deluge/loop_station/song_model_firmware.cpp
+    VERBATIM
+)
+add_executable(LoopStationForegroundServiceProbe "${FOREGROUND_SERVICE_PROBE}")
+set_target_properties(LoopStationForegroundServiceProbe PROPERTIES CXX_STANDARD 23 CXX_STANDARD_REQUIRED ON)
+add_test(NAME LoopStationForegroundServiceProbe COMMAND LoopStationForegroundServiceProbe)
 add_custom_command(
     OUTPUT "${LOOP_DISPATCH_PROBE}"
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/ui/generate_dispatch_probe.py"

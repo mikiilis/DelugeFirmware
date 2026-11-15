@@ -272,3 +272,58 @@ TEST(LoopLifecycle, savedRevisionIsCleanAndLaterOverdubIsDirty) {
 	CHECK(f.model.contentRevision(0) != saved);
 	CHECK(f.model.hasUnsavedAudio());
 }
+
+// A target from a rebound slot or a recreated model can never revive a token:
+// neither may act on the old address.
+TEST(LoopLifecycle, ReboundSlotAndRecreatedModelRejectOldTarget) {
+	HistoryTarget target{};
+	{
+		Fixture f;
+		f.take(0);
+		CHECK(Status::Ok == f.model.dispatch({CommandType::Press, 0}));
+		f.render(16);
+		CHECK_EQUAL(int(Status::Ok), int(f.model.historyTarget(0, false, target)));
+		CHECK(f.model.historyTargetCurrent(target));
+		// Rebinding the slot changes its generation; the old target is dead.
+		CHECK(Status::Ok == f.model.unbind(0));
+		CHECK_FALSE(f.model.historyTargetCurrent(target));
+		RestoreId id{};
+		CHECK_EQUAL(int(Status::Stale), int(f.model.requestHistoryNavigation(target, id)));
+		CHECK_FALSE(id.valid());
+		CHECK_FALSE(f.model.engine().state(0).hasPhrase);
+	}
+	// A distinct model never shares identity, so a stale token is rejected.
+	Fixture other;
+	other.take(0);
+	CHECK_FALSE(other.model.historyTargetCurrent(target));
+	RestoreId id{};
+	CHECK_EQUAL(int(Status::Stale), int(other.model.requestHistoryNavigation(target, id)));
+	CHECK_FALSE(id.valid());
+}
+
+// Releasing a Song invalidates an accepted job: no active provider, retained
+// candidate or background request survives, and the model reports the terminal
+// cancellation rather than staying Applying.
+TEST(LoopLifecycle, ReleaseCancelsAcceptedNavigationAndLeavesNoOwnership) {
+	Fixture f;
+	f.take(0);
+	CHECK(Status::Ok == f.model.dispatch({CommandType::Press, 0}));
+	f.render(16);
+	HistoryTarget target{};
+	CHECK_EQUAL(int(Status::Ok), int(f.model.historyTarget(0, false, target)));
+	RestoreId id{};
+	CHECK_EQUAL(int(Status::Ok), int(f.model.requestHistoryNavigation(target, id)));
+	CHECK_EQUAL(int(HistoryNavigationState::Applying), int(f.model.historyNavigationResult().state));
+	// Replacement cancels the accepted job; teardown stays pending bounded retirement.
+	CHECK_EQUAL(int(Status::Busy), int(f.model.requestSongReplacement(true)));
+	const auto result = f.model.historyNavigationResult();
+	CHECK_EQUAL(int(HistoryNavigationState::Failed), int(result.state));
+	CHECK_EQUAL(id.generation, result.id.generation);
+	CHECK_FALSE(f.model.safeToRelease());
+	for (unsigned i = 0; i < 1000 && !f.model.safeToRelease(); ++i) {
+		f.model.serviceRetirement();
+		f.model.serviceArchive(4096);
+	}
+	CHECK(f.model.safeToRelease());
+	CHECK_FALSE(f.host.registered);
+}

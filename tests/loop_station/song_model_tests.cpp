@@ -36,6 +36,7 @@ struct Host : BindingHost {
 	SampleClock time = 100;
 	unsigned step = 0, fail = 0, outputs = 0, allocated = 0;
 	bool locked = false;
+	std::function<void()> onEnterBoundary;
 	bool succeeds() { return ++step != fail; }
 	AudioClip* allocateClip() override {
 		if (!succeeds())
@@ -78,6 +79,8 @@ struct Host : BindingHost {
 	bool enterBoundary() override {
 		bool old = locked;
 		locked = true;
+		if (onEnterBoundary)
+			onEnterBoundary();
 		return old;
 	}
 	void leaveBoundary(bool old) override { locked = old; }
@@ -148,6 +151,34 @@ struct Fixture {
 			model->serviceArchive(4096);
 		for (unsigned i = 0; i < 100 && model->archive().checkpointReadIdle(); ++i)
 			model->serviceRetirement();
+	}
+	// Drive the production foreground owner until the navigation job reaches a
+	// terminal state. No UI timer is involved.
+	HistoryNavigationResult driveNavigation(RestoreId id) {
+		for (unsigned i = 0; i < 5000; ++i) {
+			model->serviceHistoryNavigation(128);
+			const auto result = model->historyNavigationResult();
+			if (result.id.generation == id.generation && !result.pending())
+				return result;
+		}
+		return model->historyNavigationResult();
+	}
+	// Render one window of a playing phrase and return the exact backing frames.
+	std::vector<Frame> backingWindow(SlotId id, size_t count) {
+		std::array<Frame, 128> input{}, output{};
+		size_t frames = count;
+		model->adapter().finalizeWindow(host.time, frames, model->clock());
+		model->adapter().renderDry(id, std::span(input).first(frames), std::span(output).first(frames));
+		host.time += frames;
+		return {output.begin(), output.begin() + frames};
+	}
+	void expectUniformBacking(SlotId id, size_t count, Frame expected) {
+		const auto frames = backingWindow(id, count);
+		CHECK_EQUAL(count, frames.size());
+		for (const auto& frame : frames) {
+			CHECK_EQUAL(expected.l, frame.l);
+			CHECK_EQUAL(expected.r, frame.r);
+		}
 	}
 };
 } // namespace
@@ -897,4 +928,355 @@ TEST(LoopBindings, clearThenNewTakeAndOverdubUndoOnlyTouchesTheNewPhrase) {
 	CHECK(Status::Ok == f.driveRestore(newUndo, 512));
 	CHECK(Status::Ok == f.model->commitRestore(newUndo));
 	CHECK_EQUAL(newLength, f.model->engine().state(0).phraseFrames);
+}
+
+// Confirmed Undo of an active initial take seals exactly the frames captured
+// through confirmation, publishes a truly empty/stopped track (no automatic
+// Play/Dub), retains the recording for Redo, and Redo republishes it stopped.
+TEST(LoopBindings, ConfirmedActiveInitialUndoRetainsFramesThroughBoundary) {
+	Fixture f;
+	f.start();
+	CHECK(Status::Ok == f.model->ensureBound(0));
+	CHECK(Status::Ok == f.model->dispatch({CommandType::Press, 0}));
+	CHECK(f.model->engine().state(0).capture);
+	CHECK_FALSE(f.model->engine().state(0).playing);
+	f.render(8); // Eight captured frames of {100,100}.
+	HistoryTarget target{};
+	CHECK_EQUAL(int(Status::Ok), int(f.model->historyTarget(0, false, target)));
+	CHECK(f.model->historyTargetCurrent(target));
+	RestoreId id{};
+	CHECK_EQUAL(int(Status::Ok), int(f.model->requestHistoryNavigation(target, id)));
+	CHECK(id.valid());
+	CHECK_FALSE(f.model->engine().state(0).capture);
+	const auto result = f.driveNavigation(id);
+	CHECK_EQUAL(int(HistoryNavigationState::Complete), int(result.state));
+	CHECK_EQUAL(int(Status::Ok), int(result.status));
+	CHECK_EQUAL(id.generation, result.id.generation);
+	CHECK_EQUAL(0, result.slot);
+	CHECK_FALSE(result.redo);
+	CHECK_FALSE(f.model->engine().state(0).hasPhrase);
+	CHECK_FALSE(f.model->engine().state(0).playing);
+	CHECK_FALSE(f.model->engine().state(0).capture);
+	CHECK_EQUAL(0, f.model->engine().state(0).phraseFrames);
+	CHECK(f.model->canRedo(0));
+	// Redo from empty restores the same frames, stopped from zero.
+	HistoryTarget redo{};
+	CHECK_EQUAL(int(Status::Ok), int(f.model->historyTarget(0, true, redo)));
+	RestoreId redoId{};
+	CHECK_EQUAL(int(Status::Ok), int(f.model->requestHistoryNavigation(redo, redoId)));
+	const auto redone = f.driveNavigation(redoId);
+	CHECK_EQUAL(int(HistoryNavigationState::Complete), int(redone.state));
+	CHECK_EQUAL(int(Status::Ok), int(redone.status));
+	CHECK_TRUE(redone.redo);
+	CHECK(f.model->engine().state(0).hasPhrase);
+	CHECK_FALSE(f.model->engine().state(0).playing);
+	CHECK_EQUAL(8, f.model->engine().state(0).phraseFrames);
+	CHECK(Status::Ok == f.model->dispatch({CommandType::StartAll}));
+	CHECK(f.model->engine().state(0).playing);
+	f.expectUniformBacking(0, 8, {100, 100});
+}
+
+// A confirmed Undo during an active overdub closes exactly that session and
+// removes only its additions, keeping the backing phrase playing. Another track
+// is untouched.
+TEST(LoopBindings, ConfirmedActiveOverdubUndoRemovesOnlyThatSession) {
+	Fixture f;
+	f.start();
+	f.record(0);
+	f.record(1);
+	f.expectUniformBacking(0, 8, {100, 100});
+	CHECK(Status::Ok == f.model->dispatch({CommandType::Press, 0}));
+	CHECK(f.model->engine().state(0).capture);
+	CHECK(f.model->engine().state(0).playing);
+	f.render(128); // Adds {100,100} on top of the base over a full pass.
+	HistoryTarget target{};
+	CHECK_EQUAL(int(Status::Ok), int(f.model->historyTarget(0, false, target)));
+	CHECK(f.model->historyTargetCurrent(target));
+	RestoreId id{};
+	CHECK_EQUAL(int(Status::Ok), int(f.model->requestHistoryNavigation(target, id)));
+	CHECK_FALSE(f.model->engine().state(0).capture);
+	const auto result = f.driveNavigation(id);
+	CHECK_EQUAL(int(HistoryNavigationState::Complete), int(result.state));
+	CHECK_EQUAL(int(Status::Ok), int(result.status));
+	CHECK(f.model->engine().state(0).hasPhrase);
+	CHECK(f.model->engine().state(0).playing);
+	CHECK_EQUAL(8, f.model->engine().state(0).phraseFrames);
+	f.expectUniformBacking(0, 8, {100, 100});
+	f.expectUniformBacking(1, 8, {100, 100});
+}
+
+// An active overdub that captured no samples closes on confirmation and reports
+// SourceUnavailable, never falling through to the older initial boundary.
+TEST(LoopBindings, ActiveUnchangedOverdubDoesNotUndoInitial) {
+	Fixture f;
+	f.start();
+	f.record(0);
+	CHECK(Status::Ok == f.model->dispatch({CommandType::Press, 0}));
+	CHECK(f.model->engine().state(0).capture);
+	// No render: the gate is open but nothing was captured.
+	HistoryTarget target{};
+	CHECK_EQUAL(int(Status::Ok), int(f.model->historyTarget(0, false, target)));
+	RestoreId id{};
+	CHECK_EQUAL(int(Status::SourceUnavailable), int(f.model->requestHistoryNavigation(target, id)));
+	CHECK_FALSE(id.valid());
+	CHECK_EQUAL(int(HistoryNavigationState::Idle), int(f.model->historyNavigationResult().state));
+	// The gate is closed, playback continues, and the initial layer is intact.
+	CHECK_FALSE(f.model->engine().state(0).capture);
+	CHECK(f.model->engine().state(0).playing);
+	CHECK(f.model->engine().state(0).hasPhrase);
+	CHECK_EQUAL(8, f.model->engine().state(0).phraseFrames);
+	CHECK(f.model->canUndo(0));
+	f.expectUniformBacking(0, 8, {100, 100});
+	// The initial boundary is still the next undoable layer.
+	HistoryTarget initial{};
+	CHECK_EQUAL(int(Status::Ok), int(f.model->historyTarget(0, false, initial)));
+	RestoreId initialId{};
+	CHECK_EQUAL(int(Status::Ok), int(f.model->requestHistoryNavigation(initial, initialId)));
+	CHECK_EQUAL(int(HistoryNavigationState::Complete), int(f.driveNavigation(initialId).state));
+	CHECK_FALSE(f.model->engine().state(0).hasPhrase);
+}
+
+// Incoming frames inside one capture session must not invalidate a confirmed
+// target, so a prompt armed at the start still confirms the same session later.
+TEST(LoopBindings, FramesWithinSameCaptureDoNotInvalidateTarget) {
+	Fixture f;
+	f.start();
+	f.record(0);
+	CHECK(Status::Ok == f.model->dispatch({CommandType::Press, 0}));
+	HistoryTarget target{};
+	CHECK_EQUAL(int(Status::Ok), int(f.model->historyTarget(0, false, target)));
+	const auto epoch = target.historyEpoch;
+	for (unsigned i = 0; i < 12; ++i)
+		f.render(128);
+	CHECK_EQUAL(epoch, f.model->engine().historyEpoch(0));
+	CHECK(f.model->historyTargetCurrent(target));
+	RestoreId id{};
+	CHECK_EQUAL(int(Status::Ok), int(f.model->requestHistoryNavigation(target, id)));
+	CHECK_EQUAL(int(HistoryNavigationState::Complete), int(f.driveNavigation(id).state));
+	f.expectUniformBacking(0, 8, {100, 100});
+}
+
+// Automatic completion of the armed capture invalidates the old target, so a
+// stale confirmation cannot remove the whole just-completed recording.
+TEST(LoopBindings, AutomaticCompletionCancelsOldCaptureTarget) {
+	Fixture f;
+	f.start();
+	CHECK(Status::Ok == f.model->ensureBound(0));
+	auto settings = f.model->engine().settings();
+	settings.tracks[0].recordDurationBars = 1;
+	CHECK(Status::Ok == f.model->dispatch(Command::configure(settings)));
+	f.model->updateClock(f.host.time, 1000u << 16, true, 0); // Short bar keeps the take brief.
+	CHECK(Status::Ok == f.model->dispatch({CommandType::Press, 0}));
+	CHECK(f.model->engine().state(0).capture);
+	HistoryTarget target{};
+	CHECK_EQUAL(int(Status::Ok), int(f.model->historyTarget(0, false, target)));
+	for (unsigned i = 0; i < 400 && f.model->engine().state(0).capture; ++i)
+		f.render(128);
+	CHECK_FALSE(f.model->engine().state(0).capture);
+	CHECK(f.model->engine().state(0).hasPhrase);
+	CHECK_FALSE(f.model->historyTargetCurrent(target));
+	RestoreId id{};
+	CHECK_EQUAL(int(Status::Stale), int(f.model->requestHistoryNavigation(target, id)));
+	CHECK_FALSE(id.valid());
+	// The naturally completed recording is a normal undoable boundary instead.
+	CHECK(f.model->canUndo(0));
+}
+
+// A confirmed operation progresses through the model-owned foreground service
+// with no view timer and commits its audio exactly once.
+TEST(LoopBindings, RestoreProgressesWithoutUiTimerAndCommitsOnce) {
+	Fixture f;
+	f.start();
+	f.record(0);
+	CHECK(Status::Ok == f.model->dispatch({CommandType::Press, 0}));
+	for (unsigned i = 0; i < 9; ++i)
+		f.render(128);
+	f.host.time += GestureRollback::kProvisionalSamples;
+	CHECK(Status::Ok == f.model->dispatch({CommandType::Press, 0}));
+	HistoryTarget target{};
+	CHECK_EQUAL(int(Status::Ok), int(f.model->historyTarget(0, false, target)));
+	RestoreId id{};
+	CHECK_EQUAL(int(Status::Ok), int(f.model->requestHistoryNavigation(target, id)));
+	const auto revisionBefore = f.model->contentRevision(0);
+	const auto result = f.driveNavigation(id);
+	CHECK_EQUAL(int(HistoryNavigationState::Complete), int(result.state));
+	CHECK_EQUAL(int(Status::Ok), int(result.status));
+	CHECK_EQUAL(id.generation, result.id.generation);
+	CHECK_EQUAL(revisionBefore + 1, f.model->contentRevision(0));
+	f.expectUniformBacking(0, 8, {100, 100});
+	// Extra foreground ticks after completion are inert.
+	for (unsigned i = 0; i < 8; ++i)
+		f.model->serviceHistoryNavigation(128);
+	CHECK_EQUAL(revisionBefore + 1, f.model->contentRevision(0));
+	CHECK_EQUAL(int(HistoryNavigationState::Complete), int(f.model->historyNavigationResult().state));
+}
+
+// Commit Busy retains the job and its ID and retries; checkpoint restore cannot
+// enter while a user job owns the single restore admission gate.
+TEST(LoopBindings, CommitBusyRetainsJobAndRetries) {
+	Fixture f;
+	f.start();
+	CHECK(Status::Ok == f.model->ensureBound(0));
+	CHECK(Status::Ok == f.model->dispatch({CommandType::Press, 0}));
+	f.render(8);
+	HistoryTarget target{};
+	CHECK_EQUAL(int(Status::Ok), int(f.model->historyTarget(0, false, target)));
+	RestoreId id{};
+	CHECK_EQUAL(int(Status::Ok), int(f.model->requestHistoryNavigation(target, id)));
+	// Queue a quantized Start so the commit sees a pending engine action.
+	auto settings = f.model->engine().settings();
+	settings.startAction.mode = ActionMode::Synced;
+	CHECK(Status::Ok == f.model->dispatch(Command::configure(settings)));
+	CHECK(Status::Ok == f.model->dispatch({CommandType::StartAll}));
+	CHECK(f.model->engine().state(0).pending);
+	RestoreId checkpoint{};
+	CHECK_EQUAL(int(Status::Busy), int(f.model->requestCheckpointRestore(0, 7, checkpoint)));
+	f.model->serviceHistoryNavigation(128);
+	const auto retained = f.model->historyNavigationResult();
+	CHECK_EQUAL(int(HistoryNavigationState::Applying), int(retained.state));
+	CHECK_EQUAL(id.generation, retained.id.generation);
+	// Once the queued action resolves the retained job commits.
+	for (unsigned i = 0; i < 400 && f.model->engine().state(0).pending; ++i)
+		f.render(128);
+	CHECK_FALSE(f.model->engine().state(0).pending);
+	const auto result = f.driveNavigation(id);
+	CHECK_EQUAL(int(HistoryNavigationState::Complete), int(result.state));
+	CHECK_EQUAL(int(Status::Ok), int(result.status));
+	CHECK_FALSE(f.model->engine().state(0).hasPhrase);
+}
+
+// Reentrant foreground service cannot service or commit the job twice.
+TEST(LoopBindings, ReentrantServiceDoesNotDoublePublish) {
+	Fixture f;
+	f.start();
+	f.record(0);
+	CHECK(Status::Ok == f.model->dispatch({CommandType::Press, 0}));
+	for (unsigned i = 0; i < 9; ++i)
+		f.render(128);
+	f.host.time += GestureRollback::kProvisionalSamples;
+	CHECK(Status::Ok == f.model->dispatch({CommandType::Press, 0}));
+	HistoryTarget target{};
+	CHECK_EQUAL(int(Status::Ok), int(f.model->historyTarget(0, false, target)));
+	RestoreId id{};
+	CHECK_EQUAL(int(Status::Ok), int(f.model->requestHistoryNavigation(target, id)));
+	const auto revisionBefore = f.model->contentRevision(0);
+	bool reentered = false;
+	f.host.onEnterBoundary = [&] {
+		if (!reentered) {
+			reentered = true;
+			f.model->serviceHistoryNavigation(128); // Must be rejected by the service guard.
+		}
+	};
+	const auto result = f.driveNavigation(id);
+	f.host.onEnterBoundary = {};
+	CHECK(reentered);
+	CHECK_EQUAL(int(HistoryNavigationState::Complete), int(result.state));
+	CHECK_EQUAL(int(Status::Ok), int(result.status));
+	CHECK_EQUAL(revisionBefore + 1, f.model->contentRevision(0));
+	f.expectUniformBacking(0, 8, {100, 100});
+}
+
+// A restore that fails after confirmation already closed the capture keeps the
+// cumulative captured audio, leaves capture closed, reports the failure, and
+// does not substitute an older layer or disturb another track.
+TEST(LoopBindings, FailedRestoreKeepsCumulativeAudioAfterCaptureClosed) {
+	Fixture f;
+	f.start();
+	// Track 1 carries an overdub boundary whose undo candidates only serve to
+	// occupy the bounded detached records, so admission later fails under pressure.
+	f.record(1);
+	CHECK(Status::Ok == f.model->dispatch({CommandType::Press, 1}));
+	f.render(8);
+	f.host.time += GestureRollback::kProvisionalSamples;
+	CHECK(Status::Ok == f.model->dispatch({CommandType::Press, 1}));
+	unsigned retired = 0;
+	for (unsigned i = 0; i < 40; ++i) {
+		RestoreId candidate{};
+		const auto requested = f.model->requestRestore(1, false, candidate);
+		if (requested != Status::Ok) {
+			CHECK_EQUAL(int(Status::NoMemory), int(requested));
+			break;
+		}
+		const auto serviced = f.model->serviceRestore(candidate, 512);
+		if (serviced != Status::Ok) {
+			CHECK_EQUAL(int(Status::NoMemory), int(serviced));
+			break;
+		}
+		f.model->cancelRestore(1);
+		++retired;
+	}
+	CHECK(retired >= 8);
+	// Track 0: base plus an active overdub with additions, then confirm Undo.
+	CHECK(Status::Ok == f.model->ensureBound(0));
+	CHECK(Status::Ok == f.model->dispatch({CommandType::Press, 0}));
+	f.render(8);
+	CHECK(Status::Ok == f.model->dispatch({CommandType::Press, 0}));
+	CHECK(Status::Ok == f.model->dispatch({CommandType::Press, 0}));
+	f.render(8);
+	HistoryTarget target{};
+	CHECK_EQUAL(int(Status::Ok), int(f.model->historyTarget(0, false, target)));
+	RestoreId id{};
+	CHECK_EQUAL(int(Status::Ok), int(f.model->requestHistoryNavigation(target, id)));
+	CHECK_FALSE(f.model->engine().state(0).capture);
+	const auto result = f.driveNavigation(id);
+	CHECK_EQUAL(int(HistoryNavigationState::Failed), int(result.state));
+	CHECK_EQUAL(int(Status::NoMemory), int(result.status));
+	CHECK_EQUAL(id.generation, result.id.generation);
+	// Capture closed, cumulative additions preserved, no older layer removed.
+	CHECK(f.model->engine().state(0).hasPhrase);
+	CHECK(f.model->engine().state(0).playing);
+	CHECK_EQUAL(8, f.model->engine().state(0).phraseFrames);
+	f.expectUniformBacking(0, 8, {200, 200});
+	f.expectUniformBacking(1, 8, {200, 200});
+}
+
+// A new capture on the same track cancels an accepted job before it can publish
+// anything, so a stale confirmed Undo cannot edit the fresh session.
+TEST(LoopBindings, NewCaptureCancelsApplyingJobBeforePublication) {
+	Fixture f;
+	f.start();
+	f.record(0);
+	CHECK(Status::Ok == f.model->dispatch({CommandType::Press, 0}));
+	f.render(8); // One overdubbed pass over the eight-frame base.
+	HistoryTarget target{};
+	CHECK_EQUAL(int(Status::Ok), int(f.model->historyTarget(0, false, target)));
+	RestoreId id{};
+	CHECK_EQUAL(int(Status::Ok), int(f.model->requestHistoryNavigation(target, id)));
+	CHECK_FALSE(f.model->engine().state(0).capture);
+	CHECK_EQUAL(int(HistoryNavigationState::Applying), int(f.model->historyNavigationResult().state));
+	const auto revision = f.model->contentRevision(0);
+	// Opening a fresh overdub on the same track must cancel the accepted job.
+	CHECK(Status::Ok == f.model->dispatch({CommandType::Press, 0}));
+	CHECK_EQUAL(int(HistoryNavigationState::Failed), int(f.model->historyNavigationResult().state));
+	CHECK(f.model->engine().state(0).capture);
+	// Servicing the cancelled job can never publish the old removal.
+	for (unsigned i = 0; i < 8; ++i)
+		f.model->serviceHistoryNavigation(128);
+	CHECK_EQUAL(revision, f.model->contentRevision(0));
+	CHECK(f.model->engine().state(0).capture);
+	CHECK(f.model->engine().state(0).hasPhrase);
+	CHECK(f.model->engine().state(0).playing);
+}
+
+// An observed running/stopped transport change (not a UI button) invalidates a
+// confirmed target before it can act.
+TEST(LoopBindings, ExternalTransportTransitionInvalidatesTarget) {
+	Fixture f;
+	f.start();
+	f.model->updateClock(f.host.time, 120u << 16, true, 0);
+	f.record(0);
+	CHECK(Status::Ok == f.model->dispatch({CommandType::Press, 0}));
+	for (unsigned i = 0; i < 3; ++i)
+		f.render(128);
+	f.host.time += GestureRollback::kProvisionalSamples;
+	CHECK(Status::Ok == f.model->dispatch({CommandType::Press, 0}));
+	HistoryTarget target{};
+	CHECK_EQUAL(int(Status::Ok), int(f.model->historyTarget(0, false, target)));
+	f.model->updateClock(f.host.time, 120u << 16, true, 0); // Running -> running is not a change.
+	CHECK(f.model->historyTargetCurrent(target));
+	f.model->updateClock(f.host.time, 120u << 16, false, 0); // Running -> stopped invalidates.
+	CHECK_FALSE(f.model->historyTargetCurrent(target));
+	RestoreId id{};
+	CHECK_EQUAL(int(Status::Stale), int(f.model->requestHistoryNavigation(target, id)));
+	CHECK_FALSE(id.valid());
 }
