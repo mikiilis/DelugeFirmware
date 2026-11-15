@@ -832,22 +832,29 @@ TEST(LoopEngine, historyClosureOfOverdubKeepsPlaybackAndRecordedFrames) {
 	CHECK_FALSE(engine.state(0).capture);
 }
 
-// Removing a phrase for history empties the track while keeping the clip bound,
-// the selection, and the track settings.
+// A previously playing recording is published empty atomically in one boundary
+// as pool.detach -> resident.detachForHistory -> engine.phraseRemoved, with the
+// retained generation/samples exact and the track's selection/settings kept.
 TEST(LoopEngine, phraseRemovalPreservesSelectionAndSettings) {
 	phrase(false, RecordAction::REC_PLAY_DUB, 0);
-	command(CommandType::TransportStop, 20000);
+	CHECK(engine.state(0).playing);
 	auto settings = engine.settings();
 	settings.tracks[0].source = Source::Balanced;
 	settings.tracks[0].monitoring = Monitoring::Off;
 	settings.tracks[0].playback = PlaybackMode::OneShot;
 	settings.tracks[0].colour = Colour::Magenta;
 	settings.tracks[0].transposeCents = 700;
-	CHECK(Status::Ok == engine.dispatch(Command::configure(settings), 20001, clock));
-	command(CommandType::Select, 20001, 0);
+	CHECK(Status::Ok == engine.dispatch(Command::configure(settings), 20000, clock));
+	command(CommandType::Select, 20000, 0);
 	CHECK_EQUAL(0, engine.selected());
+	const auto active = pool.sealedHandle(0);
+	CHECK(active.valid());
 	const auto epoch = engine.historyEpoch(0);
 	const auto stream = engine.streamGeneration(0);
+	const auto free = pool.freePages();
+	PhraseHandle retained;
+	CHECK(Status::Ok == pool.detach(0, retained));
+	CHECK_EQUAL(active.generation, retained.generation);
 	CHECK(Status::Ok == audio.detachForHistory(0));
 	engine.phraseRemoved(0);
 	const auto state = engine.state(0);
@@ -865,6 +872,18 @@ TEST(LoopEngine, phraseRemovalPreservesSelectionAndSettings) {
 	CHECK(engine.historyEpoch(0) != epoch);
 	CHECK(engine.streamGeneration(0) != stream);
 	CHECK_FALSE(engine.nextActionSample(clock));
+	// No orphan live provider: the emptied slot renders silence.
+	CHECK_FALSE(audio.playing(0));
+	const Frame input[] = {{5, -5}};
+	Frame output[] = {{99, 99}};
+	audio.render(0, input, output);
+	CHECK_EQUAL(0, output[0].l);
+	CHECK_EQUAL(0, output[0].r);
+	// Retained exact samples and generation for Redo; pages were not freed.
+	CHECK_EQUAL(free, pool.freePages());
+	CHECK_EQUAL(8, pool.length(retained));
+	CHECK_EQUAL(10, pool.frame(retained, 0)->l);
+	CHECK_EQUAL(-20, pool.frame(retained, 7)->r);
 }
 
 // An obsolete pad release after removal must neither clear nor restart the
@@ -874,6 +893,8 @@ TEST(LoopEngine, oldPadReleaseCannotClearOrRestartRemovedPhrase) {
 	command(CommandType::TransportStop, 20000);
 	command(CommandType::Press, 20001);
 	CHECK_EQUAL(0, engine.heldDurationSamples(0, 20001));
+	PhraseHandle retained;
+	CHECK(Status::Ok == pool.detach(0, retained));
 	CHECK(Status::Ok == audio.detachForHistory(0));
 	engine.phraseRemoved(0);
 	CHECK_FALSE(engine.state(0).hasPhrase);

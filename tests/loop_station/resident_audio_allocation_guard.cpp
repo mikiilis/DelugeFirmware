@@ -65,8 +65,11 @@ int main() {
 			return 6;
 		audio.stop(slot);
 	}
-	// Task 2: ownership detach + binding unbind allocate nothing.
+	// Task 2: caller-owned pool detach + resident forget allocate nothing.
 	for (SlotId slot = 0; slot < 2; ++slot) {
+		PhraseHandle retained;
+		if (pool.detach(slot, retained) != Status::Ok || !retained.valid())
+			return 12;
 		if (audio.detachForHistory(slot) != Status::Ok)
 			return 12;
 	}

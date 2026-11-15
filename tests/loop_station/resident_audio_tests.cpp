@@ -502,15 +502,21 @@ TEST(LoopAudio, finishInitialRejectsReleasedResultHandle) {
 	CHECK_FALSE(handle.valid());
 }
 
-// detachForHistory forgets the resident provider only after ownership is safely
-// detached: never while playing, and never while rollback still references the
-// phrase. The retained record stays readable and its pages are not freed.
-TEST(LoopAudio, detachForHistoryRequiresSafeOwnershipAndRetainsPhrase) {
+// detachForHistory only forgets the resident provider after the caller has
+// performed the PagePool ownership transfer: it never detaches the pool itself,
+// rejects unsafe rollback/capture states and accidental pre-detach use without
+// altering audio, and leaves the retained record and its pages intact.
+TEST(LoopAudio, detachForHistoryRequiresCallerOwnedDetachAndRetainsPhrase) {
 	const Frame backing[] = {{10, -10}, {20, -20}};
 	const auto handle = phrase(backing);
-	CHECK(Status::Ok == audio.start(0, false));
-	CHECK(Status::Busy == audio.detachForHistory(0));
 	CHECK(Status::Ok == rollback.begin(0, 0, audio.position(0), 2));
+	CHECK(Status::Ok == audio.start(0, false));
+	// Accidental use while the pool record is still live must not alter audio.
+	CHECK(Status::Busy == audio.detachForHistory(0));
+	CHECK(audio.playing(0));
+	CHECK_EQUAL(0, audio.position(0));
+	const auto revision = audio.contentRevision(0);
+	CHECK_EQUAL(revision, audio.contentRevision(0));
 	CHECK(Status::Ok == audio.setCaptureGate(0, true));
 	const Frame input[] = {{1, 1}, {2, 2}};
 	Frame output[2];
@@ -524,16 +530,25 @@ TEST(LoopAudio, detachForHistoryRequiresSafeOwnershipAndRetainsPhrase) {
 	CHECK(Status::Busy == audio.detachForHistory(0));
 	rollback.service(16);
 	CHECK_FALSE(rollback.pending(0));
-	const auto revision = audio.contentRevision(0);
+	// Rollback is safe but the caller has not detached yet: still rejected.
+	CHECK(Status::Busy == audio.detachForHistory(0));
+	const auto beforeDetach = audio.contentRevision(0);
+	CHECK_EQUAL(beforeDetach, audio.contentRevision(0));
+	// Caller-owned ownership transfer, then the resident forget.
+	PhraseHandle retained;
+	CHECK(Status::Ok == pool.detach(0, retained));
+	CHECK_EQUAL(handle.generation, retained.generation);
 	const auto free = pool.freePages();
 	CHECK(Status::Ok == audio.detachForHistory(0));
-	CHECK_EQUAL(revision + 1, audio.contentRevision(0));
+	CHECK_EQUAL(beforeDetach + 1, audio.contentRevision(0));
 	CHECK_FALSE(audio.playing(0));
 	CHECK_EQUAL(0, audio.position(0));
 	CHECK_EQUAL(free, pool.freePages());
 	CHECK_FALSE(pool.sealedHandle(0).valid());
-	CHECK_EQUAL(2, pool.length(handle));
-	CHECK_EQUAL(10, pool.frame(handle, 0)->l);
-	CHECK(Status::Invalid == audio.detachForHistory(0));
+	CHECK_EQUAL(2, pool.length(retained));
+	CHECK_EQUAL(10, pool.frame(retained, 0)->l);
+	// Empty is an idempotent no-op rather than a second ownership change.
+	CHECK(Status::Ok == audio.detachForHistory(0));
+	CHECK_EQUAL(beforeDetach + 1, audio.contentRevision(0));
 	CHECK(Status::Invalid == audio.detachForHistory(kInvalidSlot));
 }

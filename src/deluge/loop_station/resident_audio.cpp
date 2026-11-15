@@ -179,21 +179,26 @@ Status ResidentAudio::detachForHistory(SlotId slot) {
 	if (!validSlot(slot))
 		return Status::Invalid;
 	auto& state = slots_[slot];
-	// A live provider or an unsealed initial take cannot be detached safely.
-	if (state.initial || state.capture || state.playing)
+	// An unsealed initial take or an open capture is still owned by the live
+	// provider and cannot be published empty.
+	if (state.initial || state.capture)
 		return Status::Busy;
-	// Reject before changing pool mapping: a pending entry still writes through
-	// the bound phrase during bounded retirement.
+	// A provisional/pending rollback entry still writes through the phrase.
 	if (rollback_.provisional(slot) || rollback_.pending(slot))
 		return Status::Busy;
-	PhraseHandle retained;
-	const auto detached = pool_.detach(slot, retained);
-	if (detached != Status::Ok)
-		return detached;
-	// Safety was established above, so the binding can be dropped without a scan.
+	// The caller (History) owns PagePool::detach and must complete it first;
+	// otherwise forgetting here would orphan a live provider on a still-mapped
+	// record. Reject before touching any state.
+	if (pool_.sealedHandle(slot).valid())
+		return Status::Busy;
+	// Safety was established, so the binding can be dropped without a scan. A
+	// previously playing recording stops here, atomically with its empty
+	// publication, instead of needing a separate playback-stop gesture.
+	const bool hadProvider = state.handle.valid() || state.playing;
 	detail::invariant(rollback_.unbind(slot) == Status::Ok);
 	state = {};
-	contentChanged(slot);
+	if (hadProvider)
+		contentChanged(slot);
 	return Status::Ok;
 }
 
