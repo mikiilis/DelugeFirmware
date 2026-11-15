@@ -62,21 +62,84 @@ class SelectionPreviewTests(unittest.TestCase):
             ),
         )
 
-    def test_bars_text_reports_capture_and_rounded_bars(self):
-        # The helper reads the demo's tempo-derived pulsePeriod, so stub it here.
+    def test_bars_text_reports_measured_length(self):
         self.assertEqual(
-            ["READY", "REC", "REC", "4 BARS", "1 BAR", "2 BARS"],
+            [
+                "READY",
+                "REC",
+                "REC",
+                "1/16 BAR",
+                "0.37 s",
+                "1 BAR",
+                "3/2 BARS",
+                "4 BARS",
+            ],
             run_demo_helpers(
                 "[barsText({state:'empty',length:0}),"
-                "barsText({state:'recording',length:2}),"
-                "barsText({state:'overdubbing',length:8}),"
-                "barsText({state:'playing',length:8}),"
-                "barsText({state:'stopped',length:2}),"
-                "barsText({state:'playing',length:3})]",
-                helpers=("barsText",),
-                preamble="const pulsePeriod = 0.5;\n",
+                "barsText({state:'recording',length:0.37}),"
+                "barsText({state:'overdubbing',length:0.37}),"
+                "barsText({state:'playing',length:0.125}),"
+                "barsText({state:'stopped',length:0.37}),"
+                "barsText({state:'playing',length:2}),"
+                "barsText({state:'playing',length:3}),"
+                "barsText({state:'playing',length:8})]",
+                helpers=("barsText", "formatPhraseLength"),
+                preamble="const tempoBPM = 120;\n",
             ),
         )
+
+    def test_length_formatter_matches_firmware_contract(self):
+        # Literal cases independently checked against 44.1-kHz durations; do not
+        # compute expected labels with a second implementation of the formatter.
+        musical_cases = [
+            (0, "0.00 s"),
+            (1, "<0.01 s"),
+            (220, "<0.01 s"),
+            (221, "0.01 s"),
+            (1838, "1/48 BAR"),
+            (2757, "1/32 BAR"),
+            (3675, "1/24 BAR"),
+            (5513, "1/16 BAR"),
+            (7350, "1/12 BAR"),
+            (11025, "1/8 BAR"),
+            (14700, "1/6 BAR"),
+            (16538, "3/16 BAR"),
+            (22050, "1/4 BAR"),
+            (29400, "1/3 BAR"),
+            (44100, "1/2 BAR"),
+            (66150, "3/4 BAR"),
+            (88200, "1 BAR"),
+            (132300, "3/2 BARS"),
+            (352800, "4 BARS"),
+            (16317, "0.37 s"),
+            (5511, "0.12 s"),
+            (5512, "1/16 BAR"),
+            (5514, "1/16 BAR"),
+            (5515, "0.13 s"),
+            (330750, "7.50 s"),
+        ]
+        cases = [(frames, 120 * 65536, label) for frames, label in musical_cases]
+        cases += [
+            (5880, 112 * 65536 + 32768, "1/16 BAR"),
+            (5513, 121 * 65536, "0.13 s"),
+            (16317, 60 * 65536, "0.37 s"),
+            (16317, 120 * 65536, "0.37 s"),
+            (439, 0, "0.01 s"),
+            (44099, 0, "1.00 s"),
+            (44099779, 0, "999.99 s"),
+            (44099780, 0, "1000 s"),
+            (4294967295, 0, "97392 s"),
+            (4294967295, 1000 * 65536, "97392 s"),
+            (16317, 1001 * 65536, "0.37 s"),
+            (16317, 1, "0.37 s"),
+        ]
+        inputs = json.dumps([[frames, tempo] for frames, tempo, _ in cases])
+        results = run_demo_helpers(
+            inputs + ".map(([frames, tempo]) => formatPhraseLength(frames, tempo))",
+            helpers=("formatPhraseLength",),
+        )
+        self.assertEqual([label for _, _, label in cases], results)
+        self.assertTrue(all(len(label) <= 8 for label in results))
 
     def test_global_settings_render_without_a_selected_track(self):
         # No DOM runner is available, so exercise the render loop against a minimal

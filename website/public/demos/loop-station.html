@@ -822,11 +822,47 @@
         function nextSelection(current, clicked) {
           return current === clicked ? -1 : clicked
         }
+        function formatPhraseLength(frames, tempoQ16) {
+          const samples = BigInt(frames)
+          const tempo = BigInt(tempoQ16)
+          const sampleRate = 44100n
+          const framesPerBarQ16 = sampleRate * 240n * 65536n
+          if (samples > 0n && tempo > 0n && tempo <= 1000n * 65536n) {
+            for (const grid of [32n, 48n]) {
+              const scaled = samples * tempo * grid
+              const units = (scaled + framesPerBarQ16 / 2n) / framesPerBarQ16
+              if (units === 0n) continue
+              const numerator = units * framesPerBarQ16
+              const denominator = tempo * grid
+              const expected = numerator / denominator + (numerator % denominator === 0n ? 0n : 1n)
+              const difference = expected > samples ? expected - samples : samples - expected
+              if (difference > 1n) continue
+              let common = units, remainder = grid
+              while (remainder !== 0n) {
+                const next = common % remainder
+                common = remainder
+                remainder = next
+              }
+              const bars = units / common
+              const fraction = grid / common
+              const suffix = bars <= fraction ? "" : "S"
+              const label = fraction === 1n
+                ? `${bars} BAR${suffix}`
+                : `${bars}/${fraction} BAR${suffix}`
+              if (label.length <= 8) return label
+              break
+            }
+          }
+          const hundredths = (samples * 100n + sampleRate / 2n) / sampleRate
+          if (samples > 0n && hundredths === 0n) return "<0.01 s"
+          if (hundredths < 100000n)
+            return `${hundredths / 100n}.${String(hundredths % 100n).padStart(2, "0")} s`
+          return `${(samples + sampleRate / 2n) / sampleRate} s`
+        }
         function barsText(track) {
           if (track.state === "empty") return "READY"
           if (track.state === "recording" || track.state === "overdubbing") return "REC"
-          const bars = Math.max(1, Math.round(track.length / (4 * pulsePeriod)))
-          return bars + (bars === 1 ? " BAR" : " BARS")
+          return formatPhraseLength(Math.round(track.length * 44100), Math.round(tempoBPM * 65536))
         }
         function selectionBrightness(trackIndex, selectedIndex, state, pulse, filled, reducedMotion) {
           if (trackIndex !== selectedIndex || state === "recording" || state === "overdubbing") return null
@@ -1048,9 +1084,7 @@
                 ? ""
                 : s === "recording"
                   ? " · live"
-                  : " · " +
-                    Math.round(tracks[i].length / (4 * pulsePeriod)) +
-                    " bars")
+                  : " · " + barsText(tracks[i]))
             summaries[i].style.borderTopColor =
               i === selected ? colourOptions[tracks[i].settings.colour][1] : "#35423b"
             summaries[i].querySelector("strong").textContent =

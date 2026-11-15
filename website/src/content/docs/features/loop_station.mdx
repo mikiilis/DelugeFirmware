@@ -30,6 +30,16 @@ The 16×8 pad grid contains eight 4×4 track tiles. Tracks 1–4 are across the 
 
 Track colours identify tracks. New tracks default to **Yellow, Cyan, Blue, Purple, Magenta, Pink, Gold and Lime** for tracks 1–8 respectively. The centre and ring also distinguish empty, recording, overdubbing, playing and stopped states; these temporary state colours take priority over the chosen identity colour. A capture error is shown on its track and acknowledged by pressing its centre.
 
+## Recording length on OLED
+
+The selected track's completed phrase length appears beside its input source. Musical lengths are shown as whole bars or reduced fractions, for example **1/16 BAR**, **1/4 BAR**, **1 BAR**, or **3/2 BARS**. Recognition uses the recorded sample count and the current tempo, accepting lengths on the straight 1/32-bar or triplet 1/48-bar grid within one audio sample of their calculated duration.
+
+Other lengths appear in seconds rounded to two decimal places, such as **0.37 s**. Very short nonempty takes show **\<0.01 s** rather than zero. Musical labels that would exceed eight characters also use seconds; durations reaching 1000 rounded seconds use whole seconds to fit. A tempo change can switch a musical label to seconds because the musical comparison uses the **current tempo**, not the tempo at recording. Seconds always reflect the recorded samples.
+
+An empty track shows **READY**. Initial recording and overdubbing show **REC**, not a live elapsed-time counter.
+
+These labels do **not** round, trim, pad, or resample recorded audio. In **Synced** mode, the existing Start/Stop settings schedule recording actions on their selected musical grid; **Immediate** mode acts immediately. That scheduling is distinct from rounding a finished recording to the nearest length, which this display change does not do. The browser demo mirrors the labels but retains illustrative timing rather than simulating firmware quantization.
+
 ## Settings and ordinary clip access
 
 Press **SELECT** for global settings. Hold **SHIFT** and press a track’s centre to open its settings. On OLED with **Horizontal Menus** enabled, **SYNTH / KIT / MIDI / CV** select the four columns; turn **SELECT** to edit directly without an edit toggle. **SCALE / CROSS-SCREEN** page backwards/forwards, including with SHIFT held. Empty columns and the horizontal encoder are inert. With Horizontal Menus disabled, or on seven-segment hardware, turn SELECT to navigate rows and press SELECT to start/finish editing; the horizontal encoder retains its list alias. **BACK** or unshifted **SONG** returns and retains in-memory edits. Pads cannot trigger loop actions while settings is open.
