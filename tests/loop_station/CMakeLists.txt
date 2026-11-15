@@ -4,6 +4,79 @@ set(LOOP_UI_VIEW "${CMAKE_CURRENT_SOURCE_DIR}/../../src/deluge/gui/views/loop_st
 set(LOOP_UI_SETTINGS "${CMAKE_CURRENT_SOURCE_DIR}/../../src/deluge/gui/menu_item/loop_station/settings.cpp")
 set(STUTTER_LIFECYCLE_PROBE "${CMAKE_CURRENT_BINARY_DIR}/generated/production_stutter_lifecycle.cpp")
 set(LOOP_DISPATCH_PROBE "${CMAKE_CURRENT_BINARY_DIR}/generated/production_dispatch.cpp")
+set(FINAL_TARGET_STACK_PROBE "${CMAKE_CURRENT_BINARY_DIR}/generated/final_target_stack_probe.cpp")
+add_custom_command(
+    OUTPUT "${FINAL_TARGET_STACK_PROBE}"
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/final_fix/generate_target_stack_probe.py"
+            --view "${CMAKE_CURRENT_SOURCE_DIR}/../../src/deluge/gui/views/view.cpp"
+            --song "${CMAKE_CURRENT_SOURCE_DIR}/../../src/deluge/model/song/song.cpp"
+            --loop-view "${CMAKE_CURRENT_SOURCE_DIR}/../../src/deluge/gui/views/loop_station_view.cpp"
+            --session-view "${CMAKE_CURRENT_SOURCE_DIR}/../../src/deluge/gui/views/session_view.cpp"
+            --audio-view "${CMAKE_CURRENT_SOURCE_DIR}/../../src/deluge/gui/views/audio_clip_view.cpp"
+            --support "${CMAKE_CURRENT_SOURCE_DIR}/final_fix/target_stack_probe_support.h"
+            --tests "${CMAKE_CURRENT_SOURCE_DIR}/final_fix/target_stack_probe_tests.cpp"
+            --output "${FINAL_TARGET_STACK_PROBE}"
+    DEPENDS final_fix/generate_target_stack_probe.py final_fix/target_stack_probe_support.h
+            final_fix/target_stack_probe_tests.cpp ../../src/deluge/gui/views/view.cpp
+            ../../src/deluge/model/song/song.cpp ../../src/deluge/gui/views/loop_station_view.cpp
+            ../../src/deluge/gui/views/session_view.cpp ../../src/deluge/gui/views/audio_clip_view.cpp
+    VERBATIM
+)
+add_executable(LoopStationFinalTargetStackProbe "${FINAL_TARGET_STACK_PROBE}")
+set_target_properties(LoopStationFinalTargetStackProbe PROPERTIES CXX_STANDARD 23 CXX_STANDARD_REQUIRED ON)
+add_test(NAME LoopStationFinalTargetStackProbe COMMAND LoopStationFinalTargetStackProbe)
+set(FINAL_PHYSICAL_BUTTON_PROBE "${CMAKE_CURRENT_BINARY_DIR}/generated/final_physical_button_probe.cpp")
+add_custom_command(
+    OUTPUT "${FINAL_PHYSICAL_BUTTON_PROBE}"
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/final_fix/generate_physical_button_probe.py"
+            --buttons "${CMAKE_CURRENT_SOURCE_DIR}/../../src/deluge/hid/buttons.cpp"
+            --view "${CMAKE_CURRENT_SOURCE_DIR}/../../src/deluge/gui/views/view.cpp"
+            --settings "${CMAKE_CURRENT_SOURCE_DIR}/../../src/deluge/gui/menu_item/loop_station/settings.cpp"
+            --support "${CMAKE_CURRENT_SOURCE_DIR}/final_fix/physical_button_probe_support.h"
+            --tests "${CMAKE_CURRENT_SOURCE_DIR}/final_fix/physical_button_probe_tests.cpp"
+            --output "${FINAL_PHYSICAL_BUTTON_PROBE}"
+    DEPENDS final_fix/generate_physical_button_probe.py final_fix/physical_button_probe_support.h
+            final_fix/physical_button_probe_tests.cpp ../../src/deluge/hid/buttons.cpp
+            ../../src/deluge/gui/views/view.cpp ../../src/deluge/gui/menu_item/loop_station/settings.cpp
+    VERBATIM
+)
+add_executable(LoopStationFinalPhysicalButtonProbe "${FINAL_PHYSICAL_BUTTON_PROBE}")
+set_target_properties(LoopStationFinalPhysicalButtonProbe PROPERTIES CXX_STANDARD 23 CXX_STANDARD_REQUIRED ON)
+add_test(NAME LoopStationFinalPhysicalButtonProbe COMMAND LoopStationFinalPhysicalButtonProbe)
+set(FINAL_MODAL_HANDOFF_PROBE "${CMAKE_CURRENT_BINARY_DIR}/generated/final_modal_handoff_probe.cpp")
+add_custom_command(
+    OUTPUT "${FINAL_MODAL_HANDOFF_PROBE}"
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/final_fix/generate_modal_handoff_probe.py"
+            --matrix "${CMAKE_CURRENT_SOURCE_DIR}/../../src/deluge/hid/matrix/matrix_driver.cpp"
+            --load-ui "${CMAKE_CURRENT_SOURCE_DIR}/../../src/deluge/gui/ui/load/load_song_ui.cpp"
+            --support "${CMAKE_CURRENT_SOURCE_DIR}/final_fix/modal_handoff_probe_support.h"
+            --tests "${CMAKE_CURRENT_SOURCE_DIR}/final_fix/modal_handoff_probe_tests.cpp"
+            --output "${FINAL_MODAL_HANDOFF_PROBE}"
+    DEPENDS final_fix/generate_modal_handoff_probe.py final_fix/modal_handoff_probe_support.h
+            final_fix/modal_handoff_probe_tests.cpp ../../src/deluge/hid/matrix/matrix_driver.cpp
+            ../../src/deluge/gui/ui/load/load_song_ui.cpp
+    VERBATIM
+)
+add_executable(LoopStationFinalModalHandoffProbe "${FINAL_MODAL_HANDOFF_PROBE}")
+set_target_properties(LoopStationFinalModalHandoffProbe PROPERTIES CXX_STANDARD 23 CXX_STANDARD_REQUIRED ON)
+add_test(NAME LoopStationFinalModalHandoffProbe COMMAND LoopStationFinalModalHandoffProbe)
+set(FINAL_SAVE_LOAD_HANDOFF_PROBE "${CMAKE_CURRENT_BINARY_DIR}/generated/final_save_load_handoff_probe.cpp")
+add_custom_command(
+    OUTPUT "${FINAL_SAVE_LOAD_HANDOFF_PROBE}"
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/final_fix/generate_save_load_handoff_probe.py"
+            --view "${CMAKE_CURRENT_SOURCE_DIR}/../../src/deluge/gui/views/view.cpp"
+            --loop-view "${CMAKE_CURRENT_SOURCE_DIR}/../../src/deluge/gui/views/loop_station_view.cpp"
+            --support "${CMAKE_CURRENT_SOURCE_DIR}/final_fix/save_load_handoff_probe_support.h"
+            --tests "${CMAKE_CURRENT_SOURCE_DIR}/final_fix/save_load_handoff_probe_tests.cpp"
+            --output "${FINAL_SAVE_LOAD_HANDOFF_PROBE}"
+    DEPENDS final_fix/generate_save_load_handoff_probe.py final_fix/save_load_handoff_probe_support.h
+            final_fix/save_load_handoff_probe_tests.cpp ../../src/deluge/gui/views/view.cpp
+            ../../src/deluge/gui/views/loop_station_view.cpp
+    VERBATIM
+)
+add_executable(LoopStationFinalSaveLoadHandoffProbe "${FINAL_SAVE_LOAD_HANDOFF_PROBE}")
+set_target_properties(LoopStationFinalSaveLoadHandoffProbe PROPERTIES CXX_STANDARD 23 CXX_STANDARD_REQUIRED ON)
+add_test(NAME LoopStationFinalSaveLoadHandoffProbe COMMAND LoopStationFinalSaveLoadHandoffProbe)
 add_custom_command(
     OUTPUT "${LOOP_DISPATCH_PROBE}"
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/ui/generate_dispatch_probe.py"
