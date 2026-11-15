@@ -50,6 +50,11 @@ private:
 	void discard(unsigned session);
 	void losePages(unsigned session);
 	void enqueueRetirement(unsigned root);
+	// Shared bounded reclaim policy for descriptor/page pressure: retire exactly
+	// one boundary. `reclaimOldestBoundary` is the admission-path selection;
+	// `reclaimBoundary` applies the policy to a chosen boundary root.
+	void reclaimOldestBoundary();
+	void reclaimBoundary(unsigned root);
 	struct Retirement {
 		unsigned current = none;
 		Generation identity = 0;

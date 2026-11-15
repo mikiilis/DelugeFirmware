@@ -62,8 +62,11 @@ int main() {
 		auto status = history.requestRestore(s, redo, id);
 		if (status != Status::Ok)
 			return status;
-		for (unsigned i = 0; i < PagePool::kMaxPagesPerRecord / 8 + 1 && status == Status::Busy; ++i)
+		for (unsigned i = 0; i < PagePool::kMaxPagesPerRecord / 8 + 1; ++i) {
 			status = history.reserveRestore(id, 8);
+			if (status != Status::Busy)
+				break;
+		}
 		if (status != Status::Ok)
 			return status;
 		status = Status::Busy;
@@ -118,5 +121,81 @@ int main() {
 		    || history.retainedSessions() > History::kMaxSessions)
 			return 12;
 	}
+	// Descriptor pressure must never let Redo skip an undone initial boundary,
+	// and the reclaimed range must stay bounded and allocation-free.
+	for (SlotId s = 0; s < kTrackCount; ++s) {
+		history.resetSlot(s);
+		const auto live = pool.sealedHandle(s);
+		if (live.valid())
+			pool.retire(live);
+	}
+	rollback.service(200000);
+	for (unsigned i = 0; i < 200000 && (history.retirementPending() || pool.retirementPending()); ++i) {
+		history.serviceRetirement(1024);
+		pool.serviceRetirement(1024);
+	}
+	if (history.retirementPending() || pool.retirementPending())
+		return 21;
+	auto record = [&](SlotId s, PhraseHandle& handle) -> bool {
+		if (audio.beginInitial(s, 513) != Status::Ok)
+			return false;
+		audio.render(s, initial, output);
+		return audio.finishInitial(s, handle) == Status::Ok && audio.start(s, false) == Status::Ok;
+	};
+	PhraseHandle base{}, keep[kTrackCount]{};
+	if (!record(0, base) || !record(1, keep[1]) || !record(2, keep[2]))
+		return 22;
+	// Overdub slot 0, then Undo both layers to empty (retains initial + overdub).
+	if (audio.setCaptureGate(0, true) != Status::Ok)
+		return 23;
+	audio.render(0, {&input, 1}, {output, 1});
+	if (audio.setCaptureGate(0, false) != Status::Ok)
+		return 24;
+	if (drive(0, false) != Status::Ok)
+		return 25;
+	{
+		const auto published = pool.sealedHandle(0);
+		if (!published.valid() || audio.replace(0, published) != Status::Ok)
+			return 26;
+	}
+	if (drive(0, false) != Status::Ok || pool.sealedHandle(0).valid() || audio.detachForHistory(0) != Status::Ok)
+		return 27;
+	history.mappingReplaced(0);
+	if (!history.canRedo(0))
+		return 28;
+	// Fill every descriptor from another track only; never touch slot 0.
+	auto overdubOnce = [&](SlotId s) -> Status {
+		if (audio.setCaptureGate(s, true) != Status::Ok)
+			return Status::Busy;
+		audio.render(s, {&input, 1}, {output, 1});
+		return audio.setCaptureGate(s, false);
+	};
+	while (history.retainedSessions() < History::kMaxSessions)
+		if (overdubOnce(1) != Status::Ok)
+			return 29;
+	if (history.retainedSessions() != History::kMaxSessions)
+		return 30;
+	int32_t firstBefore[kTrackCount]{};
+	for (SlotId s = 1; s <= 2; ++s)
+		firstBefore[s] = pool.frame(pool.sealedHandle(s), 0)->l;
+	// One more admission on another track evicts slot 0's undone initial base.
+	history.beginSession(1, keep[1].generation);
+	if (history.canRedo(0) || history.canUndo(0) || pool.sealedHandle(0).valid())
+		return 31;
+	RestoreId skipped;
+	if (history.requestRestore(0, true, skipped) != Status::SourceUnavailable)
+		return 32;
+	for (SlotId s = 1; s <= 2; ++s)
+		if (pool.frame(pool.sealedHandle(s), 0)->l != firstBefore[s])
+			return 33;
+	for (unsigned i = 0; i < 200000 && (history.retirementPending() || pool.retirementPending()); ++i) {
+		history.serviceRetirement(1024);
+		pool.serviceRetirement(1024);
+	}
+	if (history.retirementPending() || pool.retirementPending() || history.retainedSessions() > History::kMaxSessions)
+		return 34;
+	for (SlotId s = 1; s <= 2; ++s)
+		if (pool.frame(pool.sealedHandle(s), 0)->l != firstBefore[s])
+			return 35;
 	return before == allocationCalls ? 0 : 13;
 }

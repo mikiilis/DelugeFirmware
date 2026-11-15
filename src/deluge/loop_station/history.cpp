@@ -55,6 +55,41 @@ void History::enqueueRetirement(unsigned root) {
 			return;
 		}
 }
+void History::reclaimOldestBoundary() {
+	unsigned oldest = none;
+	for (SlotId owner = 0; owner < kTrackCount; ++owner) {
+		const auto root = slots_[owner].head;
+		if (root == none || root >= kMaxSessions)
+			continue;
+		const auto& candidate = sessions_[root];
+		if (!candidate.identity || candidate.active || candidate.retiring)
+			continue;
+		if (oldest == none || candidate.identity < sessions_[oldest].identity)
+			oldest = root;
+	}
+	reclaimBoundary(oldest);
+}
+void History::reclaimBoundary(unsigned root) {
+	if (root == none || root >= kMaxSessions || !sessions_[root].identity)
+		return;
+	const auto owner = sessions_[root].handle.slot;
+	if (!sessions_[root].complete) {
+		resetSlot(owner); // Never remove an incomplete fence alone.
+		return;
+	}
+	if (!sessions_[root].initial) {
+		discard(root);
+		return;
+	}
+	// An undone initial boundary is the base of a dependent Redo branch. Retire
+	// the whole unreachable range so Redo cannot publish across the lost base;
+	// otherwise only the base is dropped and canRedo/requestRestore fence the
+	// remaining branch (only a genuine initial may Redo onto an empty track).
+	if (validSlot(owner) && slots_[owner].active == none && slots_[owner].cursor == none)
+		resetSlot(owner);
+	else
+		discard(root);
+}
 void History::beginSession(SlotId slot, Generation generation) {
 	if (!pages_.ready() || !validSlot(slot))
 		return;
@@ -83,27 +118,7 @@ void History::beginSession(SlotId slot, Generation generation) {
 		// slot first, then reclaim one oldest reachable boundary from another slot
 		// so later edits can recover without crossing the untracked edit.
 		resetSlot(slot);
-		SlotId oldestSlot = kInvalidSlot;
-		Generation oldestIdentity = std::numeric_limits<Generation>::max();
-		for (SlotId owner = 0; owner < kTrackCount; ++owner) {
-			const auto root = slots_[owner].head;
-			if (root == none || root >= kMaxSessions)
-				continue;
-			const auto& candidate = sessions_[root];
-			if (!candidate.identity || candidate.active || candidate.retiring)
-				continue;
-			if (candidate.identity < oldestIdentity) {
-				oldestIdentity = candidate.identity;
-				oldestSlot = owner;
-			}
-		}
-		if (validSlot(oldestSlot)) {
-			const auto root = slots_[oldestSlot].head;
-			if (sessions_[root].complete)
-				discard(root);
-			else
-				resetSlot(oldestSlot); // Never remove an incomplete fence alone.
-		}
+		reclaimOldestBoundary();
 		return;
 	}
 	auto& session = sessions_[free];
@@ -145,27 +160,7 @@ void History::recordInitial(SlotId slot, PhraseHandle handle) {
 		++pressure_;
 		// This recording cannot be tracked until a descriptor is retired. Reclaim
 		// one oldest reachable boundary elsewhere so later edits can recover.
-		SlotId oldestSlot = kInvalidSlot;
-		Generation oldestIdentity = std::numeric_limits<Generation>::max();
-		for (SlotId owner = 0; owner < kTrackCount; ++owner) {
-			const auto root = slots_[owner].head;
-			if (root == none || root >= kMaxSessions)
-				continue;
-			const auto& candidate = sessions_[root];
-			if (!candidate.identity || candidate.active || candidate.retiring)
-				continue;
-			if (candidate.identity < oldestIdentity) {
-				oldestIdentity = candidate.identity;
-				oldestSlot = owner;
-			}
-		}
-		if (validSlot(oldestSlot)) {
-			const auto root = slots_[oldestSlot].head;
-			if (sessions_[root].complete)
-				discard(root);
-			else
-				resetSlot(oldestSlot); // Never remove an incomplete fence alone.
-		}
+		reclaimOldestBoundary();
 		return;
 	}
 	auto& session = sessions_[free];
@@ -220,7 +215,7 @@ void History::beforeWrite(SlotId slot, FrameIndex index, Frame original) {
 					oldest = candidate;
 			}
 			if (oldest != none)
-				discard(oldest); // Queue the oldest volatile boundary for foreground reclamation.
+				reclaimBoundary(oldest); // Queue the oldest volatile boundary for foreground reclamation.
 			losePages(id);
 			return;
 		}
@@ -282,8 +277,12 @@ bool History::canRedo(SlotId slot) const {
 	if (!validSlot(slot) || slots_[slot].active != none || slots_[slot].stateRevision != rollback_.readRevision(slot))
 		return false;
 	const auto next = slots_[slot].cursor == none ? slots_[slot].head : sessions_[slots_[slot].cursor].next;
-	return next != none && sessions_[next].identity && sessions_[next].complete && sessions_[next].changed
-	       && pool_.length(sessions_[next].afterVersion) != 0;
+	if (next == none || !sessions_[next].identity || !sessions_[next].complete || !sessions_[next].changed
+	    || pool_.length(sessions_[next].afterVersion) == 0)
+		return false;
+	// Only a genuine retained initial boundary may republish onto a truly empty
+	// track; a lost base must not let a dependent overdub branch skip it.
+	return slots_[slot].cursor != none || pool_.length(pool_.sealedHandle(slot)) != 0 || sessions_[next].initial;
 }
 
 Status History::requestRestore(SlotId slot, bool redo, RestoreId& id) {
@@ -333,7 +332,10 @@ Status History::requestRestore(SlotId slot, bool redo, RestoreId& id) {
 			return Status::SourceUnavailable;
 		job.source = pool_.sealedHandle(slot);
 		if (!job.source.valid()) {
-			// Redo from an undone-empty track: republish the retained version.
+			// Only a genuine retained initial boundary may republish onto an empty
+			// track; a dependent overdub branch must not skip a lost base.
+			if (!session.initial)
+				return Status::SourceUnavailable;
 			job.emptyCurrent = true;
 		}
 		else if (pool_.length(job.source) != job.length) {

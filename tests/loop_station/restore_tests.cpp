@@ -513,6 +513,66 @@ TEST(LoopRestore, TwoOverdubsUndoAndRedoThroughInitialBoundary) {
 	CHECK_FALSE(history.canRedo(0));
 }
 
+TEST(LoopRestore, RedoCannotSkipAnInitialBoundaryEvictedByCrossSlotPressure) {
+	std::vector<std::byte> larger((History::kMaxSessions + 1) * kPageBytes);
+	CHECK(Status::Ok == history.initialize(larger));
+	// Slot 0: record a base, overdub, then Undo both to empty. Its retained Redo
+	// branch (initial then overdub) is the only way forward.
+	phrase(0, 5);
+	CHECK(Status::Ok == audio.setCaptureGate(0, true));
+	const Frame addition{10, -10};
+	Frame output{};
+	audio.render(0, {&addition, 1}, {&output, 1});
+	CHECK(Status::Ok == audio.setCaptureGate(0, false));
+	restoreStep(0, false); // Undo the overdub; the initial boundary is the cursor.
+	restoreStep(0, false); // Undo the initial recording to empty.
+	CHECK_FALSE(pool.sealedHandle(0).valid());
+	CHECK(history.canRedo(0));
+	// Every other track keeps a live base that must survive untouched.
+	PhraseHandle handles[kTrackCount]{};
+	for (SlotId s = 1; s < kTrackCount; ++s)
+		handles[s] = phrase(s, 5);
+	const auto freeEmpty = pool.freePages();
+	// Fill every descriptor without ever touching slot 0. Each closed gate is one
+	// complete layer; `dub` alone would leave the gate open and coalesce.
+	auto overdubOnce = [&](SlotId s) {
+		CHECK(Status::Ok == audio.setCaptureGate(s, true));
+		const Frame input{3, -3};
+		Frame captured{};
+		audio.render(s, {&input, 1}, {&captured, 1});
+		CHECK(Status::Ok == audio.setCaptureGate(s, false));
+	};
+	for (SlotId s = 1; s < kTrackCount; ++s)
+		while (history.retainedSessions() < History::kMaxSessions)
+			overdubOnce(s);
+	CHECK_EQUAL(History::kMaxSessions, history.retainedSessions());
+	// Snapshot every other track's live audio immediately before the eviction.
+	int32_t before[kTrackCount]{};
+	for (SlotId s = 1; s < kTrackCount; ++s)
+		before[s] = pool.frame(pool.sealedHandle(s), 0)->l;
+	// One more admission on another track evicts the oldest boundary, which is
+	// slot 0's undone initial base. Never beginSession on slot 0.
+	history.beginSession(1, handles[1].generation);
+	// The lost initial boundary fences navigation: no overdub may publish from
+	// empty, and no Undo may expose the base as if the boundary still existed.
+	CHECK_FALSE(history.canRedo(0));
+	CHECK_FALSE(history.canUndo(0));
+	RestoreId skipped{};
+	CHECK(Status::SourceUnavailable == history.requestRestore(0, true, skipped));
+	CHECK_FALSE(pool.sealedHandle(0).valid());
+	// Unrelated live tracks remain exact.
+	for (SlotId s = 1; s < kTrackCount; ++s)
+		CHECK_EQUAL(before[s], pool.frame(pool.sealedHandle(s), 0)->l);
+	// The evicted branch is retired in the foreground, not leaked.
+	for (unsigned i = 0; i < 4096 && (history.retirementPending() || pool.retirementPending()); ++i)
+		serviceRetirement(1024);
+	CHECK_FALSE(history.retirementPending());
+	CHECK_FALSE(pool.retirementPending());
+	CHECK(freeEmpty < pool.freePages());
+	for (SlotId s = 1; s < kTrackCount; ++s)
+		CHECK_EQUAL(before[s], pool.frame(pool.sealedHandle(s), 0)->l);
+}
+
 TEST(LoopRestore, IncompleteOverdubCannotFallThroughToInitial) {
 	CHECK(Status::Ok == history.initialize(std::span(arena).first(kPageBytes)));
 	phrase(0, 513); // Initial boundary on a two-page phrase.
