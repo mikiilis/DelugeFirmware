@@ -229,8 +229,11 @@ struct LoopStationView : UI {
 		cancellationsAtRefresh = model() ? model()->cancellations : 0;
 	}
 	void finishStutterBeforeTargetChange() {}
-	RestoreId pendingRestore_{};
-	uint8_t pendingRestoreSlot_ = 255;
+	// History confirmation is UI-only and has no observable effect on the Save/Load
+	// ownership boundary modeled here; the real bodies are exercised by the UI probe.
+	void cancelHistoryConfirmation() {}
+	void handleHistoryPress(bool) {}
+	bool historyBackDown_ = false;
 	unsigned padPresses = 0;
 	unsigned padReleases = 0;
 	bool refreshed = false;

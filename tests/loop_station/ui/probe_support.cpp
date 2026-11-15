@@ -62,6 +62,13 @@ void ProbeUI::graphicsRoutine() {
 	if (probeRootUI && probeRootUI != this)
 		probeRootUI->graphicsRoutine();
 }
+// The real UI base forwards these to the shared View (see production ui.cpp).
+void ProbeUI::modEncoderAction(int32_t whichModEncoder, int32_t offset) {
+	view.modEncoderAction(whichModEncoder, offset);
+}
+void ProbeUI::modButtonAction(uint8_t whichButton, bool on) {
+	view.modButtonAction(whichButton, on);
+}
 void probeDispatchGraphicsTick(bool uartReady) {
 	if (probeRootUI && probeCurrentUI) {
 		probeProductionDispatch = true;

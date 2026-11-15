@@ -50,6 +50,16 @@ public:
 	}
 	void drawStringPixels(std::string_view, int32_t, int32_t, int32_t, int32_t, int32_t = 0,
 	                      int32_t = OLED_MAIN_WIDTH_PIXELS, bool = false);
+	// The production Canvas implements these in terms of drawString with a computed
+	// X; mirror that here so the integrated view probe records the same layout.
+	void drawStringCentred(char const* text, int32_t y, int32_t textWidth, int32_t textHeight,
+	                       int32_t centrePos = OLED_MAIN_WIDTH_PIXELS / 2) {
+		drawString(text, centrePos - (getStringWidthInPixels(text, textHeight) >> 1), y, textWidth, textHeight);
+	}
+	void drawStringAlignRight(char const* text, int32_t y, int32_t textWidth, int32_t textHeight,
+	                          int32_t rightPos = OLED_MAIN_WIDTH_PIXELS) {
+		drawString(text, rightPos - getStringWidthInPixels(text, textHeight), y, textWidth, textHeight);
+	}
 	void drawChar(uint8_t, int32_t, int32_t, int32_t, int32_t, int32_t = 0, int32_t = OLED_MAIN_WIDTH_PIXELS);
 	int32_t getCharIndex(uint8_t);
 	int32_t getCharWidthInPixels(uint8_t, int32_t);

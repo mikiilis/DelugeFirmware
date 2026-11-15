@@ -1,6 +1,7 @@
 #pragma once
 
 #include "definitions_cxx.hpp"
+#include "deluge/loop_station/history_navigation.h"
 #include "deluge/loop_station/types.h"
 #include "gui/ui/root_ui.h"
 #include "hid/button.h"
@@ -19,15 +20,28 @@ public:
 	                   uint8_t occupancyMask[][kDisplayWidth + kSideBarWidth]) override;
 	void renderOLED(deluge::hid::display::oled_canvas::Canvas& canvas) override;
 	void selectEncoderAction(int8_t offset) override;
+	void modEncoderAction(int32_t whichModEncoder, int32_t offset) override;
+	void modButtonAction(uint8_t whichButton, bool on) override;
+	void modEncoderButtonAction(uint8_t whichModEncoder, bool on) override;
 	UIType getUIType() override { return UIType::LOOP_STATION; }
 	bool getAffectEntire() override;
 	UIModControllableContext getUIModControllableContext() override;
 
 private:
-	loop_station::RestoreId pendingRestore_{};
-	loop_station::SlotId pendingRestoreSlot_ = loop_station::kInvalidSlot;
+	// View-side confirmed history prompt. The model owns any accepted job; this
+	// only tracks the two-press confirmation and the observed terminal result.
+	enum class HistoryPromptState : uint8_t { None, Confirm, Applying, Result };
+	HistoryPromptState historyPromptState_ = HistoryPromptState::None;
+	loop_station::HistoryTarget historyTarget_{};
+	loop_station::RestoreId historyId_{};
+	loop_station::Status historyStatus_ = loop_station::Status::Ok;
+	bool historyBackDown_ = false;
 	bool pendingExit_ = false;
 	bool modTargetIsClip_ = false;
+	void cancelHistoryConfirmation();
+	void handleHistoryPress(bool redo);
+	void observeHistoryResult();
+	void refreshHistoryFeedback();
 	void updateLed();
 	void updateModTarget();
 	void finishStutterBeforeTargetChange();

@@ -246,3 +246,220 @@ TEST(LoopSettingsDisplay, ReturningFromFallbackDoesNotChangePreference) {
 		}
 	}
 }
+
+namespace {
+using ::loop_station::HistoryNavigationState;
+using ::loop_station::HistoryTarget;
+using ::loop_station::RestoreId;
+using ::loop_station::Status;
+
+HistoryNavigationResult driveHistory(loop_ui_test::Fixture& f, RestoreId id) {
+	for (unsigned i = 0; i < 5000; ++i) {
+		f.model->serviceHistoryNavigation(128);
+		const auto result = f.model->historyNavigationResult();
+		if (result.id.generation == id.generation && !result.pending())
+			return result;
+	}
+	return f.model->historyNavigationResult();
+}
+
+// Draw the real production Loop Station OLED into a checked, canaried canvas.
+void renderLoopOled(loop_ui_test::Fixture& f) {
+	auto& canvas = OLED::main;
+	canvas.leadingCanary.fill(0xa5);
+	canvas.trailingCanary.fill(0xa5);
+	f.view.renderOLED(canvas);
+	checkCanvas();
+}
+} // namespace
+
+TEST(LoopSettingsDisplay, ConfirmationSurvivesGraphicsRefreshOnOledAndSevenSegment) {
+	// OLED: the prompt is drawn from view state on every refresh.
+	{
+		loop_ui_test::Fixture f;
+		f.recordPhrase();
+		f.view.padAction(0, 7, 100);
+		CHECK_EQUAL(0, f.model->engine().selected());
+		CHECK_TRUE(f.model->canUndo(0));
+		CHECK(f.view.buttonAction(BACK, true, false) == ActionResult::DEALT_WITH);
+		CHECK(LoopStationView::HistoryPromptState::Confirm == f.view.historyPromptState_);
+		for (int refresh = 0; refresh < 2; ++refresh) {
+			renderLoopOled(f);
+			CHECK(hasText(OLED::main, "TRACK 1"));
+			CHECK(hasText(OLED::main, "UNDO TRACK 1?"));
+			CHECK(hasText(OLED::main, "BACK TO CONFIRM"));
+		}
+	}
+	// Seven segment: the popup re-emits on every graphics refresh and never times
+	// out on its own.
+	{
+		loop_ui_test::Fixture f;
+		f.screen.oled = false;
+		f.recordPhrase();
+		f.view.padAction(0, 7, 100);
+		CHECK(f.view.buttonAction(BACK, true, false) == ActionResult::DEALT_WITH);
+		STRCMP_EQUAL("UNDO TRACK 1? BACK TO CONFIRM", f.screen.popups.back().c_str());
+		f.view.graphicsRoutine();
+		STRCMP_EQUAL("UNDO TRACK 1? BACK TO CONFIRM", f.screen.popups.back().c_str());
+		// A long sample-clock advance with no further action does not expire it.
+		f.host.time += 10ull * ::loop_station::kSampleRate;
+		probeSampleClock = f.host.time;
+		f.view.graphicsRoutine();
+		CHECK(LoopStationView::HistoryPromptState::Confirm == f.view.historyPromptState_);
+		STRCMP_EQUAL("UNDO TRACK 1? BACK TO CONFIRM", f.screen.popups.back().c_str());
+	}
+	// The shifted prompt shows the Redo action and its distinct instruction.
+	{
+		loop_ui_test::Fixture f;
+		f.recordPhrase();
+		f.view.padAction(0, 7, 100);
+		// Undo to empty first so Redo is eligible.
+		f.view.buttonAction(BACK, true, false);
+		f.view.buttonAction(BACK, false, false);
+		f.view.buttonAction(BACK, true, false);
+		f.view.buttonAction(BACK, false, false);
+		CHECK_EQUAL(int(HistoryNavigationState::Complete), int(driveHistory(f, f.view.historyId_).state));
+		f.view.graphicsRoutine();
+		// Arm Redo through the real shared SHIFT dispatch.
+		::view.reset();
+		::view.result = ActionResult::NOT_DEALT_WITH;
+		CHECK(f.sharedShift(f.view, true) == ActionResult::NOT_DEALT_WITH);
+		CHECK(f.view.buttonAction(BACK, true, false) == ActionResult::DEALT_WITH);
+		CHECK(LoopStationView::HistoryPromptState::Confirm == f.view.historyPromptState_);
+		CHECK_TRUE(f.view.historyTarget_.redo);
+		renderLoopOled(f);
+		CHECK(hasText(OLED::main, "TRACK 1"));
+		CHECK(hasText(OLED::main, "REDO TRACK 1?"));
+		CHECK(hasText(OLED::main, "SHIFT+BACK TO CONFIRM"));
+	}
+}
+
+TEST(LoopSettingsDisplay, ApplyingAndTerminalResultReflectActualModelStatus) {
+	// No completion message before the model commits.
+	{
+		loop_ui_test::Fixture f;
+		f.recordPhrase();
+		f.view.padAction(0, 7, 100);
+		CHECK(f.view.buttonAction(BACK, true, false) == ActionResult::DEALT_WITH);
+		CHECK(f.view.buttonAction(BACK, false, false) == ActionResult::DEALT_WITH);
+		CHECK(f.view.buttonAction(BACK, true, false) == ActionResult::DEALT_WITH);
+		CHECK(LoopStationView::HistoryPromptState::Applying == f.view.historyPromptState_);
+		renderLoopOled(f);
+		CHECK(hasText(OLED::main, "UNDOING"));
+		CHECK_FALSE(hasText(OLED::main, "UNDONE"));
+		// The real foreground owner drives the accepted job to its terminal result.
+		const auto id = f.view.historyId_;
+		CHECK_EQUAL(int(HistoryNavigationState::Complete), int(driveHistory(f, id).state));
+		f.view.graphicsRoutine(); // observe the result from the regular refresh
+		renderLoopOled(f);
+		CHECK(hasText(OLED::main, "UNDONE"));
+	}
+	// Busy is reported when the single restore gate is already owned.
+	{
+		loop_ui_test::Fixture f;
+		f.screen.oled = false;
+		f.recordPhrase();
+		f.view.padAction(0, 7, 100);
+		HistoryTarget target{};
+		RestoreId busyId{};
+		CHECK_EQUAL(int(Status::Ok), int(f.model->historyTarget(0, false, target)));
+		CHECK_EQUAL(int(Status::Ok), int(f.model->requestHistoryNavigation(target, busyId)));
+		CHECK(f.view.buttonAction(BACK, true, false) == ActionResult::DEALT_WITH);
+		CHECK(f.view.buttonAction(BACK, false, false) == ActionResult::DEALT_WITH);
+		CHECK(f.view.buttonAction(BACK, true, false) == ActionResult::DEALT_WITH);
+		CHECK(LoopStationView::HistoryPromptState::Result == f.view.historyPromptState_);
+		CHECK_EQUAL(int(Status::Busy), int(f.view.historyStatus_));
+		STRCMP_EQUAL("Track 1 BUSY", f.screen.popups.back().c_str());
+	}
+	// An empty track honestly reports no history instead of arming.
+	{
+		loop_ui_test::Fixture f;
+		f.screen.oled = false;
+		f.view.padAction(0, 7, 100);
+		CHECK_FALSE(f.model->engine().state(0).hasPhrase);
+		CHECK(f.view.buttonAction(BACK, true, false) == ActionResult::DEALT_WITH);
+		CHECK(LoopStationView::HistoryPromptState::Result == f.view.historyPromptState_);
+		CHECK_EQUAL(int(Status::SourceUnavailable), int(f.view.historyStatus_));
+		STRCMP_EQUAL("Track 1 NO UNDO", f.screen.popups.back().c_str());
+	}
+	// No memory is a distinct, honest failure message.
+	{
+		loop_ui_test::Fixture f;
+		f.view.padAction(0, 7, 100); // select/bind an eligible track
+		f.view.historyTarget_.slot = 0;
+		f.view.historyTarget_.redo = false;
+		f.view.historyStatus_ = Status::NoMemory;
+		f.view.historyPromptState_ = LoopStationView::HistoryPromptState::Result;
+		renderLoopOled(f);
+		CHECK(hasText(OLED::main, "TRACK 1"));
+		CHECK(hasText(OLED::main, "NO MEMORY"));
+	}
+}
+
+TEST(LoopSettingsDisplay, BackLedFollowsSelectedOperationAvailability) {
+	loop_ui_test::Fixture f;
+	f.view.updateLed();
+	CHECK_FALSE(indicator_leds::states[IndicatorLED::BACK]); // no track selected
+	CHECK_TRUE(indicator_leds::states[IndicatorLED::CROSS_SCREEN_EDIT]);
+
+	f.view.padAction(0, 7, 100); // bind/select an empty track
+	CHECK_EQUAL(0, f.model->engine().selected());
+	f.view.updateLed();
+	CHECK_FALSE(indicator_leds::states[IndicatorLED::BACK]); // no history to undo
+
+	f.recordPhrase();
+	f.view.updateLed();
+	CHECK_TRUE(indicator_leds::states[IndicatorLED::BACK]); // Undo available
+	CHECK_TRUE(indicator_leds::states[IndicatorLED::CROSS_SCREEN_EDIT]);
+
+	// SHIFT follows the eligible operation: Redo is not available yet.
+	::view.reset();
+	::view.result = ActionResult::NOT_DEALT_WITH;
+	CHECK(f.sharedShift(f.view, true) == ActionResult::NOT_DEALT_WITH);
+	f.view.updateLed();
+	CHECK_FALSE(indicator_leds::states[IndicatorLED::BACK]);
+
+	// Undo the only layer, then Redo becomes the eligible shifted operation.
+	::view.result = ActionResult::NOT_DEALT_WITH;
+	CHECK(f.sharedShift(f.view, false) == ActionResult::NOT_DEALT_WITH);
+	f.view.buttonAction(BACK, true, false);
+	f.view.buttonAction(BACK, false, false);
+	f.view.buttonAction(BACK, true, false);
+	f.view.buttonAction(BACK, false, false);
+	CHECK_EQUAL(int(HistoryNavigationState::Complete), int(driveHistory(f, f.view.historyId_).state));
+	f.view.graphicsRoutine();
+	CHECK_FALSE(f.model->engine().state(0).hasPhrase);
+	f.view.updateLed();
+	CHECK_FALSE(indicator_leds::states[IndicatorLED::BACK]); // no Undo
+	::view.result = ActionResult::NOT_DEALT_WITH;
+	CHECK(f.sharedShift(f.view, true) == ActionResult::NOT_DEALT_WITH);
+	f.view.updateLed();
+	CHECK_TRUE(indicator_leds::states[IndicatorLED::BACK]); // Redo available
+	CHECK_TRUE(indicator_leds::states[IndicatorLED::CROSS_SCREEN_EDIT]);
+	::view.result = ActionResult::NOT_DEALT_WITH;
+	CHECK(f.sharedShift(f.view, false) == ActionResult::NOT_DEALT_WITH);
+}
+
+TEST(LoopSettingsDisplay, ReturnFromMenuCannotReviveOldConfirmation) {
+	loop_ui_test::Fixture f;
+	f.recordPhrase();
+	f.view.padAction(0, 7, 100);
+	CHECK(f.view.buttonAction(BACK, true, false) == ActionResult::DEALT_WITH);
+	CHECK(LoopStationView::HistoryPromptState::Confirm == f.view.historyPromptState_);
+
+	// Opening the shared menu drops the prompt as an outgoing action.
+	CHECK(f.view.buttonAction(SELECT_ENC, true, false) == ActionResult::DEALT_WITH);
+	POINTERS_EQUAL(&loopStationSettingsMenu, getCurrentUI());
+	CHECK(LoopStationView::HistoryPromptState::None == f.view.historyPromptState_);
+	// The menu keeps BACK; focus regain must not resurrect the old confirmation.
+	loopStationSettingsMenu.buttonAction(BACK, true, false);
+	POINTERS_EQUAL(&f.view, getCurrentUI());
+	CHECK(LoopStationView::HistoryPromptState::None == f.view.historyPromptState_);
+
+	// A single fresh press only arms; it can never stand in for the old second press.
+	f.view.buttonAction(BACK, false, false);
+	CHECK(f.view.buttonAction(BACK, true, false) == ActionResult::DEALT_WITH);
+	CHECK(LoopStationView::HistoryPromptState::Confirm == f.view.historyPromptState_);
+	CHECK_EQUAL(int(HistoryNavigationState::Idle), int(f.model->historyNavigationResult().state));
+	CHECK_TRUE(f.model->engine().state(0).hasPhrase);
+}

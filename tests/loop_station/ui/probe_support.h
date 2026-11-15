@@ -36,6 +36,8 @@ public:
 		return false;
 	}
 	virtual void modEncoderButtonAction(uint8_t whichModEncoder, bool on);
+	virtual void modEncoderAction(int32_t whichModEncoder, int32_t offset);
+	virtual void modButtonAction(uint8_t whichButton, bool on);
 	virtual bool getAffectEntire() { return false; }
 	virtual UIModControllableContext getUIModControllableContext() { return UIModControllableContext::NONE; }
 	void close();
@@ -133,7 +135,7 @@ inline bool isShiftButtonPressed() {
 	return shiftPressed;
 }
 } // namespace Buttons
-enum class IndicatorLED { AFFECT_ENTIRE, CROSS_SCREEN_EDIT, SESSION_VIEW, SCALE_MODE, SYNTH, KIT, MIDI, CV };
+enum class IndicatorLED { AFFECT_ENTIRE, CROSS_SCREEN_EDIT, SESSION_VIEW, SCALE_MODE, SYNTH, KIT, MIDI, CV, BACK };
 namespace indicator_leds {
 inline std::map<IndicatorLED, bool> states;
 inline void setLedState(IndicatorLED led, bool on) {
@@ -179,6 +181,10 @@ public:
 	std::vector<void*> targets;
 	ProbeActiveModStack activeModControllableModelStack;
 	unsigned modEncoderButtonCalls = 0;
+	unsigned modEncoderActionCalls = 0;
+	unsigned modButtonActionCalls = 0;
+	int32_t lastModEncoderAction = 0;
+	bool lastModButtonOn = false;
 	unsigned automationNotifications = 0;
 	void* lastAutomationParamManager = nullptr;
 	uint8_t activeModKnobMode = 0;
@@ -240,6 +246,16 @@ public:
 		++automationNotifications;
 		lastAutomationParamManager = paramManager;
 	}
+	// The real UI base forwards these to the shared View; the probe records them so
+	// the view override's forwarding is observable without simulating DSP.
+	void modEncoderAction(int32_t whichModEncoder, int32_t offset) {
+		++modEncoderActionCalls;
+		lastModEncoderAction = whichModEncoder + offset;
+	}
+	void modButtonAction(uint8_t, bool on) {
+		++modButtonActionCalls;
+		lastModButtonOn = on;
+	}
 	bool finishActiveStutterForModTargetChange() {
 		targetChangeView.activeModControllableModelStack.modControllable =
 		    activeModControllableModelStack.modControllable;
@@ -251,6 +267,10 @@ public:
 		targets.clear();
 		activeModControllableModelStack = {};
 		modEncoderButtonCalls = 0;
+		modEncoderActionCalls = 0;
+		modButtonActionCalls = 0;
+		lastModEncoderAction = 0;
+		lastModButtonOn = false;
 		automationNotifications = 0;
 		lastAutomationParamManager = nullptr;
 		activeModKnobMode = nextTargetModKnobMode = 0;
@@ -266,6 +286,7 @@ extern ProbeView view;
 // checks production declarations; all method bodies are extracted verbatim.
 class LoopStationView : public ProbeUI {
 public:
+	enum class HistoryPromptState : uint8_t { None, Confirm, Applying, Result };
 	bool opened() override;
 	void focusRegained() override;
 	void graphicsRoutine() override;
@@ -278,13 +299,26 @@ public:
 	                    bool) override;
 	bool renderSidebar(uint32_t, RGB[][kDisplayWidth + kSideBarWidth],
 	                   uint8_t[][kDisplayWidth + kSideBarWidth]) override;
+	void renderOLED(deluge::hid::display::oled_canvas::Canvas&);
 	void selectEncoderAction(int8_t);
+	void modEncoderAction(int32_t, int32_t) override;
+	void modButtonAction(uint8_t, bool) override;
+	void modEncoderButtonAction(uint8_t, bool) override;
 	bool prepareTrack(loop_station::SlotId);
 	void updateModTarget();
 	void updateLed();
 	void attemptExit();
-	loop_station::RestoreId pendingRestore_{};
-	loop_station::SlotId pendingRestoreSlot_ = loop_station::kInvalidSlot;
+	void cancelHistoryConfirmation();
+	void handleHistoryPress(bool);
+	void observeHistoryResult();
+	void refreshHistoryFeedback();
+	// Fixed-size confirmation state, saved target, BACK-down tracking and the
+	// observed model RestoreId. Exposed to the probe's real canvas/input tests.
+	HistoryPromptState historyPromptState_ = HistoryPromptState::None;
+	loop_station::HistoryTarget historyTarget_{};
+	loop_station::RestoreId historyId_{};
+	loop_station::Status historyStatus_ = loop_station::Status::Ok;
+	bool historyBackDown_ = false;
 	bool pendingExit_ = false;
 	bool modTargetIsClip_ = false;
 	void finishStutterBeforeTargetChange();

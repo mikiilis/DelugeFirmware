@@ -58,6 +58,32 @@ const char* get(String string) {
 		return "SELECT: copy BACK: cancel";
 	case String::STRING_FOR_LOOP_STATION_COPY_REVIEW:
 		return "SELECT to review";
+	case String::STRING_FOR_LOOP_STATION_TRACK_NUMBER:
+		return "Track %u";
+	case String::STRING_FOR_LOOP_STATION_UNDO_PROMPT:
+		return "UNDO TRACK %u?";
+	case String::STRING_FOR_LOOP_STATION_REDO_PROMPT:
+		return "REDO TRACK %u?";
+	case String::STRING_FOR_LOOP_STATION_UNDO_CONFIRM:
+		return "BACK TO CONFIRM";
+	case String::STRING_FOR_LOOP_STATION_REDO_CONFIRM:
+		return "SHIFT+BACK TO CONFIRM";
+	case String::STRING_FOR_LOOP_STATION_UNDOING:
+		return "UNDOING";
+	case String::STRING_FOR_LOOP_STATION_REDOING:
+		return "REDOING";
+	case String::STRING_FOR_LOOP_STATION_UNDONE:
+		return "UNDONE";
+	case String::STRING_FOR_LOOP_STATION_REDONE:
+		return "REDONE";
+	case String::STRING_FOR_LOOP_STATION_UNDO_UNAVAILABLE:
+		return "NO UNDO";
+	case String::STRING_FOR_LOOP_STATION_REDO_UNAVAILABLE:
+		return "NO REDO";
+	case String::STRING_FOR_LOOP_STATION_HISTORY_BUSY:
+		return "BUSY";
+	case String::STRING_FOR_LOOP_STATION_NO_MEMORY:
+		return "NO MEMORY";
 	}
 	return "Setting";
 }

@@ -47,6 +47,24 @@ char const* sourceLabel(loop_station::Source source) {
 	return "LEFT";
 }
 
+// Terminal feedback for the observed model result. Only a committed Ok publishes
+// a completion message; every other status is reported honestly.
+char const* historyTerminalText(Status status, bool redo) {
+	using deluge::l10n::String;
+	switch (status) {
+	case Status::Ok:
+		return deluge::l10n::get(redo ? String::STRING_FOR_LOOP_STATION_REDONE
+		                              : String::STRING_FOR_LOOP_STATION_UNDONE);
+	case Status::Busy:
+		return deluge::l10n::get(String::STRING_FOR_LOOP_STATION_HISTORY_BUSY);
+	case Status::NoMemory:
+		return deluge::l10n::get(String::STRING_FOR_LOOP_STATION_NO_MEMORY);
+	default:
+		return deluge::l10n::get(redo ? String::STRING_FOR_LOOP_STATION_REDO_UNAVAILABLE
+		                              : String::STRING_FOR_LOOP_STATION_UNDO_UNAVAILABLE);
+	}
+}
+
 void formatTrackLength(const SlotState& state, uint32_t tempoQ16, char* out, size_t size) {
 	if (state.capture)
 		snprintf(out, size, "REC");
@@ -166,6 +184,10 @@ void LoopStationView::focusRegained() {
 	// interrupted gesture. The physically still-held gesture must be repeated.
 	if (auto* m = model(); m)
 		m->cancelHeldPadGestures();
+	// A prompt belongs to the view that armed it: any focus loss/reentry drops it so
+	// returning from a menu can never revive an old confirmation.
+	cancelHistoryConfirmation();
+	historyBackDown_ = false;
 	updateLed();
 	updateModTarget();
 }
@@ -219,6 +241,16 @@ void LoopStationView::finishStutterBeforeTargetChange() {
 	view.finishActiveStutterForModTargetChange();
 }
 void LoopStationView::updateLed() {
+	// BACK reflects the selected track's eligible operation for the current
+	// modifier: Undo normally, Redo with SHIFT. Never imply unavailable history.
+	const bool shift = Buttons::isShiftButtonPressed();
+	bool backAvailable = false;
+	if (auto* m = model(); m && !sharedExclusiveModeActive()) {
+		const SlotId slot = m->engine().selected();
+		if (validSlot(slot))
+			backAvailable = shift ? m->canRedo(slot) : m->canUndo(slot);
+	}
+	indicator_leds::setLedState(IndicatorLED::BACK, backAvailable);
 	indicator_leds::setLedState(IndicatorLED::CROSS_SCREEN_EDIT, true);
 }
 void LoopStationView::attemptExit() {
@@ -246,7 +278,11 @@ void LoopStationView::attemptExit() {
 	}
 }
 void LoopStationView::graphicsRoutine() {
+	observeHistoryResult();
+	if (sharedExclusiveModeActive())
+		cancelHistoryConfirmation();
 	updateLed();
+	refreshHistoryFeedback();
 	uiNeedsRendering(this);
 	if (display && display->haveOLED())
 		renderUIsForOled();
@@ -257,19 +293,135 @@ ActionResult LoopStationView::timerCallback() {
 		if (!pendingExit_ && getCurrentUI() != this)
 			return ActionResult::DEALT_WITH;
 	}
-	if (auto* m = model(); m && pendingRestore_.valid()) {
-		const auto status = m->serviceRestore(pendingRestore_, 128);
-		if (status == Status::Ok)
-			(void)m->commitRestore(pendingRestore_);
-		else if (status != Status::Busy)
-			m->cancelRestore(pendingRestoreSlot_);
-		if (status != Status::Busy) {
-			pendingRestore_ = {};
-			pendingRestoreSlot_ = kInvalidSlot;
-		}
-	}
 	graphicsRoutine();
 	return ActionResult::DEALT_WITH;
+}
+
+void LoopStationView::cancelHistoryConfirmation() {
+	historyPromptState_ = HistoryPromptState::None;
+	historyTarget_ = {};
+	historyId_ = {};
+	historyStatus_ = Status::Ok;
+}
+
+void LoopStationView::handleHistoryPress(bool redo) {
+	auto* m = model();
+	if (!m) {
+		cancelHistoryConfirmation();
+		return;
+	}
+	// While an accepted job is applying, presses are consumed without queuing.
+	if (historyPromptState_ == HistoryPromptState::Applying)
+		return;
+	if (historyPromptState_ == HistoryPromptState::Confirm && historyTarget_.redo == redo) {
+		// Matching second press: submit exactly once. The model revalidates the
+		// stable target under its serialized boundary and never queues.
+		RestoreId id{};
+		const auto status = m->requestHistoryNavigation(historyTarget_, id);
+		if (status == Status::Ok) {
+			historyId_ = id;
+			historyPromptState_ = HistoryPromptState::Applying;
+			historyStatus_ = Status::Ok;
+		}
+		else {
+			historyId_ = {};
+			historyPromptState_ = HistoryPromptState::Result;
+			historyStatus_ = status;
+		}
+		refreshHistoryFeedback();
+		return;
+	}
+	// From idle or a terminal result, or from the opposite shortcut, arm a fresh
+	// confirmation. The opposite shortcut never confirms the previous operation.
+	cancelHistoryConfirmation();
+	const SlotId slot = m->engine().selected();
+	if (!validSlot(slot)) {
+		historyPromptState_ = HistoryPromptState::Result;
+		historyStatus_ = Status::Invalid;
+		refreshHistoryFeedback();
+		return;
+	}
+	HistoryTarget target{};
+	const auto status = m->historyTarget(slot, redo, target);
+	if (status != Status::Ok) {
+		historyTarget_.slot = slot;
+		historyTarget_.redo = redo;
+		historyPromptState_ = HistoryPromptState::Result;
+		historyStatus_ = status;
+		refreshHistoryFeedback();
+		return;
+	}
+	historyTarget_ = target;
+	historyPromptState_ = HistoryPromptState::Confirm;
+	historyStatus_ = Status::Ok;
+	refreshHistoryFeedback();
+}
+
+void LoopStationView::observeHistoryResult() {
+	auto* m = model();
+	if (!m) {
+		cancelHistoryConfirmation();
+		return;
+	}
+	if (historyPromptState_ == HistoryPromptState::Confirm) {
+		// Stale identity (transport, rebind, session/phrase change, clear) cancels
+		// the prompt with no audio change; added frames within one session do not.
+		if (!m->historyTargetCurrent(historyTarget_))
+			cancelHistoryConfirmation();
+		return;
+	}
+	if (historyPromptState_ != HistoryPromptState::Applying)
+		return;
+	const auto result = m->historyNavigationResult();
+	if (result.id.generation != historyId_.generation || result.pending())
+		return;
+	historyPromptState_ = HistoryPromptState::Result;
+	historyStatus_ = result.status;
+	historyTarget_.slot = result.slot;
+	historyTarget_.redo = result.redo;
+}
+
+void LoopStationView::refreshHistoryFeedback() {
+	if (!display || display->haveOLED())
+		return; // OLED renders the persistent prompt from state on every refresh.
+	using deluge::l10n::String;
+	char popup[64]{};
+	switch (historyPromptState_) {
+	case HistoryPromptState::None:
+		return;
+	case HistoryPromptState::Confirm: {
+		char action[32]{};
+		snprintf(action, sizeof(action),
+		         deluge::l10n::get(historyTarget_.redo ? String::STRING_FOR_LOOP_STATION_REDO_PROMPT
+		                                               : String::STRING_FOR_LOOP_STATION_UNDO_PROMPT),
+		         static_cast<unsigned>(historyTarget_.slot) + 1);
+		snprintf(popup, sizeof(popup), "%s %s", action,
+		         deluge::l10n::get(historyTarget_.redo ? String::STRING_FOR_LOOP_STATION_REDO_CONFIRM
+		                                               : String::STRING_FOR_LOOP_STATION_UNDO_CONFIRM));
+		break;
+	}
+	case HistoryPromptState::Applying: {
+		char track[16]{};
+		snprintf(track, sizeof(track), deluge::l10n::get(String::STRING_FOR_LOOP_STATION_TRACK_NUMBER),
+		         static_cast<unsigned>(historyTarget_.slot) + 1);
+		snprintf(popup, sizeof(popup), "%s %s", track,
+		         deluge::l10n::get(historyTarget_.redo ? String::STRING_FOR_LOOP_STATION_REDOING
+		                                               : String::STRING_FOR_LOOP_STATION_UNDOING));
+		break;
+	}
+	case HistoryPromptState::Result: {
+		if (!validSlot(historyTarget_.slot)) {
+			snprintf(popup, sizeof(popup), "%s", deluge::l10n::get(String::STRING_FOR_LOOP_STATION_TRACK_UNAVAILABLE));
+			break;
+		}
+		char track[16]{};
+		snprintf(track, sizeof(track), deluge::l10n::get(String::STRING_FOR_LOOP_STATION_TRACK_NUMBER),
+		         static_cast<unsigned>(historyTarget_.slot) + 1);
+		snprintf(popup, sizeof(popup), "%s %s", track, historyTerminalText(historyStatus_, historyTarget_.redo));
+		break;
+	}
+	}
+	display->displayPopup(popup);
 }
 
 bool LoopStationView::prepareTrack(SlotId slot) {
@@ -284,6 +436,9 @@ bool LoopStationView::prepareTrack(SlotId slot) {
 }
 
 ActionResult LoopStationView::padAction(int32_t x, int32_t y, int32_t velocity) {
+	// Accepted pad presses are unrelated control actions; a release edge alone is not.
+	if (velocity > 0)
+		cancelHistoryConfirmation();
 	auto* m = model();
 	if (!m || !m->ready())
 		return ActionResult::DEALT_WITH;
@@ -343,6 +498,12 @@ ActionResult LoopStationView::buttonAction(deluge::hid::Button b, bool on, bool 
 	const bool loopOwnsInput = !sharedExclusiveModeActive();
 	auto* m = model();
 
+	// Any unrelated accepted control press cancels a pending confirmation; a
+	// release edge and SHIFT alone never do. A shared exclusive mode owns BACK
+	// whenever it is active, so that press must cancel here and fall through.
+	if (on && b != SHIFT && (b != BACK || !loopOwnsInput))
+		cancelHistoryConfirmation();
+
 	// While no shared exclusive mode is active, these loop shortcuts act on the
 	// edge routed by the current mode and modifiers. Ownership is recomputed per
 	// event, not remembered across mode, modifier, or current-UI changes.
@@ -382,14 +543,16 @@ ActionResult LoopStationView::buttonAction(deluge::hid::Button b, bool on, bool 
 			return ActionResult::DEALT_WITH;
 		}
 		if (b == BACK) {
-			if (on && m) {
-				const SlotId slot = m->engine().selected();
-				RestoreId restore{};
-				if (validSlot(slot) && m->canUndo(slot) && !pendingRestore_.valid()
-				    && m->requestRestore(slot, false, restore) == Status::Ok) {
-					pendingRestore_ = restore;
-					pendingRestoreSlot_ = slot;
+			// Two released matching press edges confirm. A held BACK cannot
+			// repeatedly confirm, and the modifier is sampled on each press.
+			if (on) {
+				if (!historyBackDown_) {
+					historyBackDown_ = true;
+					handleHistoryPress(Buttons::isShiftButtonPressed());
 				}
+			}
+			else {
+				historyBackDown_ = false;
 			}
 			return ActionResult::DEALT_WITH;
 		}
@@ -528,6 +691,32 @@ void LoopStationView::renderOLED(deluge::hid::display::oled_canvas::Canvas& canv
 	if (!hasTrack)
 		return;
 
+	// A pending or terminal confirmation replaces the ordinary info row on both
+	// display paths and persists across every graphics refresh.
+	if (historyPromptState_ != HistoryPromptState::None) {
+		using deluge::l10n::String;
+		if (historyPromptState_ == HistoryPromptState::Confirm) {
+			snprintf(line, sizeof(line),
+			         deluge::l10n::get(historyTarget_.redo ? String::STRING_FOR_LOOP_STATION_REDO_PROMPT
+			                                               : String::STRING_FOR_LOOP_STATION_UNDO_PROMPT),
+			         static_cast<unsigned>(historyTarget_.slot) + 1);
+			canvas.drawString(line, 0, 30, kTextSpacingX, kTextSizeYUpdated);
+			canvas.drawString(deluge::l10n::get(historyTarget_.redo ? String::STRING_FOR_LOOP_STATION_REDO_CONFIRM
+			                                                        : String::STRING_FOR_LOOP_STATION_UNDO_CONFIRM),
+			                  0, 40, kTextSpacingX, kTextSmallSizeY);
+		}
+		else if (historyPromptState_ == HistoryPromptState::Applying) {
+			canvas.drawString(deluge::l10n::get(historyTarget_.redo ? String::STRING_FOR_LOOP_STATION_REDOING
+			                                                        : String::STRING_FOR_LOOP_STATION_UNDOING),
+			                  0, 30, kTextSpacingX, kTextSizeYUpdated);
+		}
+		else {
+			canvas.drawString(historyTerminalText(historyStatus_, historyTarget_.redo), 0, 30, kTextSpacingX,
+			                  kTextSizeYUpdated);
+		}
+		return;
+	}
+
 	snprintf(line, sizeof(line), "IN: %s", sourceLabel(m->engine().settings().tracks[selected].source));
 	canvas.drawString(line, 0, 30, kTextSpacingX, kTextSizeYUpdated);
 
@@ -535,6 +724,7 @@ void LoopStationView::renderOLED(deluge::hid::display::oled_canvas::Canvas& canv
 	canvas.drawStringAlignRight(line, 30, kTextSpacingX, kTextSizeYUpdated);
 }
 void LoopStationView::selectEncoderAction(int8_t offset) {
+	cancelHistoryConfirmation();
 	if (sharedExclusiveModeActive())
 		return;
 	if (auto* m = model()) {
@@ -549,4 +739,23 @@ void LoopStationView::selectEncoderAction(int8_t offset) {
 			graphicsRoutine();
 		}
 	}
+}
+
+// Modulation/encoder controls edit unrelated state. Cancel the prompt, then
+// forward exactly the existing shared View behavior so nothing else changes.
+void LoopStationView::modEncoderAction(int32_t whichModEncoder, int32_t offset) {
+	cancelHistoryConfirmation();
+	view.modEncoderAction(whichModEncoder, offset);
+}
+
+void LoopStationView::modButtonAction(uint8_t whichButton, bool on) {
+	if (on)
+		cancelHistoryConfirmation();
+	view.modButtonAction(whichButton, on);
+}
+
+void LoopStationView::modEncoderButtonAction(uint8_t whichModEncoder, bool on) {
+	if (on)
+		cancelHistoryConfirmation();
+	view.modEncoderButtonAction(whichModEncoder, on);
 }

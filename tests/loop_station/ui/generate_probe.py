@@ -34,7 +34,7 @@ def main() -> None:
             section(
                 loop,
                 "bool LoopStationView::opened()",
-                "void LoopStationView::renderOLED(",
+                encoder_marker,
             ),
             loop[loop.index(encoder_marker) :],
             "namespace deluge::gui::menu_item::loop_station {",

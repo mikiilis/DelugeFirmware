@@ -136,6 +136,18 @@ struct Fixture {
 		CHECK_TRUE(model->engine().state(0).hasPhrase);
 		CHECK_TRUE(model->engine().state(0).playing);
 	}
+	// Render one window of a single track's exact backing frames. Input is the
+	// uniform test signal the other Loop Station fixtures use.
+	std::vector<loop_station::Frame> renderTrack(loop_station::SlotId slot, size_t frames = 8) {
+		std::array<loop_station::Frame, loop_station::AudioAdapter::kMaxWindowFrames> input{}, output{};
+		input.fill({100, -100});
+		size_t count = frames;
+		model->adapter().finalizeWindow(host.time, count, model->clock());
+		model->adapter().renderDry(slot, std::span(input).first(count), std::span(output).first(count));
+		host.time += count;
+		probeSampleClock = host.time;
+		return {output.begin(), output.begin() + count};
+	}
 	// Simulate the shared button layer only after the real view declines the event.
 	template <typename View>
 	ActionResult sharedShift(View& target, bool on, bool inCardRoutine = false) {

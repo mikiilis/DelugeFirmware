@@ -8,6 +8,7 @@
 
 #include "deluge/loop_station/config.h"
 #include "deluge/loop_station/engine.h"
+#include "deluge/loop_station/history_navigation.h"
 #include "deluge/loop_station/length_display.h"
 #include "deluge/loop_station/menu_model.h"
 #include "deluge/loop_station/types.h"
@@ -113,7 +114,20 @@ enum class String {
 	STRING_FOR_LOOP_STATION_COPY_FROM,
 	STRING_FOR_LOOP_STATION_COPY_TARGET,
 	STRING_FOR_LOOP_STATION_COPY_CONFIRM,
-	STRING_FOR_LOOP_STATION_COPY_REVIEW
+	STRING_FOR_LOOP_STATION_COPY_REVIEW,
+	STRING_FOR_LOOP_STATION_TRACK_NUMBER,
+	STRING_FOR_LOOP_STATION_UNDO_PROMPT,
+	STRING_FOR_LOOP_STATION_REDO_PROMPT,
+	STRING_FOR_LOOP_STATION_UNDO_CONFIRM,
+	STRING_FOR_LOOP_STATION_REDO_CONFIRM,
+	STRING_FOR_LOOP_STATION_UNDOING,
+	STRING_FOR_LOOP_STATION_REDOING,
+	STRING_FOR_LOOP_STATION_UNDONE,
+	STRING_FOR_LOOP_STATION_REDONE,
+	STRING_FOR_LOOP_STATION_UNDO_UNAVAILABLE,
+	STRING_FOR_LOOP_STATION_REDO_UNAVAILABLE,
+	STRING_FOR_LOOP_STATION_HISTORY_BUSY,
+	STRING_FOR_LOOP_STATION_NO_MEMORY
 };
 const char* get(String string);
 } // namespace deluge::l10n
@@ -142,5 +156,12 @@ public:
 
 class LoopStationView {
 public:
+	enum class HistoryPromptState : uint8_t { None, Confirm, Applying, Result };
 	void renderOLED(Canvas& canvas);
+	// Fixed-size confirmation state, saved target and observed result. No prompt is
+	// set in this main-screen suite, so it renders exactly as before.
+	HistoryPromptState historyPromptState_ = HistoryPromptState::None;
+	loop_station::HistoryTarget historyTarget_{};
+	loop_station::RestoreId historyId_{};
+	loop_station::Status historyStatus_ = loop_station::Status::Ok;
 };

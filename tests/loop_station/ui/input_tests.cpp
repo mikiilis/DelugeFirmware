@@ -1,3 +1,4 @@
+#include "deluge/loop_station/gesture_rollback.h"
 #include "deluge/loop_station/persistence.h"
 #include "fixture.h"
 #include "gui/views/affect_entire_led.h"
@@ -579,7 +580,7 @@ TEST(LoopUi, SharedModesDoNotTriggerLoopActions) {
 		CHECK(f.view.buttonAction(BACK, true, false) == ActionResult::NOT_DEALT_WITH);
 		CHECK_EQUAL(1, ::view.calls.size());
 		CHECK(BACK == ::view.calls.front().button);
-		CHECK_FALSE(f.view.pendingRestore_.valid());
+		CHECK_TRUE(f.view.historyPromptState_ == LoopStationView::HistoryPromptState::None);
 
 		POINTERS_EQUAL(&f.view, getCurrentUI());
 		::view.reset();
@@ -623,11 +624,10 @@ TEST(LoopUi, StutterAlonePreservesLoopPerformanceAndNavigation) {
 	::view.reset();
 	CHECK(f.view.buttonAction(BACK, true, false) == ActionResult::DEALT_WITH);
 	CHECK_EQUAL(0, ::view.calls.size());
-	// The recovered base recording now offers Undo, so BACK arms it; disarm so
-	// the rest of this stutter test keeps its original intent.
-	CHECK(f.view.pendingRestore_.valid());
-	f.model->cancelRestore(0);
-	f.view.pendingRestore_ = {};
+	// The recovered base recording now offers Undo, so BACK arms the two-press
+	// confirmation; cancel it so the rest of this stutter test keeps its intent.
+	CHECK(f.view.historyPromptState_ == LoopStationView::HistoryPromptState::Confirm);
+	f.view.cancelHistoryConfirmation();
 
 	// A new centre press is accepted and its release starts the stopped phrase.
 	f.view.padAction(1, 6, 100);
@@ -669,7 +669,7 @@ TEST(LoopUi, StutterWithSharedHoldStillBlocksLoopActions) {
 		CHECK(f.view.buttonAction(BACK, true, false) == ActionResult::NOT_DEALT_WITH);
 		CHECK_EQUAL(1, ::view.calls.size());
 		CHECK(BACK == ::view.calls.front().button);
-		CHECK_FALSE(f.view.pendingRestore_.valid());
+		CHECK_TRUE(f.view.historyPromptState_ == LoopStationView::HistoryPromptState::None);
 
 		POINTERS_EQUAL(&f.view, getCurrentUI());
 		::view.reset();
@@ -1377,4 +1377,513 @@ TEST(LoopUi, FocusRegainRestoresTargetAfterMenus) {
 	f.view.graphicsRoutine();
 	CHECK_EQUAL(0, ::view.targets.size());
 	CHECK_EQUAL(allocations, f.host.allocationAttempts);
+}
+
+namespace {
+using Prompt = LoopStationView::HistoryPromptState;
+
+// Model-level setup: a completed initial take, playing; and a completed overdub
+// layer on top. The view shortcut under test is always driven through the real
+// root handler, never by setting a boolean directly.
+void modelRecord(loop_ui_test::Fixture& f, SlotId slot) {
+	f.model->serviceRetirement();
+	CHECK(Status::Ok == f.model->ensureBound(slot));
+	CHECK(Status::Ok == f.model->dispatch({CommandType::Press, slot}));
+	f.renderAudio(8);
+	CHECK(Status::Ok == f.model->dispatch({CommandType::Press, slot}));
+	CHECK_FALSE(f.model->engine().state(slot).capture);
+	CHECK_TRUE(f.model->engine().state(slot).hasPhrase);
+}
+
+void modelOverdub(loop_ui_test::Fixture& f, SlotId slot) {
+	// Step past the mandatory provisional double-tap window so this press opens a
+	// real overdub rather than cancelling the just-recorded take.
+	f.host.time += loop_station::GestureRollback::kProvisionalSamples + 1;
+	probeSampleClock = f.host.time;
+	CHECK(Status::Ok == f.model->dispatch({CommandType::Press, slot}));
+	CHECK(f.model->engine().state(slot).capture);
+	f.renderAudio(16);
+	// The open press set the provisional tap latch; step past it so this press
+	// confirms and closes the overdub instead of cancelling it as a double-tap.
+	f.host.time += loop_station::GestureRollback::kProvisionalSamples + 1;
+	probeSampleClock = f.host.time;
+	CHECK(Status::Ok == f.model->dispatch({CommandType::Press, slot}));
+	CHECK_FALSE(f.model->engine().state(slot).capture);
+}
+
+HistoryNavigationResult driveHistory(loop_ui_test::Fixture& f, RestoreId id) {
+	for (unsigned i = 0; i < 5000; ++i) {
+		f.model->serviceHistoryNavigation(128);
+		const auto result = f.model->historyNavigationResult();
+		if (result.id.generation == id.generation && !result.pending())
+			return result;
+	}
+	return f.model->historyNavigationResult();
+}
+
+void shiftOn(loop_ui_test::Fixture& f) {
+	::view.reset();
+	::view.result = ActionResult::NOT_DEALT_WITH;
+	CHECK(f.sharedShift(f.view, true) == ActionResult::NOT_DEALT_WITH);
+	CHECK_TRUE(Buttons::shiftPressed);
+}
+
+void shiftOff(loop_ui_test::Fixture& f) {
+	::view.reset();
+	::view.result = ActionResult::NOT_DEALT_WITH;
+	CHECK(f.sharedShift(f.view, false) == ActionResult::NOT_DEALT_WITH);
+	CHECK_FALSE(Buttons::shiftPressed);
+}
+
+void armUndo(loop_ui_test::Fixture& f) {
+	CHECK(f.view.buttonAction(BACK, true, false) == ActionResult::DEALT_WITH);
+	CHECK(Prompt::Confirm == f.view.historyPromptState_);
+	CHECK(f.view.buttonAction(BACK, false, false) == ActionResult::DEALT_WITH);
+}
+
+void confirmSecondPress(loop_ui_test::Fixture& f) {
+	CHECK(f.view.buttonAction(BACK, true, false) == ActionResult::DEALT_WITH);
+	CHECK(Prompt::Applying == f.view.historyPromptState_);
+	CHECK(f.view.buttonAction(BACK, false, false) == ActionResult::DEALT_WITH);
+}
+
+bool backingIs(loop_ui_test::Fixture& f, SlotId slot, int32_t value) {
+	const auto frames = f.renderTrack(slot);
+	for (const auto& frame : frames)
+		if (frame.l != value || frame.r != value)
+			return false;
+	return true;
+}
+} // namespace
+
+TEST(LoopUi, UndoRequiresTwoReleasedBackPresses) {
+	for (SlotId slot = 0; slot < kTrackCount; ++slot) {
+		Fixture f;
+		modelRecord(f, slot);
+		selectBorder(f, slot);
+		CHECK_EQUAL(slot, f.model->engine().selected());
+		const auto backing = f.renderTrack(slot);
+
+		// The first press only arms the confirmation.
+		CHECK(f.view.buttonAction(BACK, true, false) == ActionResult::DEALT_WITH);
+		CHECK(Prompt::Confirm == f.view.historyPromptState_);
+		CHECK_EQUAL(slot, f.view.historyTarget_.slot);
+		CHECK_FALSE(f.view.historyTarget_.redo);
+		CHECK_EQUAL(int(HistoryNavigationState::Idle), int(f.model->historyNavigationResult().state));
+		CHECK(f.model->engine().state(slot).hasPhrase);
+		const auto afterFirst = f.renderTrack(slot);
+		CHECK_EQUAL(backing.size(), afterFirst.size()); // exact audio unchanged
+		for (size_t i = 0; i < backing.size(); ++i) {
+			CHECK_EQUAL(backing[i].l, afterFirst[i].l);
+			CHECK_EQUAL(backing[i].r, afterFirst[i].r);
+		}
+
+		// A repeated press with no release cannot confirm; the release alone does
+		// not edit either.
+		CHECK(f.view.buttonAction(BACK, true, false) == ActionResult::DEALT_WITH);
+		CHECK(Prompt::Confirm == f.view.historyPromptState_);
+		CHECK_EQUAL(int(HistoryNavigationState::Idle), int(f.model->historyNavigationResult().state));
+		CHECK(f.model->engine().state(slot).hasPhrase);
+		CHECK(f.view.buttonAction(BACK, false, false) == ActionResult::DEALT_WITH);
+		CHECK(Prompt::Confirm == f.view.historyPromptState_);
+
+		// The second released press submits exactly once.
+		CHECK(f.view.buttonAction(BACK, true, false) == ActionResult::DEALT_WITH);
+		CHECK(Prompt::Applying == f.view.historyPromptState_);
+		CHECK(f.view.historyId_.valid());
+		CHECK(f.view.buttonAction(BACK, false, false) == ActionResult::DEALT_WITH);
+		const auto id = f.view.historyId_;
+		CHECK_EQUAL(int(HistoryNavigationState::Complete), int(driveHistory(f, id).state));
+		CHECK_FALSE(f.model->engine().state(slot).hasPhrase);
+		f.view.graphicsRoutine();
+		CHECK(Prompt::Result == f.view.historyPromptState_);
+	}
+
+	// A third press starts a new confirmation rather than removing another layer.
+	{
+		Fixture f;
+		modelRecord(f, 0);
+		modelOverdub(f, 0);
+		selectBorder(f, 0);
+		CHECK_TRUE(f.model->canUndo(0));
+		armUndo(f);
+		confirmSecondPress(f);
+		CHECK_EQUAL(int(HistoryNavigationState::Complete), int(driveHistory(f, f.view.historyId_).state));
+		CHECK_TRUE(f.model->engine().state(0).hasPhrase); // the initial layer remains
+		const auto frames = f.model->engine().state(0).phraseFrames;
+		f.view.graphicsRoutine();
+		const auto prior = f.model->historyNavigationResult();
+		CHECK(f.view.buttonAction(BACK, true, false) == ActionResult::DEALT_WITH);
+		CHECK(Prompt::Confirm == f.view.historyPromptState_);
+		CHECK_TRUE(f.model->engine().state(0).hasPhrase);
+		CHECK_EQUAL(frames, f.model->engine().state(0).phraseFrames);
+		CHECK_EQUAL(prior.id.generation, f.model->historyNavigationResult().id.generation);
+		CHECK(f.view.buttonAction(BACK, false, false) == ActionResult::DEALT_WITH);
+		confirmSecondPress(f);
+		CHECK_EQUAL(int(HistoryNavigationState::Complete), int(driveHistory(f, f.view.historyId_).state));
+		CHECK_FALSE(f.model->engine().state(0).hasPhrase);
+	}
+
+	// AFFECT ENTIRE never retargets the shortcut; the selected track still undoes.
+	{
+		Fixture f;
+		modelRecord(f, 2);
+		selectBorder(f, 2);
+		CHECK(f.view.buttonAction(AFFECT_ENTIRE, true, false) == ActionResult::DEALT_WITH);
+		CHECK_TRUE(f.song.affectEntire);
+		armUndo(f);
+		CHECK_EQUAL(2, f.view.historyTarget_.slot);
+		confirmSecondPress(f);
+		CHECK_EQUAL(int(HistoryNavigationState::Complete), int(driveHistory(f, f.view.historyId_).state));
+		CHECK_FALSE(f.model->engine().state(2).hasPhrase);
+	}
+}
+
+TEST(LoopUi, RedoRequiresTwoReleasedShiftBackPresses) {
+	Fixture f;
+	modelRecord(f, 0);
+	selectBorder(f, 0);
+	armUndo(f);
+	confirmSecondPress(f);
+	CHECK_EQUAL(int(HistoryNavigationState::Complete), int(driveHistory(f, f.view.historyId_).state));
+	f.view.graphicsRoutine();
+	CHECK_FALSE(f.model->engine().state(0).hasPhrase);
+	CHECK_TRUE(f.model->canRedo(0));
+
+	shiftOn(f);
+	// The first SHIFT+BACK arms Redo without restoring anything.
+	CHECK(f.view.buttonAction(BACK, true, false) == ActionResult::DEALT_WITH);
+	CHECK(Prompt::Confirm == f.view.historyPromptState_);
+	CHECK_TRUE(f.view.historyTarget_.redo);
+	CHECK_FALSE(f.model->engine().state(0).hasPhrase);
+	CHECK(f.view.buttonAction(BACK, false, false) == ActionResult::DEALT_WITH);
+	// The second SHIFT+BACK confirms.
+	CHECK(f.view.buttonAction(BACK, true, false) == ActionResult::DEALT_WITH);
+	CHECK(Prompt::Applying == f.view.historyPromptState_);
+	CHECK_FALSE(f.model->engine().state(0).hasPhrase);
+	CHECK(f.view.buttonAction(BACK, false, false) == ActionResult::DEALT_WITH);
+	const auto result = driveHistory(f, f.view.historyId_);
+	CHECK_EQUAL(int(HistoryNavigationState::Complete), int(result.state));
+	CHECK_TRUE(result.redo);
+	CHECK_TRUE(f.model->engine().state(0).hasPhrase);
+	CHECK_FALSE(f.model->engine().state(0).playing); // restored stopped
+	shiftOff(f);
+	CHECK_TRUE(backingIs(f, 0, 100));
+}
+
+TEST(LoopUi, OppositeShortcutRearmsRatherThanConfirms) {
+	Fixture f;
+	modelRecord(f, 0);
+	modelOverdub(f, 0);
+	// Undo the overdub directly on the model: the initial layer remains and the
+	// removed overdub branch is redoable.
+	HistoryTarget target{};
+	CHECK_EQUAL(int(Status::Ok), int(f.model->historyTarget(0, false, target)));
+	RestoreId id{};
+	CHECK_EQUAL(int(Status::Ok), int(f.model->requestHistoryNavigation(target, id)));
+	CHECK_EQUAL(int(HistoryNavigationState::Complete), int(driveHistory(f, id).state));
+	CHECK_TRUE(f.model->canUndo(0));
+	CHECK_TRUE(f.model->canRedo(0));
+	selectBorder(f, 0);
+	const auto prior = f.model->historyNavigationResult();
+
+	armUndo(f);
+	CHECK_FALSE(f.view.historyTarget_.redo);
+	// The opposite shortcut re-arms Redo instead of confirming the pending Undo.
+	shiftOn(f);
+	CHECK(f.view.buttonAction(BACK, true, false) == ActionResult::DEALT_WITH);
+	CHECK(Prompt::Confirm == f.view.historyPromptState_);
+	CHECK_TRUE(f.view.historyTarget_.redo);
+	CHECK_EQUAL(prior.id.generation, f.model->historyNavigationResult().id.generation);
+	CHECK_TRUE(f.model->engine().state(0).hasPhrase);
+	CHECK(f.view.buttonAction(BACK, false, false) == ActionResult::DEALT_WITH);
+	// A second SHIFT+BACK confirms the Redo.
+	CHECK(f.view.buttonAction(BACK, true, false) == ActionResult::DEALT_WITH);
+	CHECK(Prompt::Applying == f.view.historyPromptState_);
+	CHECK(f.view.buttonAction(BACK, false, false) == ActionResult::DEALT_WITH);
+	const auto redone = driveHistory(f, f.view.historyId_);
+	CHECK_EQUAL(int(HistoryNavigationState::Complete), int(redone.state));
+	CHECK_TRUE(redone.redo);
+	shiftOff(f);
+	// The Redo restored the thread: a layer is again available to undo and the
+	// forward branch is consumed.
+	CHECK_TRUE(f.model->engine().state(0).hasPhrase);
+	CHECK_TRUE(f.model->canUndo(0));
+	CHECK_FALSE(f.model->canRedo(0));
+}
+
+TEST(LoopUi, ShiftEdgesAlonePreserveRedoPrompt) {
+	Fixture f;
+	modelRecord(f, 0);
+	selectBorder(f, 0);
+	armUndo(f);
+	confirmSecondPress(f);
+	CHECK_EQUAL(int(HistoryNavigationState::Complete), int(driveHistory(f, f.view.historyId_).state));
+	f.view.graphicsRoutine();
+	const auto prior = f.model->historyNavigationResult();
+	shiftOn(f);
+	armUndo(f); // reuse the released press pairing: arms Redo because SHIFT is held
+	CHECK_TRUE(f.view.historyTarget_.redo);
+	// SHIFT edges alone never cancel or confirm the prompt.
+	shiftOff(f);
+	CHECK(Prompt::Confirm == f.view.historyPromptState_);
+	CHECK_TRUE(f.view.historyTarget_.redo);
+	shiftOn(f);
+	CHECK(Prompt::Confirm == f.view.historyPromptState_);
+	CHECK_TRUE(f.view.historyTarget_.redo);
+	CHECK_EQUAL(prior.id.generation, f.model->historyNavigationResult().id.generation);
+	confirmSecondPress(f);
+	CHECK_EQUAL(int(HistoryNavigationState::Complete), int(driveHistory(f, f.view.historyId_).state));
+	shiftOff(f);
+	CHECK_TRUE(f.model->engine().state(0).hasPhrase);
+}
+
+TEST(LoopUi, UnrelatedActionsAndSelectionCancelPrompt) {
+	auto prepare = [](Fixture& f) {
+		modelRecord(f, 0);
+		modelOverdub(f, 0);
+		selectBorder(f, 0);
+		armUndo(f);
+		CHECK(Prompt::Confirm == f.view.historyPromptState_);
+	};
+	{
+		Fixture f;
+		prepare(f);
+		f.view.padAction(4, 7, 100); // border selection change
+		CHECK(Prompt::None == f.view.historyPromptState_);
+	}
+	{
+		Fixture f;
+		prepare(f);
+		f.view.selectEncoderAction(1);
+		CHECK(Prompt::None == f.view.historyPromptState_);
+	}
+	{
+		Fixture f;
+		prepare(f);
+		f.view.modEncoderAction(0, 3);
+		CHECK(Prompt::None == f.view.historyPromptState_);
+		CHECK_EQUAL(1, ::view.modEncoderActionCalls); // existing forwarding preserved
+	}
+	{
+		Fixture f;
+		prepare(f);
+		f.view.modButtonAction(0, true);
+		CHECK(Prompt::None == f.view.historyPromptState_);
+		CHECK_EQUAL(1, ::view.modButtonActionCalls);
+	}
+	{
+		Fixture f;
+		prepare(f);
+		f.view.modEncoderButtonAction(1, true);
+		CHECK(Prompt::None == f.view.historyPromptState_);
+		CHECK_EQUAL(1, ::view.modEncoderButtonCalls);
+	}
+	{
+		Fixture f;
+		prepare(f);
+		::view.reset();
+		::view.result = ActionResult::NOT_DEALT_WITH;
+		f.view.buttonAction(TAP_TEMPO, true, false);
+		CHECK(Prompt::None == f.view.historyPromptState_);
+		CHECK_EQUAL(1, ::view.calls.size());
+	}
+	{
+		Fixture f;
+		prepare(f);
+		f.view.buttonAction(AFFECT_ENTIRE, true, false);
+		CHECK(Prompt::None == f.view.historyPromptState_);
+	}
+	// A release edge alone never cancels a prompt.
+	{
+		Fixture f;
+		prepare(f);
+		::view.reset();
+		::view.result = ActionResult::NOT_DEALT_WITH;
+		f.view.buttonAction(TAP_TEMPO, false, false);
+		CHECK(Prompt::Confirm == f.view.historyPromptState_);
+	}
+	// A SHIFT edge alone never cancels a prompt.
+	{
+		Fixture f;
+		prepare(f);
+		shiftOn(f);
+		CHECK(Prompt::Confirm == f.view.historyPromptState_);
+		shiftOff(f);
+		CHECK(Prompt::Confirm == f.view.historyPromptState_);
+	}
+}
+
+TEST(LoopUi, SharedMenusOwnBack) {
+	{
+		Fixture f;
+		modelRecord(f, 0);
+		modelOverdub(f, 0);
+		selectBorder(f, 0);
+		armUndo(f);
+		// Opening a shared menu is an outgoing action: the prompt is dropped.
+		CHECK(f.view.buttonAction(SELECT_ENC, true, false) == ActionResult::DEALT_WITH);
+		POINTERS_EQUAL(&loopStationSettingsMenu, getCurrentUI());
+		CHECK(Prompt::None == f.view.historyPromptState_);
+		// The menu keeps BACK navigation.
+		loopStationSettingsMenu.buttonAction(BACK, true, false);
+		POINTERS_EQUAL(&f.view, getCurrentUI());
+		CHECK(Prompt::None == f.view.historyPromptState_);
+	}
+	{
+		// A shared exclusive mode owns BACK; it never arms or confirms.
+		Fixture f;
+		modelRecord(f, 0);
+		selectBorder(f, 0);
+		currentUIMode = UI_MODE_HOLDING_SAVE_BUTTON;
+		::view.reset();
+		::view.result = ActionResult::NOT_DEALT_WITH;
+		CHECK(f.view.buttonAction(BACK, true, false) == ActionResult::NOT_DEALT_WITH);
+		CHECK_EQUAL(1, ::view.calls.size());
+		CHECK(Prompt::None == f.view.historyPromptState_);
+		CHECK_EQUAL(int(HistoryNavigationState::Idle), int(f.model->historyNavigationResult().state));
+		currentUIMode = UI_MODE_NONE;
+	}
+}
+
+TEST(LoopUi, CardDeferralDoesNotCountAsAConfirmation) {
+	Fixture f;
+	modelRecord(f, 0);
+	selectBorder(f, 0);
+	// A deferred card-routine press is not counted at all.
+	CHECK(f.view.buttonAction(BACK, true, true) == ActionResult::REMIND_ME_OUTSIDE_CARD_ROUTINE);
+	CHECK(Prompt::None == f.view.historyPromptState_);
+	// Its retry arms exactly once.
+	CHECK(f.view.buttonAction(BACK, true, false) == ActionResult::DEALT_WITH);
+	CHECK(Prompt::Confirm == f.view.historyPromptState_);
+	CHECK(f.view.buttonAction(BACK, false, false) == ActionResult::DEALT_WITH);
+	// A deferred press cannot stand in for the confirming second press.
+	CHECK(f.view.buttonAction(BACK, true, true) == ActionResult::REMIND_ME_OUTSIDE_CARD_ROUTINE);
+	CHECK(Prompt::Confirm == f.view.historyPromptState_);
+	CHECK_EQUAL(int(HistoryNavigationState::Idle), int(f.model->historyNavigationResult().state));
+	CHECK(f.model->engine().state(0).hasPhrase);
+	// Only a real released second press confirms.
+	CHECK(f.view.buttonAction(BACK, true, false) == ActionResult::DEALT_WITH);
+	CHECK(Prompt::Applying == f.view.historyPromptState_);
+	CHECK(f.view.buttonAction(BACK, false, false) == ActionResult::DEALT_WITH);
+	CHECK_EQUAL(int(HistoryNavigationState::Complete), int(driveHistory(f, f.view.historyId_).state));
+	CHECK_FALSE(f.model->engine().state(0).hasPhrase);
+}
+
+TEST(LoopUi, NoSelectionNeverDelegatesGlobalUndo) {
+	Fixture f;
+	CHECK_EQUAL(kInvalidSlot, f.model->engine().selected());
+	::view.reset();
+	::view.result = ActionResult::NOT_DEALT_WITH;
+	CHECK(f.view.buttonAction(BACK, true, false) == ActionResult::DEALT_WITH);
+	CHECK_EQUAL(0, ::view.calls.size()); // never falls through to a global Undo
+	CHECK(Prompt::Result == f.view.historyPromptState_);
+	CHECK_EQUAL(int(HistoryNavigationState::Idle), int(f.model->historyNavigationResult().state));
+	CHECK(f.view.buttonAction(BACK, false, false) == ActionResult::DEALT_WITH);
+	CHECK(Prompt::Result == f.view.historyPromptState_);
+}
+
+TEST(LoopUi, PendingCaptureConfirmationTracksSessionIdentity) {
+	// More frames inside one active overdub session do not invalidate the prompt;
+	// the same session still confirms.
+	{
+		Fixture f;
+		modelRecord(f, 0);
+		selectBorder(f, 0);
+		CHECK(Status::Ok == f.model->dispatch({CommandType::Press, 0}));
+		CHECK(f.model->engine().state(0).capture);
+		armUndo(f);
+		const auto epoch = f.view.historyTarget_.historyEpoch;
+		f.renderAudio(16);
+		f.view.graphicsRoutine();
+		CHECK(Prompt::Confirm == f.view.historyPromptState_);
+		CHECK_EQUAL(epoch, f.view.historyTarget_.historyEpoch);
+		confirmSecondPress(f);
+		CHECK_FALSE(f.model->engine().state(0).capture);
+		CHECK_EQUAL(int(HistoryNavigationState::Complete), int(driveHistory(f, f.view.historyId_).state));
+		CHECK_TRUE(f.model->engine().state(0).hasPhrase);
+		CHECK_TRUE(f.model->engine().state(0).playing);
+	}
+	// Ending/replacing the capture session invalidates the prompt.
+	{
+		Fixture f;
+		modelRecord(f, 0);
+		selectBorder(f, 0);
+		CHECK(Status::Ok == f.model->dispatch({CommandType::Press, 0}));
+		armUndo(f);
+		f.renderAudio(16);
+		CHECK(Status::Ok == f.model->dispatch({CommandType::Press, 0})); // close the session
+		f.view.graphicsRoutine();
+		CHECK(Prompt::None == f.view.historyPromptState_);
+		CHECK_EQUAL(int(HistoryNavigationState::Idle), int(f.model->historyNavigationResult().state));
+	}
+}
+
+TEST(LoopUi, AutomaticCaptureCompletionInvalidatesPendingConfirmation) {
+	Fixture f;
+	selectBorder(f, 0); // bind/select an empty track
+	auto settings = f.model->engine().settings();
+	settings.tracks[0].recordDurationBars = 1;
+	CHECK(Status::Ok == f.model->dispatch(Command::configure(settings)));
+	f.model->updateClock(f.host.time, 1000u << 16, true, 0);         // a short bar keeps the take brief
+	CHECK(Status::Ok == f.model->dispatch({CommandType::Press, 0})); // active initial take
+	CHECK(f.model->engine().state(0).capture);
+	armUndo(f);
+	for (unsigned i = 0; i < 400 && f.model->engine().state(0).capture; ++i)
+		f.renderAudio(128);
+	CHECK_FALSE(f.model->engine().state(0).capture); // completed on its own
+	CHECK(f.model->engine().state(0).hasPhrase);
+	// Automatic completion is a different session: the pending prompt cancels.
+	f.view.graphicsRoutine();
+	CHECK(Prompt::None == f.view.historyPromptState_);
+}
+
+TEST(LoopUi, ApplyingPressesAreConsumedWithoutQueuing) {
+	Fixture f;
+	modelRecord(f, 0);
+	modelOverdub(f, 0);
+	selectBorder(f, 0);
+	armUndo(f);
+	confirmSecondPress(f);
+	const auto id = f.view.historyId_;
+	CHECK(Prompt::Applying == f.view.historyPromptState_);
+	CHECK(f.model->engine().state(0).hasPhrase);
+	// Extra released presses neither queue a second request nor apply anything.
+	CHECK(f.view.buttonAction(BACK, true, false) == ActionResult::DEALT_WITH);
+	CHECK(f.view.buttonAction(BACK, false, false) == ActionResult::DEALT_WITH);
+	CHECK(f.view.buttonAction(BACK, true, false) == ActionResult::DEALT_WITH);
+	CHECK(f.view.buttonAction(BACK, false, false) == ActionResult::DEALT_WITH);
+	CHECK(Prompt::Applying == f.view.historyPromptState_);
+	CHECK_EQUAL(id.generation, f.model->historyNavigationResult().id.generation);
+	CHECK_EQUAL(int(HistoryNavigationState::Applying), int(f.model->historyNavigationResult().state));
+	CHECK(f.model->engine().state(0).hasPhrase);
+	CHECK_EQUAL(int(HistoryNavigationState::Complete), int(driveHistory(f, id).state));
+	CHECK_TRUE(f.model->engine().state(0).hasPhrase);
+}
+
+TEST(LoopUi, TransportOrModelChangeCancelsPrompt) {
+	{
+		Fixture f;
+		modelRecord(f, 0);
+		modelOverdub(f, 0);
+		selectBorder(f, 0);
+		armUndo(f);
+		// A transport running/stopped transition invalidates the armed target.
+		f.model->updateClock(f.host.time, 120u << 16, true, 0);
+		f.view.graphicsRoutine();
+		CHECK(Prompt::None == f.view.historyPromptState_);
+		CHECK_EQUAL(int(HistoryNavigationState::Idle), int(f.model->historyNavigationResult().state));
+	}
+	{
+		Fixture f;
+		modelRecord(f, 0);
+		modelOverdub(f, 0);
+		selectBorder(f, 0);
+		armUndo(f);
+		// Rebinding replaces the slot identity; the saved target is dead.
+		CHECK(Status::Ok == f.model->unbind(0));
+		f.view.graphicsRoutine();
+		CHECK(Prompt::None == f.view.historyPromptState_);
+		CHECK_EQUAL(int(HistoryNavigationState::Idle), int(f.model->historyNavigationResult().state));
+	}
 }
