@@ -30,6 +30,9 @@ public:
 	Frame read(SlotId slot, FrameIndex index, Frame backing) const;
 	Status confirm(SlotId slot);
 	Status cancel(SlotId slot);
+	// Clears the phrase binding once no provisional/pending entry still refers
+	// to it, without scanning frames; the pool keeps the retained record.
+	Status unbind(SlotId slot);
 	// Engine observes the authoritative clock before dispatch and service. Older
 	// observations cannot move a slot clock backwards. Render advances each slot
 	// once per processed sample, so even an oversized render expires exactly.

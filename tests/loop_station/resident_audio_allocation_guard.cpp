@@ -65,6 +65,11 @@ int main() {
 			return 6;
 		audio.stop(slot);
 	}
+	// Task 2: ownership detach + binding unbind allocate nothing.
+	for (SlotId slot = 0; slot < 2; ++slot) {
+		if (audio.detachForHistory(slot) != Status::Ok)
+			return 12;
+	}
 	Engine engine(audio, rollback);
 	Transpose transpose;
 	for (SlotId slot = 0; slot < kTrackCount; ++slot)
@@ -98,5 +103,16 @@ int main() {
 			adapter.renderDry(slot, std::span(input).first(count), std::span(output).first(count));
 		}
 	}
+	// Task 2: empty publication and a zero-frame history closure allocate nothing.
+	engine.phraseRemoved(0);
+	engine.phraseRemoved(1);
+	if (engine.historyEpoch(0) == 0 || engine.historyEpoch(1) == 0)
+		return 12;
+	if (engine.dispatch({CommandType::Press, 4}, 4000000, clock) != Status::Ok)
+		return 13;
+	if (engine.closeCaptureForHistory(4) != Status::Ok)
+		return 14;
+	if (engine.state(4).hasPhrase || engine.state(4).playing || engine.state(4).capture)
+		return 15;
 	return allocationCalls == before ? 0 : 7;
 }

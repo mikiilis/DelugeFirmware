@@ -1,6 +1,7 @@
 #include "resident_audio.h"
 #include "gesture_rollback.h"
 #include "history.h"
+#include "invariant.h"
 #include "snapshot.h"
 
 #include <algorithm>
@@ -171,6 +172,28 @@ Status ResidentAudio::clear(SlotId slot) {
 	contentChanged(slot);
 	if (history_)
 		history_->resetSlot(slot);
+	return Status::Ok;
+}
+
+Status ResidentAudio::detachForHistory(SlotId slot) {
+	if (!validSlot(slot))
+		return Status::Invalid;
+	auto& state = slots_[slot];
+	// A live provider or an unsealed initial take cannot be detached safely.
+	if (state.initial || state.capture || state.playing)
+		return Status::Busy;
+	// Reject before changing pool mapping: a pending entry still writes through
+	// the bound phrase during bounded retirement.
+	if (rollback_.provisional(slot) || rollback_.pending(slot))
+		return Status::Busy;
+	PhraseHandle retained;
+	const auto detached = pool_.detach(slot, retained);
+	if (detached != Status::Ok)
+		return detached;
+	// Safety was established above, so the binding can be dropped without a scan.
+	detail::invariant(rollback_.unbind(slot) == Status::Ok);
+	state = {};
+	contentChanged(slot);
 	return Status::Ok;
 }
 

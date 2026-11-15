@@ -1,10 +1,35 @@
 #include "engine.h"
 namespace loop_station {
+void Engine::advanceHistoryEpoch(SlotId slot) {
+	if (!validSlot(slot))
+		return;
+	// Skip zero so wrap can never re-authorize an expired identity token.
+	if (++historyEpoch_[slot] == 0)
+		++historyEpoch_[slot];
+}
+
+void Engine::setPlaying(SlotId slot, bool playing) {
+	auto& state = slots_[slot].state;
+	if (state.playing == playing)
+		return;
+	state.playing = playing;
+	advanceHistoryEpoch(slot);
+}
+
+void Engine::setCapture(SlotId slot, bool open) {
+	auto& state = slots_[slot].state;
+	if (state.capture == open)
+		return;
+	state.capture = open;
+	advanceHistoryEpoch(slot);
+}
+
 void Engine::advanceStreamGeneration(SlotId slot) {
 	if (!validSlot(slot))
 		return;
 	if (++streamGeneration_[slot] == 0)
 		++streamGeneration_[slot];
+	advanceHistoryEpoch(slot);
 }
 
 void Engine::phraseReplaced(SlotId slot, FrameIndex length, bool playing) {
@@ -14,11 +39,44 @@ void Engine::phraseReplaced(SlotId slot, FrameIndex length, bool playing) {
 	auto& state = slots_[slot].state;
 	state.hasPhrase = true;
 	state.phraseFrames = length;
-	state.capture = false;
-	state.playing = playing;
+	setCapture(slot, false);
+	setPlaying(slot, playing);
 	state.pending = false;
 	state.action = PendingAction::None;
 	state.error = Status::Ok;
+}
+
+void Engine::phraseRemoved(SlotId slot) {
+	if (!validSlot(slot))
+		return;
+	auto& s = slots_[slot];
+	cancelPending(slot);
+	// Empty/stopped, with no stale gesture, deadline, or error. Selection and
+	// settings stay with the bound clip.
+	s = {};
+	advanceStreamGeneration(slot);
+}
+
+Status Engine::closeCaptureForHistory(SlotId slot) {
+	if (!validSlot(slot))
+		return Status::Invalid;
+	auto& s = slots_[slot];
+	if (!s.state.capture)
+		return Status::Busy;
+	if (!s.state.playing) {
+		// Active initial take: seal stopped, bypassing quantized stop deadlines
+		// and the automatic Play/Dub continuation.
+		cancelPending(slot);
+		s.held = false;
+		s.tap = false;
+		return complete(slot, false, false);
+	}
+	// Active overdub: confirm the provisional additions and keep playing. Never
+	// route through the centre-pad double-tap cancellation.
+	close(slot, false);
+	s.held = false;
+	s.tap = false;
+	return Status::Ok;
 }
 
 void Engine::queue(SlotId slot, PendingAction action, Deadline deadline) {
@@ -45,7 +103,7 @@ void Engine::close(SlotId slot, bool cancel) {
 	else
 		rollback_.confirm(slot);
 	if (slots_[slot].state.playing)
-		slots_[slot].state.capture = false;
+		setCapture(slot, false);
 }
 Status Engine::fail(SlotId slot, Status status) {
 	auto& s = slots_[slot];
@@ -64,12 +122,12 @@ Status Engine::complete(SlotId slot, bool play, bool dub) {
 	PhraseHandle handle;
 	const auto status = audio_.finishInitial(slot, handle);
 	const auto completion = audio_.takeCompletion(slot);
-	s.state.capture = false;
+	setCapture(slot, false);
 	s.durationActive = false;
 	if (status != Status::Ok) {
 		// Zero-frame takes remain empty, without manufacturing a capture fault.
 		s.state.hasPhrase = false;
-		s.state.playing = false;
+		setPlaying(slot, false);
 		s.state.phraseFrames = 0;
 		return completion.frames == 0 ? Status::Ok : status;
 	}
@@ -81,7 +139,7 @@ Status Engine::complete(SlotId slot, bool play, bool dub) {
 			s.state.error = started;
 			return started;
 		}
-		s.state.playing = true;
+		setPlaying(slot, true);
 		advanceStreamGeneration(slot);
 		if (dub) {
 			auto opened = audio_.setCaptureGate(slot, true);
@@ -89,12 +147,12 @@ Status Engine::complete(SlotId slot, bool play, bool dub) {
 				s.state.error = opened;
 				return opened;
 			}
-			s.state.capture = true;
+			setCapture(slot, true);
 		}
 	}
 	else {
 		audio_.stop(slot);
-		s.state.playing = false;
+		setPlaying(slot, false);
 	}
 	return Status::Ok;
 }
@@ -106,7 +164,7 @@ Status Engine::execute(SlotId slot, PendingAction action, SampleClock now, const
 		const auto status = audio_.beginInitial(slot, bars ? clock.samplesForBars(bars) : 0);
 		if (status != Status::Ok)
 			return fail(slot, status);
-		s.state.capture = true;
+		setCapture(slot, true);
 		s.tap = false;
 		s.held = false;
 		s.initialStart = now;
@@ -119,8 +177,8 @@ Status Engine::execute(SlotId slot, PendingAction action, SampleClock now, const
 		const auto status = audio_.start(slot, settings_.tracks[slot].playback == PlaybackMode::OneShot);
 		if (status != Status::Ok)
 			return fail(slot, status);
-		s.state.playing = true;
-		s.state.capture = false;
+		setPlaying(slot, true);
+		setCapture(slot, false);
 		advanceStreamGeneration(slot);
 		return Status::Ok;
 	}
@@ -133,7 +191,7 @@ Status Engine::execute(SlotId slot, PendingAction action, SampleClock now, const
 	case PendingAction::Stop:
 		close(slot, false);
 		audio_.stop(slot);
-		s.state.playing = false;
+		setPlaying(slot, false);
 		s.tap = false;
 		return Status::Ok;
 	case PendingAction::Clear: {
@@ -144,6 +202,7 @@ Status Engine::execute(SlotId slot, PendingAction action, SampleClock now, const
 		}
 		if (status != Status::Ok)
 			return fail(slot, status);
+		advanceHistoryEpoch(slot);
 		s = {};
 		return Status::Ok;
 	}
@@ -158,6 +217,7 @@ void Engine::removeSlot(SlotId slot, SampleClock now, const ClockMap& clock) {
 	close(slot, false);
 	audio_.stop(slot);
 	slots_[slot] = {};
+	advanceStreamGeneration(slot);
 	if (selected_ == slot)
 		selected_ = kInvalidSlot;
 	queue(slot, PendingAction::Clear, {true, now, {}});
@@ -171,8 +231,8 @@ void Engine::service(SampleClock now, const ClockMap& clock) {
 		auto& s = slots_[id];
 		const auto event = audio_.takeCompletion(id);
 		if (event.reason == CompletionReason::OneShot) {
-			s.state.playing = false;
-			s.state.capture = false;
+			setPlaying(id, false);
+			setCapture(id, false);
 		}
 		else if (event.reason != CompletionReason::None && s.state.capture && !s.state.playing) {
 			// Preserve the already-consumed completion's length for finishInitial().
@@ -372,7 +432,7 @@ Status Engine::dispatch(Command command, SampleClock now, const ClockMap& clock)
 					rollback_.cancel(id);
 					return fail(id, opened);
 				}
-				s.state.capture = true;
+				setCapture(id, true);
 			}
 			s.tap = true;
 			s.tapTime = now;

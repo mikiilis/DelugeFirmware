@@ -756,3 +756,162 @@ TEST(LoopEngine, configureLoopWhileExplicitStopPendingPreservesMusicalStopDeadli
 	CHECK_FALSE(engine.state(0).playing);
 	CHECK_FALSE(engine.state(0).pending);
 }
+
+// Confirmed history closure of an initial take must seal it stopped, bypassing
+// the configured REC_DUB_PLAY automatic Play/Dub and quantized stop deadlines.
+TEST(LoopEngine, historyClosureOfInitialTakeNeverEntersAutomaticDub) {
+	auto settings = engine.settings();
+	settings.recordAction = RecordAction::REC_DUB_PLAY;
+	settings.startAction = {ActionMode::Synced, Interval::Quarter};
+	settings.stopAction = {ActionMode::Synced, Interval::Quarter};
+	CHECK(Status::Ok == engine.dispatch(Command::configure(settings), 0, clock));
+	command(CommandType::Press, 0);
+	CHECK(engine.state(0).pending);
+	engine.service(22050, clock);
+	CHECK(engine.state(0).capture);
+	CHECK_FALSE(engine.state(0).playing);
+	samples(8);
+	command(CommandType::Press, 22058);
+	CHECK(engine.state(0).pending);
+	CHECK(Status::Ok == engine.closeCaptureForHistory(0));
+	CHECK_FALSE(engine.state(0).capture);
+	CHECK_FALSE(engine.state(0).playing);
+	CHECK(engine.state(0).hasPhrase);
+	CHECK_EQUAL(8, engine.state(0).phraseFrames);
+	CHECK_FALSE(engine.state(0).pending);
+	CHECK_FALSE(engine.nextActionSample(clock));
+	// The bypassed quantized deadline must not later begin playback or dubbing.
+	engine.service(44100, clock);
+	CHECK_FALSE(engine.state(0).capture);
+	CHECK_FALSE(engine.state(0).playing);
+	// A zero-frame take closes to empty without manufacturing a phrase or Redo.
+	auto fresh = defaultSettings();
+	fresh.startAction.mode = ActionMode::Immediate;
+	fresh.stopAction.mode = ActionMode::Immediate;
+	CHECK(Status::Ok == engine.dispatch(Command::configure(fresh), 44101, clock));
+	command(CommandType::Press, 44101, 1);
+	CHECK(engine.state(1).capture);
+	CHECK(Status::Ok == engine.closeCaptureForHistory(1));
+	CHECK_FALSE(engine.state(1).hasPhrase);
+	CHECK_FALSE(engine.state(1).capture);
+	CHECK_FALSE(engine.state(1).playing);
+	CHECK_EQUAL(0, engine.state(1).phraseFrames);
+}
+
+// Confirmed history closure of an overdub confirms provisional additions
+// instead of cancelling them, keeps playback, and bypasses quantized settings.
+TEST(LoopEngine, historyClosureOfOverdubKeepsPlaybackAndRecordedFrames) {
+	phrase(false, RecordAction::REC_PLAY_DUB, 0);
+	CHECK_FALSE(engine.state(0).capture);
+	samples(1);
+	auto settings = engine.settings();
+	settings.recordAction = RecordAction::REC_DUB_PLAY;
+	settings.startAction = {ActionMode::Synced, Interval::Quarter};
+	settings.stopAction = {ActionMode::Synced, Interval::Quarter};
+	CHECK(Status::Ok == engine.dispatch(Command::configure(settings), 1000, clock));
+	command(CommandType::Press, 1000);
+	CHECK(engine.state(0).capture);
+	CHECK(engine.state(0).playing);
+	CHECK(rollback.provisional(0));
+	samples(3, 0, {100, -100});
+	CHECK(Status::Ok == engine.closeCaptureForHistory(0));
+	CHECK_FALSE(engine.state(0).capture);
+	CHECK(engine.state(0).playing);
+	CHECK_FALSE(engine.state(0).pending);
+	CHECK_FALSE(rollback.provisional(0));
+	CHECK_FALSE(engine.nextActionSample(clock));
+	const auto retained = pool.sealedHandle(0);
+	CHECK(retained.valid());
+	// Frame 1 was overdubbed with +100; a cancel would have restored the original 10.
+	CHECK_EQUAL(110, pool.frame(retained, 1)->l);
+	// The cleared tap means the next press opens a fresh overdub, not a double-tap stop.
+	command(CommandType::Press, 2000);
+	CHECK(engine.state(0).capture);
+	CHECK(engine.state(0).playing);
+	CHECK(Status::Ok == engine.closeCaptureForHistory(0));
+	CHECK_FALSE(engine.state(0).capture);
+}
+
+// Removing a phrase for history empties the track while keeping the clip bound,
+// the selection, and the track settings.
+TEST(LoopEngine, phraseRemovalPreservesSelectionAndSettings) {
+	phrase(false, RecordAction::REC_PLAY_DUB, 0);
+	command(CommandType::TransportStop, 20000);
+	auto settings = engine.settings();
+	settings.tracks[0].source = Source::Balanced;
+	settings.tracks[0].monitoring = Monitoring::Off;
+	settings.tracks[0].playback = PlaybackMode::OneShot;
+	settings.tracks[0].colour = Colour::Magenta;
+	settings.tracks[0].transposeCents = 700;
+	CHECK(Status::Ok == engine.dispatch(Command::configure(settings), 20001, clock));
+	command(CommandType::Select, 20001, 0);
+	CHECK_EQUAL(0, engine.selected());
+	const auto epoch = engine.historyEpoch(0);
+	const auto stream = engine.streamGeneration(0);
+	CHECK(Status::Ok == audio.detachForHistory(0));
+	engine.phraseRemoved(0);
+	const auto state = engine.state(0);
+	CHECK_FALSE(state.hasPhrase);
+	CHECK_FALSE(state.playing);
+	CHECK_FALSE(state.capture);
+	CHECK_EQUAL(0, state.phraseFrames);
+	CHECK_EQUAL(0, engine.selected());
+	const auto& kept = engine.settings();
+	CHECK(kept.tracks[0].source == Source::Balanced);
+	CHECK(kept.tracks[0].monitoring == Monitoring::Off);
+	CHECK(kept.tracks[0].playback == PlaybackMode::OneShot);
+	CHECK(kept.tracks[0].colour == Colour::Magenta);
+	CHECK_EQUAL(700, kept.tracks[0].transposeCents);
+	CHECK(engine.historyEpoch(0) != epoch);
+	CHECK(engine.streamGeneration(0) != stream);
+	CHECK_FALSE(engine.nextActionSample(clock));
+}
+
+// An obsolete pad release after removal must neither clear nor restart the
+// removed phrase; a later fresh press begins a new recording.
+TEST(LoopEngine, oldPadReleaseCannotClearOrRestartRemovedPhrase) {
+	phrase(false, RecordAction::REC_PLAY_DUB, 0);
+	command(CommandType::TransportStop, 20000);
+	command(CommandType::Press, 20001);
+	CHECK_EQUAL(0, engine.heldDurationSamples(0, 20001));
+	CHECK(Status::Ok == audio.detachForHistory(0));
+	engine.phraseRemoved(0);
+	CHECK_FALSE(engine.state(0).hasPhrase);
+	command(CommandType::Release, 20001 + 3 * kSampleRate);
+	CHECK_FALSE(engine.state(0).hasPhrase);
+	CHECK_FALSE(engine.state(0).playing);
+	CHECK_FALSE(engine.state(0).pending);
+	CHECK_EQUAL(0, engine.heldDurationSamples(0, 20001 + 3 * kSampleRate));
+	command(CommandType::Press, 400000);
+	CHECK(engine.state(0).capture);
+	CHECK_FALSE(engine.state(0).playing);
+}
+
+// History identity advances for real session transitions, never for incoming
+// frames or for provisional expiry inside a single capture session.
+TEST(LoopEngine, historyEpochTracksSessionsNotSamples) {
+	phrase(false, RecordAction::REC_PLAY_DUB, 0);
+	const auto base = engine.historyEpoch(0);
+	samples(200);
+	CHECK_EQUAL(base, engine.historyEpoch(0));
+	command(CommandType::Press, 1000);
+	const auto capturing = engine.historyEpoch(0);
+	CHECK(capturing != base);
+	// Provisional expiry driven by the engine's authoritative clock must not
+	// change the capture identity.
+	for (SampleClock now = 1000; now <= 1000 + GestureRollback::kProvisionalSamples; ++now)
+		engine.service(now, clock);
+	CHECK_FALSE(rollback.provisional(0));
+	CHECK_EQUAL(capturing, engine.historyEpoch(0));
+	samples(50, 0, {1, 1});
+	CHECK_EQUAL(capturing, engine.historyEpoch(0));
+	CHECK(Status::Ok == engine.closeCaptureForHistory(0));
+	const auto closed = engine.historyEpoch(0);
+	CHECK(closed != capturing);
+	command(CommandType::TransportStop, 20000);
+	CHECK_FALSE(engine.state(0).playing);
+	const auto stopped = engine.historyEpoch(0);
+	CHECK(stopped != closed);
+	engine.phraseReplaced(0, 5, true);
+	CHECK(engine.historyEpoch(0) != stopped);
+}

@@ -51,6 +51,13 @@ public:
 	// Detach a deleted/unbound slot immediately; bounded rollback retirement may defer clear.
 	void removeSlot(SlotId slot, SampleClock now, const ClockMap& clock);
 	void phraseReplaced(SlotId slot, FrameIndex length, bool playing);
+	// Publish a track as truly empty after its phrase was detached for history.
+	void phraseRemoved(SlotId slot);
+	// Identity that changes only on real capture/session transitions, never on
+	// incoming frames or provisional expiry inside one session.
+	Generation historyEpoch(SlotId slot) const { return validSlot(slot) ? historyEpoch_[slot] : 0; }
+	// Close exactly the active capture for a confirmed history operation.
+	Status closeCaptureForHistory(SlotId slot);
 	std::optional<SampleClock> nextActionSample(const ClockMap& clock) const;
 	SlotState state(SlotId slot) const { return validSlot(slot) ? slots_[slot].state : SlotState{}; }
 	SampleClock heldDurationSamples(SlotId slot, SampleClock now) const {
@@ -77,11 +84,15 @@ private:
 	void close(SlotId slot, bool cancel);
 	void cancelPending(SlotId slot);
 	void advanceStreamGeneration(SlotId slot);
+	void advanceHistoryEpoch(SlotId slot);
+	void setPlaying(SlotId slot, bool playing);
+	void setCapture(SlotId slot, bool open);
 	ResidentAudio& audio_;
 	GestureRollback& rollback_;
 	Settings settings_ = defaultSettings();
 	Slot slots_[kTrackCount]{};
 	uint32_t streamGeneration_[kTrackCount]{};
+	Generation historyEpoch_[kTrackCount]{};
 	SlotId selected_ = kInvalidSlot;
 };
 } // namespace loop_station

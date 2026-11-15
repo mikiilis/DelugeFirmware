@@ -380,3 +380,33 @@ TEST(LoopGestureRollback, failedInitialBindingCannotAdmitPlaybackOrCapture) {
 	CHECK_EQUAL(0, output[0].l);
 	CHECK_EQUAL(0, output[0].r);
 }
+
+// Unbinding a phrase must wait for every provisional and pending entry to retire,
+// then invalidate the binding identity without touching the retained phrase.
+TEST(LoopGestureRollback, unbindWaitsForRollbackRetirement) {
+	const auto handle = phrase();
+	CHECK(rollback.boundGeneration(0) != 0);
+	begin();
+	samples(2);
+	CHECK(rollback.provisional(0));
+	CHECK(Status::Busy == rollback.unbind(0));
+	CHECK(rollback.boundGeneration(0) != 0);
+	CHECK(Status::Ok == rollback.cancel(0));
+	CHECK_FALSE(rollback.provisional(0));
+	CHECK(rollback.pending(0));
+	CHECK(Status::Busy == rollback.unbind(0));
+	rollback.service(16);
+	CHECK_FALSE(rollback.pending(0));
+	const auto revision = rollback.readRevision(0);
+	CHECK(Status::Ok == rollback.unbind(0));
+	CHECK_EQUAL(0, rollback.boundGeneration(0));
+	CHECK(rollback.readRevision(0) != revision);
+	// The retained phrase is still intact for Redo.
+	CHECK_EQUAL(10, pool.frame(handle, 0)->l);
+	CHECK_EQUAL(-20, pool.frame(handle, 0)->r);
+	// A second unbind is harmless and does not advance the revision again.
+	const auto stable = rollback.readRevision(0);
+	CHECK(Status::Ok == rollback.unbind(0));
+	CHECK_EQUAL(stable, rollback.readRevision(0));
+	CHECK(Status::Invalid == rollback.unbind(kInvalidSlot));
+}

@@ -294,6 +294,22 @@ Status GestureRollback::confirm(SlotId slot) {
 Status GestureRollback::cancel(SlotId slot) {
 	return resolve(slot, Resolution::Cancelled);
 }
+Status GestureRollback::unbind(SlotId slot) {
+	if (!initialized_ || !validSlot(slot))
+		return Status::Invalid;
+	auto& state = slots_[slot];
+	// A still-active or still-retiring entry refers to the bound phrase; the
+	// caller must confirm/cancel it and let bounded retirement finish first.
+	if (state.active != nil || state.retiredHead != nil || state.root != nil)
+		return Status::Busy;
+	if (state.handle.valid()) {
+		if (++state.revision == 0)
+			++state.revision;
+		state.handle = {};
+		state.length = 0;
+	}
+	return Status::Ok;
+}
 void GestureRollback::advance(SampleClock now) {
 	for (SlotId id = 0; id < kTrackCount; ++id) {
 		auto& slot = slots_[id];

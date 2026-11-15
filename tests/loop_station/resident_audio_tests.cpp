@@ -501,3 +501,39 @@ TEST(LoopAudio, finishInitialRejectsReleasedResultHandle) {
 	CHECK(Status::Stale == audio.finishInitial(0, handle));
 	CHECK_FALSE(handle.valid());
 }
+
+// detachForHistory forgets the resident provider only after ownership is safely
+// detached: never while playing, and never while rollback still references the
+// phrase. The retained record stays readable and its pages are not freed.
+TEST(LoopAudio, detachForHistoryRequiresSafeOwnershipAndRetainsPhrase) {
+	const Frame backing[] = {{10, -10}, {20, -20}};
+	const auto handle = phrase(backing);
+	CHECK(Status::Ok == audio.start(0, false));
+	CHECK(Status::Busy == audio.detachForHistory(0));
+	CHECK(Status::Ok == rollback.begin(0, 0, audio.position(0), 2));
+	CHECK(Status::Ok == audio.setCaptureGate(0, true));
+	const Frame input[] = {{1, 1}, {2, 2}};
+	Frame output[2];
+	audio.render(0, input, output);
+	CHECK(Status::Ok == audio.setCaptureGate(0, false));
+	audio.stop(0);
+	CHECK(rollback.provisional(0));
+	CHECK(Status::Busy == audio.detachForHistory(0));
+	CHECK(Status::Ok == rollback.cancel(0));
+	CHECK(rollback.pending(0));
+	CHECK(Status::Busy == audio.detachForHistory(0));
+	rollback.service(16);
+	CHECK_FALSE(rollback.pending(0));
+	const auto revision = audio.contentRevision(0);
+	const auto free = pool.freePages();
+	CHECK(Status::Ok == audio.detachForHistory(0));
+	CHECK_EQUAL(revision + 1, audio.contentRevision(0));
+	CHECK_FALSE(audio.playing(0));
+	CHECK_EQUAL(0, audio.position(0));
+	CHECK_EQUAL(free, pool.freePages());
+	CHECK_FALSE(pool.sealedHandle(0).valid());
+	CHECK_EQUAL(2, pool.length(handle));
+	CHECK_EQUAL(10, pool.frame(handle, 0)->l);
+	CHECK(Status::Invalid == audio.detachForHistory(0));
+	CHECK(Status::Invalid == audio.detachForHistory(kInvalidSlot));
+}

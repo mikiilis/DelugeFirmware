@@ -32,6 +32,9 @@ public:
 	Status start(SlotId slot, bool oneShot);
 	void stop(SlotId slot);
 	Status clear(SlotId slot);
+	// Forgets the resident provider/state after safe ownership detachment. The
+	// retained phrase stays readable for Redo; History is left untouched.
+	Status detachForHistory(SlotId slot);
 	// Explicit musical stops defer natural completion; cancellation rearms it.
 	void setOneShotCompletion(SlotId slot, bool enabled);
 	Status setCaptureGate(SlotId slot, bool open);

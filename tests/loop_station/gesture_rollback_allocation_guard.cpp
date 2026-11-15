@@ -78,5 +78,12 @@ int main() {
 		if (rollback.work().treeSteps - work.treeSteps > 256)
 			return 10;
 	}
+	// Task 2: clearing a settled binding allocates nothing.
+	for (SlotId slot = 0; slot < kTrackCount; ++slot) {
+		if (rollback.pending(slot) || rollback.provisional(slot))
+			return 12;
+		if (rollback.unbind(slot) != Status::Ok)
+			return 13;
+	}
 	return allocationCalls == before ? 0 : 11;
 }
