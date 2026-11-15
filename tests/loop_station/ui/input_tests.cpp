@@ -1116,10 +1116,28 @@ TEST(LoopUi, StutterRetargetRestoresSourceRateAndConsumesRelease) {
 	POINTERS_EQUAL(&sourceParams, view.lastAutomationParamManager);
 	CHECK_EQUAL(view.nextTargetModKnobMode, view.activeModKnobMode);
 	POINTERS_EQUAL(&destinationParams, view.activeModControllableModelStack.paramManager);
-	f.view.modEncoderButtonAction(1, false);
-	CHECK_EQUAL(0, view.modEncoderButtonCalls);   // The original release is consumed, not sent to the destination.
-	CHECK_EQUAL(1, view.automationNotifications); // Release did not call endStutter a second time.
+	ProbeAudioModControllable destination;
+	view.activeModControllableModelStack.modControllable = &destination;
+	CHECK(loopStationSettingsMenu.openGlobal());
+	POINTERS_EQUAL(&loopStationSettingsMenu, getCurrentUI());
+	Buttons::probeDispatchModEncoderButtonAction(1, false);
+	CHECK_EQUAL(0, view.modEncoderButtonCalls);   // The current settings UI must consume the original release.
+	CHECK_EQUAL(1, view.automationNotifications); // No second endStutter on the destination manager.
 	CHECK_EQUAL(destinationRate, destinationParams.params.getValue(rateParam));
+	loopStationSettingsMenu.close();
+	POINTERS_EQUAL(&f.view, getCurrentUI());
+
+	view.activeModControllableModelStack.paramManager = &destinationParams;
+	CHECK(
+	    Error::NONE
+	    == stutterer.beginStutter(&destination, &destinationParams, StutterConfig{.quantized = true}, 13, 0x40000000));
+	CHECK_EQUAL(0, destinationParams.params.getValue(rateParam));
+	currentUIMode = UI_MODE_STUTTERING;
+	Buttons::probeDispatchModEncoderButtonAction(1, true);
+	Buttons::probeDispatchModEncoderButtonAction(1, false);
+	CHECK_FALSE(stutterer.isStuttering(&destination));
+	CHECK_EQUAL(destinationRate, destinationParams.params.getValue(rateParam));
+	CHECK_EQUAL(2, view.automationNotifications); // Fresh release ends its own gesture exactly once.
 }
 
 TEST(LoopUi, EveryBorderAndEncoderSelectionTargetsItsOwnClip) {

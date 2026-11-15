@@ -85,7 +85,9 @@ public:
 		void* modControllable = nullptr;
 		void* paramManager = nullptr;
 	} activeModControllableModelStack;
+	bool pendingStutterEncoderRelease_ = false;
 	bool finishActiveStutterForModTargetChange();
+	bool consumePendingStutterEncoderRelease(uint8_t whichModEncoder, bool on);
 };
 
 extern Stutterer stutterer;

@@ -9,9 +9,11 @@ add_custom_command(
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/ui/generate_dispatch_probe.py"
             --ui "${CMAKE_CURRENT_SOURCE_DIR}/../../src/deluge/gui/ui/ui.cpp"
             --timers "${CMAKE_CURRENT_SOURCE_DIR}/../../src/deluge/gui/ui_timer_manager.cpp"
+            --buttons "${CMAKE_CURRENT_SOURCE_DIR}/../../src/deluge/hid/buttons.cpp"
             --output "${LOOP_DISPATCH_PROBE}"
     DEPENDS ui/generate_dispatch_probe.py ui/probe_support.h
             ../../src/deluge/gui/ui/ui.cpp ../../src/deluge/gui/ui_timer_manager.cpp
+            ../../src/deluge/hid/buttons.cpp
     VERBATIM
 )
 add_custom_command(

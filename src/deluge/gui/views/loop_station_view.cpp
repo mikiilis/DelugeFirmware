@@ -207,15 +207,7 @@ void LoopStationView::updateModTarget() {
 	}
 }
 void LoopStationView::finishStutterBeforeTargetChange() {
-	if (view.finishActiveStutterForModTargetChange())
-		stutterEncoderReleasePending_ = true;
-}
-void LoopStationView::modEncoderButtonAction(uint8_t whichModEncoder, bool on) {
-	if (!on && whichModEncoder == 1 && stutterEncoderReleasePending_) {
-		stutterEncoderReleasePending_ = false;
-		return;
-	}
-	view.modEncoderButtonAction(whichModEncoder, on);
+	view.finishActiveStutterForModTargetChange();
 }
 void LoopStationView::updateLed() {
 	indicator_leds::setLedState(IndicatorLED::CROSS_SCREEN_EDIT, true);

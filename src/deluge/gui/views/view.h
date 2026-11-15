@@ -77,6 +77,7 @@ public:
 	void setActiveModControllableTimelineCounter(TimelineCounter* playPositionCounter,
 	                                             bool shouldSendMidiFeedback = true);
 	bool finishActiveStutterForModTargetChange();
+	bool consumePendingStutterEncoderRelease(uint8_t whichModEncoder, bool on);
 	void setActiveModControllableWithoutTimelineCounter(ModControllable* modControllable, ParamManager* paramManager);
 	void cycleThroughReverbPresets();
 	char const* getReverbPresetDisplayName(int32_t preset);
@@ -165,6 +166,7 @@ private:
 	int32_t cachedMaxYDisplayForVUMeterR;
 	void renderVUMeter(int32_t maxYDisplay, int32_t xDisplay, RGB thisImage[][kDisplayWidth + kSideBarWidth]);
 	bool renderedVUMeter;
+	bool pendingStutterEncoderRelease_ = false;
 
 	// mod encoder action
 	void modEncoderAction_nonExistentParam(int32_t whichModEncoder, int32_t offset,

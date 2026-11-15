@@ -35,6 +35,7 @@ public:
 	                           uint8_t mask[][kDisplayWidth + kSideBarWidth] = nullptr) {
 		return false;
 	}
+	virtual void modEncoderButtonAction(uint8_t whichModEncoder, bool on);
 	virtual bool getAffectEntire() { return false; }
 	virtual UIModControllableContext getUIModControllableContext() { return UIModControllableContext::NONE; }
 	void close();
@@ -61,6 +62,9 @@ ProbeUI* getCurrentUI();
 ProbeUI* getRootUI();
 void uiNeedsRendering(ProbeUI* ui, uint32_t mainRows = 0xffffffff, uint32_t sideRows = 0xffffffff);
 void renderUIsForOled();
+namespace Buttons {
+void probeDispatchModEncoderButtonAction(uint8_t whichModEncoder, bool on);
+}
 
 class TimelineCounter {
 public:
@@ -214,7 +218,19 @@ public:
 		activeModControllableModelStack.paramManager = nextTargetParamManager;
 		activeModKnobMode = nextTargetModKnobMode;
 	}
-	void modEncoderButtonAction(uint8_t, bool) { ++modEncoderButtonCalls; }
+	bool consumePendingStutterEncoderRelease(uint8_t whichModEncoder, bool on) {
+		return targetChangeView.consumePendingStutterEncoderRelease(whichModEncoder, on);
+	}
+	void modEncoderButtonAction(uint8_t whichModEncoder, bool on) {
+		if (consumePendingStutterEncoderRelease(whichModEncoder, on)) {
+			return;
+		}
+		++modEncoderButtonCalls;
+		if (whichModEncoder == 1 && !on && activeModControllableModelStack.modControllable) {
+			static_cast<LifecycleModControllableAudio*>(activeModControllableModelStack.modControllable)
+			    ->endStutter(static_cast<ParamManagerForTimeline*>(activeModControllableModelStack.paramManager));
+		}
+	}
 	void notifyParamAutomationOccurred(ParamManagerForTimeline* paramManager) {
 		++automationNotifications;
 		lastAutomationParamManager = paramManager;
@@ -251,7 +267,6 @@ public:
 	ActionResult timerCallback();
 	ActionResult padAction(int32_t, int32_t, int32_t);
 	ActionResult buttonAction(deluge::hid::Button, bool, bool);
-	void modEncoderButtonAction(uint8_t, bool);
 	bool getAffectEntire() override;
 	UIModControllableContext getUIModControllableContext() override;
 	bool renderMainPads(uint32_t, RGB[][kDisplayWidth + kSideBarWidth], uint8_t[][kDisplayWidth + kSideBarWidth],
@@ -267,6 +282,5 @@ public:
 	loop_station::SlotId pendingRestoreSlot_ = loop_station::kInvalidSlot;
 	bool pendingExit_ = false;
 	bool modTargetIsClip_ = false;
-	bool stutterEncoderReleasePending_ = false;
 	void finishStutterBeforeTargetChange();
 };

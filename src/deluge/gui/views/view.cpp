@@ -1349,6 +1349,9 @@ void View::instrumentBeenEdited() {
 }
 
 void View::modEncoderButtonAction(uint8_t whichModEncoder, bool on) {
+	if (consumePendingStutterEncoderRelease(whichModEncoder, on)) {
+		return;
+	}
 
 	// If the learn button is pressed, user is trying to copy or paste, and the fact that we've ended up here means they
 	// can't
@@ -1920,6 +1923,15 @@ bool View::finishActiveStutterForModTargetChange() {
 	}
 	static_cast<ModControllableAudio*>(activeModControllableModelStack.modControllable)
 	    ->endStutter(static_cast<ParamManagerForTimeline*>(activeModControllableModelStack.paramManager));
+	pendingStutterEncoderRelease_ = true;
+	return true;
+}
+
+bool View::consumePendingStutterEncoderRelease(uint8_t whichModEncoder, bool on) {
+	if (whichModEncoder != 1 || on || !pendingStutterEncoderRelease_) {
+		return false;
+	}
+	pendingStutterEncoderRelease_ = false;
 	return true;
 }
 

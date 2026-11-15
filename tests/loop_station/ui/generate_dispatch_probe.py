@@ -18,10 +18,12 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--ui", type=Path, required=True)
     parser.add_argument("--timers", type=Path, required=True)
+    parser.add_argument("--buttons", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     ui = args.ui.read_text()
     timers = args.timers.read_text()
+    buttons = args.buttons.read_text()
     rendering = section(
         ui,
         "uint32_t whichMainRowsNeedRendering = 0;",
@@ -30,10 +32,26 @@ def main():
     timer_case = section(
         timers, "case TimerName::GRAPHICS_ROUTINE:", "case TimerName::OLED_CONSOLE:"
     )
+    encoder_dispatch = section(
+        ui,
+        "void UI::modEncoderButtonAction(",
+        "void UI::graphicsRoutine()",
+    ).replace("UI::modEncoderButtonAction(", "ProbeUI::modEncoderButtonAction(", 1)
+    physical_encoder_dispatch = section(
+        buttons,
+        "void dispatchModEncoderButtonAction(",
+        "ActionResult buttonAction(",
+    ).replace(
+        "dispatchModEncoderButtonAction(", "probeDispatchModEncoderButtonAction(", 1
+    )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(
         '#include "settings_probe_support.h"\n'
-        "namespace production_dispatch {\n"
+        + encoder_dispatch
+        + "namespace Buttons {\n"
+        + physical_encoder_dispatch
+        + "}\n"
+        + "namespace production_dispatch {\n"
         "using UI = ProbeUI;\n"
         "static std::array<UI*, 2> uiNavigationHierarchy{};\n"
         "static int32_t numUIsOpen = 0;\n"

@@ -72,6 +72,13 @@ bool considerCrossScreenReleaseForCrossScreenMode;
 
 bool buttonStates[NUM_BUTTON_COLS + 1][NUM_BUTTON_ROWS]; // The extra col is for "fake" buttons
 
+void dispatchModEncoderButtonAction(uint8_t whichModEncoder, bool on) {
+	if (view.consumePendingStutterEncoderRelease(whichModEncoder, on)) {
+		return;
+	}
+	getCurrentUI()->modEncoderButtonAction(whichModEncoder, on);
+}
+
 ActionResult buttonAction(deluge::hid::Button b, bool on, bool inCardRoutine) {
 	using namespace deluge::hid::button;
 
@@ -232,10 +239,10 @@ ActionResult buttonAction(deluge::hid::Button b, bool on, bool inCardRoutine) {
 
 	// Mod encoder buttons
 	else if (b == MOD_ENCODER_0) {
-		getCurrentUI()->modEncoderButtonAction(0, on);
+		dispatchModEncoderButtonAction(0, on);
 	}
 	else if (b == MOD_ENCODER_1) {
-		getCurrentUI()->modEncoderButtonAction(1, on);
+		dispatchModEncoderButtonAction(1, on);
 	}
 dealtWith:
 
