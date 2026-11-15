@@ -1,11 +1,12 @@
 #include "engine.h"
+#include "epochs.h"
 namespace loop_station {
 void Engine::advanceHistoryEpoch(SlotId slot) {
 	if (!validSlot(slot))
 		return;
-	// Skip zero so wrap can never re-authorize an expired identity token.
-	if (++historyEpoch_[slot] == 0)
-		++historyEpoch_[slot];
+	// Saturate into the exhausted sentinel rather than wrapping and re-authorizing
+	// an expired identity token; callers treat exhaustion as navigation-unavailable.
+	historyEpoch_[slot] = nextEpoch(historyEpoch_[slot]);
 }
 
 void Engine::setPlaying(SlotId slot, bool playing) {
@@ -27,8 +28,7 @@ void Engine::setCapture(SlotId slot, bool open) {
 void Engine::advanceStreamGeneration(SlotId slot) {
 	if (!validSlot(slot))
 		return;
-	if (++streamGeneration_[slot] == 0)
-		++streamGeneration_[slot];
+	streamGeneration_[slot] = nextEpoch32(streamGeneration_[slot]);
 	advanceHistoryEpoch(slot);
 }
 

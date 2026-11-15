@@ -96,6 +96,8 @@ public:
 		return validSlot(slot) && (rollback_.provisional(slot) || rollback_.pending(slot));
 	}
 	Generation contentRevision(SlotId slot) const { return audio_.contentRevision(slot); }
+	bool captureHasWrittenFrames(SlotId slot) const { return audio_.captureHasWrittenFrames(slot); }
+	FrameIndex recordedInitialFrames(SlotId slot) const { return audio_.recordedInitialFrames(slot); }
 	bool checkpointRestorePending(SlotId slot) const {
 		return restoreOwner_.request && restoreOwner_.checkpoint && restoreOwner_.slot == slot;
 	}

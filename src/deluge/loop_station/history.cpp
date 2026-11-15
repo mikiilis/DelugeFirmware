@@ -226,6 +226,15 @@ bool History::activeSessionComplete(SlotId slot) const {
 	return sessions_[slots_[slot].active].complete;
 }
 
+bool History::canAdmitInitialBoundary() const {
+	if (sequence_ == std::numeric_limits<Generation>::max())
+		return false;
+	for (const auto& session : sessions_)
+		if (!session.identity)
+			return true;
+	return false;
+}
+
 void History::beforeWrite(SlotId slot, FrameIndex index, Frame original) {
 	if (!validSlot(slot) || slots_[slot].active == none)
 		return;

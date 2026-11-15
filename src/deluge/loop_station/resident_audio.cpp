@@ -29,6 +29,7 @@ Status ResidentAudio::beginInitial(SlotId slot, FrameIndex durationLimit) {
 	// completion. A failed admission above never reaches this.
 	if (history_)
 		history_->beginInitialEdit(slot);
+	captureWritten_[slot] = false;
 	auto& state = slots_[slot];
 	state = {};
 	state.durationLimit = durationLimit;
@@ -139,6 +140,7 @@ Status ResidentAudio::start(SlotId slot, bool oneShot) {
 }
 
 void ResidentAudio::beforeWrite(SlotId slot, FrameIndex index, Frame original) {
+	captureWritten_[slot] = true;
 	contentChanged(slot);
 	rollback_.beforeWrite(slot, index, original);
 	if (history_)
@@ -222,10 +224,13 @@ Status ResidentAudio::setCaptureGate(SlotId slot, bool open) {
 		return completeInitial(slot, CompletionReason::GateClosed, Status::Ok);
 	if (!state.initial && !state.playing)
 		return Status::Invalid;
-	if (!state.initial && open != state.capture && history_) {
-		if (open)
-			history_->beginSession(slot, state.handle.generation);
-		else
+	if (!state.initial && open != state.capture) {
+		if (open) {
+			captureWritten_[slot] = false;
+			if (history_)
+				history_->beginSession(slot, state.handle.generation);
+		}
+		else if (history_)
 			endSession(slot);
 	}
 	state.capture = open;

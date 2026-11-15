@@ -1,8 +1,20 @@
 #include "CppUTest/TestHarness.h"
 #include "deluge/loop_station/engine.h"
+#include "deluge/loop_station/epochs.h"
 #include <array>
 #include <vector>
 using namespace loop_station;
+TEST_GROUP(LoopEpochs){};
+TEST(LoopEpochs, exhaustedNavigationEpochsCannotAuthorizeTargets) {
+	CHECK(navigationEpochsAvailable(1, 1));
+	CHECK_FALSE(navigationEpochsAvailable(kExhaustedEpoch, 1));
+	CHECK_FALSE(navigationEpochsAvailable(1, kExhaustedEpoch));
+	CHECK_FALSE(navigationEpochsAvailable(kExhaustedEpoch, kExhaustedEpoch));
+	CHECK_EQUAL(kExhaustedEpoch, nextEpoch(kExhaustedEpoch - 1));
+	CHECK_EQUAL(kExhaustedEpoch, nextEpoch(kExhaustedEpoch));
+	CHECK_EQUAL(kExhaustedEpoch32, nextEpoch32(kExhaustedEpoch32 - 1));
+	CHECK_EQUAL(kExhaustedEpoch32, nextEpoch32(kExhaustedEpoch32));
+}
 TEST_GROUP(LoopEngine) {
 	std::vector<std::byte> backing, scratch;
 	PagePool pool;

@@ -23,6 +23,7 @@ public:
 	void recordInitial(SlotId slot, PhraseHandle handle);
 	bool activeSessionChanged(SlotId slot) const;
 	bool activeSessionComplete(SlotId slot) const;
+	bool canAdmitInitialBoundary() const;
 	bool canUndo(SlotId slot) const;
 	bool canRedo(SlotId slot) const;
 	Status requestRestore(SlotId slot, bool redo, RestoreId& id);

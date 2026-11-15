@@ -52,6 +52,10 @@ public:
 	uint8_t manualParticipants() const;
 	Status serviceCapacity(SlotId slot);
 	FrameIndex position(SlotId slot) const;
+	bool captureHasWrittenFrames(SlotId slot) const { return validSlot(slot) && captureWritten_[slot]; }
+	FrameIndex recordedInitialFrames(SlotId slot) const {
+		return validSlot(slot) && slots_[slot].initial ? slots_[slot].length : 0;
+	}
 	Generation contentRevision(SlotId slot) const { return validSlot(slot) ? contentRevisions_[slot] : 0; }
 	bool playing(SlotId slot) const { return validSlot(slot) && slots_[slot].playing; }
 	// One bounded event per slot. Consume before the next control transition.
@@ -83,6 +87,7 @@ private:
 	SnapshotStore* snapshots_ = nullptr;
 	Slot slots_[kTrackCount]{};
 	std::array<Generation, kTrackCount> contentRevisions_{};
+	std::array<bool, kTrackCount> captureWritten_{};
 };
 
 } // namespace loop_station

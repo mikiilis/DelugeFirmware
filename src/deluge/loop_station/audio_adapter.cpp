@@ -1,4 +1,5 @@
 #include "audio_adapter.h"
+#include "epochs.h"
 
 #include <algorithm>
 #include <limits>
@@ -56,7 +57,8 @@ void AudioAdapter::finalizeWindow(SampleClock now, size_t& frames, const ClockMa
 	for (SlotId slot = 0; slot < kTrackCount; ++slot) {
 		const bool playing = engine_.state(slot).playing;
 		const auto generation = engine_.streamGeneration(slot);
-		if ((playing && !lastPlaying_[slot]) || generation != lastStreamGeneration_[slot])
+		if ((playing && !lastPlaying_[slot]) || generation != lastStreamGeneration_[slot]
+		    || epochExhausted32(generation))
 			transpose_.reset(slot);
 		lastPlaying_[slot] = playing;
 		lastStreamGeneration_[slot] = generation;

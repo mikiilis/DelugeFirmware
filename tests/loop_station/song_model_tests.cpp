@@ -137,6 +137,18 @@ struct Fixture {
 		render(8, input);
 		CHECK(Status::Ok == model->dispatch({CommandType::Press, id}));
 	}
+	void fillHistoryDescriptors(SlotId id) {
+		CHECK(model->engine().state(id).playing);
+		CHECK_FALSE(model->engine().state(id).capture);
+		for (unsigned i = 1; i < History::kMaxSessions; ++i) {
+			CHECK(Status::Ok == model->dispatch({CommandType::Press, id}));
+			CHECK(model->engine().state(id).capture);
+			render(1, {static_cast<int32_t>(i), -static_cast<int32_t>(i)});
+			host.time += GestureRollback::kProvisionalSamples;
+			CHECK(Status::Ok == model->dispatch({CommandType::Press, id}));
+			host.time += GestureRollback::kProvisionalSamples;
+		}
+	}
 	// Run one confirmed history step to its terminal result through the real
 	// model-owned foreground service (no view timer).
 	HistoryNavigationResult undo(SlotId slot, bool redo) {
@@ -1459,6 +1471,71 @@ TEST(LoopBindings, KnownNoMemoryAdmissionLeavesOverdubGateOpen) {
 	CHECK_EQUAL(int(HistoryNavigationState::Idle), int(f.model->historyNavigationResult().state));
 }
 
+// With every optional history descriptor retained, a new overdub is still
+// captured. Its actual writes must not be misreported as an unchanged session
+// just because History could not allocate a descriptor.
+TEST(LoopBindings, DescriptorExhaustedChangedOverdubRemainsRunningAndUnavailable) {
+	Fixture f;
+	f.start();
+	f.record(0);
+	f.fillHistoryDescriptors(0);
+	const auto before = f.model->engine().state(0).phraseFrames;
+	const auto revisionBeforeCapture = f.model->contentRevision(0);
+	CHECK(Status::Ok == f.model->dispatch({CommandType::Press, 0}));
+	CHECK(f.model->engine().state(0).capture);
+	f.render(1, {12345, -23456});
+	const auto after = f.model->engine().state(0).phraseFrames;
+	CHECK_EQUAL(before, after);
+	CHECK(f.model->engine().state(0).capture);
+	CHECK(f.model->captureHasWrittenFrames(0));
+	CHECK(f.model->contentRevision(0) > revisionBeforeCapture);
+	HistoryTarget target{};
+	CHECK_FALSE(f.model->canUndo(0));
+	CHECK_EQUAL(int(Status::SourceUnavailable), int(f.model->historyTarget(0, false, target)));
+	const auto changedRevision = f.model->contentRevision(0);
+	RestoreId id{};
+	CHECK_EQUAL(int(Status::SourceUnavailable), int(f.model->requestHistoryNavigation(target, id)));
+	CHECK(f.model->engine().state(0).capture);
+	CHECK_EQUAL(before, f.model->engine().state(0).phraseFrames);
+	CHECK_EQUAL(changedRevision, f.model->contentRevision(0));
+}
+
+TEST(LoopBindings, DescriptorExhaustedUnchangedOverdubClosesWithoutFallingThrough) {
+	Fixture f;
+	f.start();
+	f.record(0);
+	f.fillHistoryDescriptors(0);
+	CHECK(Status::Ok == f.model->dispatch({CommandType::Press, 0}));
+	CHECK(f.model->engine().state(0).capture);
+	CHECK_FALSE(f.model->captureHasWrittenFrames(0));
+	HistoryTarget target{};
+	CHECK_EQUAL(int(Status::Ok), int(f.model->historyTarget(0, false, target)));
+	const auto revisionBeforeNoOp = f.model->contentRevision(0);
+	RestoreId id{};
+	CHECK_EQUAL(int(Status::SourceUnavailable), int(f.model->requestHistoryNavigation(target, id)));
+	CHECK_FALSE(f.model->engine().state(0).capture);
+	CHECK(f.model->engine().state(0).hasPhrase);
+	CHECK_EQUAL(revisionBeforeNoOp, f.model->contentRevision(0));
+}
+
+TEST(LoopBindings, DescriptorExhaustionRejectsNonzeroInitialUndoBeforeClosing) {
+	Fixture f;
+	f.start();
+	f.record(0);
+	f.fillHistoryDescriptors(0);
+	CHECK(Status::Ok == f.model->ensureBound(1));
+	CHECK(Status::Ok == f.model->dispatch({CommandType::Press, 1}));
+	f.render(1, {4567, -8765});
+	CHECK(f.model->engine().state(1).capture);
+	CHECK(f.model->recordedInitialFrames(1) != 0);
+	HistoryTarget target{};
+	CHECK_EQUAL(int(Status::SourceUnavailable), int(f.model->historyTarget(1, false, target)));
+	CHECK(f.model->engine().state(1).capture);
+	RestoreId id{};
+	CHECK_EQUAL(int(Status::SourceUnavailable), int(f.model->requestHistoryNavigation(target, id)));
+	CHECK(f.model->engine().state(1).capture);
+}
+
 // A restore that fails after confirmation already closed the capture - here the
 // just-closed boundary is evicted by descriptor pressure - keeps the cumulative
 // captured audio, leaves capture closed, reports the failure, and does not
@@ -1526,6 +1603,26 @@ TEST(LoopBindings, NewCaptureCancelsApplyingJobBeforePublication) {
 	CHECK(f.model->engine().state(0).capture);
 	CHECK(f.model->engine().state(0).hasPhrase);
 	CHECK(f.model->engine().state(0).playing);
+}
+
+// A directly dispatched TransportStop (even one that is a no-op on an already
+// stopped slot) advances the target transport identity so an armed confirmation
+// cannot act after an explicit transport command.
+TEST(LoopBindings, DirectTransportStopInvalidatesArmedTarget) {
+	Fixture f;
+	f.start();
+	f.record(0);
+	CHECK(Status::Ok == f.model->dispatch({CommandType::TransportStop}));
+	CHECK_FALSE(f.model->engine().state(0).playing);
+	HistoryTarget target{};
+	CHECK_EQUAL(int(Status::Ok), int(f.model->historyTarget(0, false, target)));
+	CHECK(f.model->historyTargetCurrent(target));
+	// A second, otherwise no-op transport stop still invalidates the target.
+	CHECK(Status::Ok == f.model->dispatch({CommandType::TransportStop}));
+	CHECK_FALSE(f.model->historyTargetCurrent(target));
+	RestoreId id{};
+	CHECK_EQUAL(int(Status::Stale), int(f.model->requestHistoryNavigation(target, id)));
+	CHECK_FALSE(id.valid());
 }
 
 // An observed running/stopped transport change (not a UI button) invalidates a

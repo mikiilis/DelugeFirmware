@@ -1,4 +1,5 @@
 #include "song_model.h"
+#include "epochs.h"
 #include "invariant.h"
 #include "menu_model.h"
 #include <algorithm>
@@ -11,8 +12,7 @@ Generation SongModel::nextModelIdentity() {
 	return ++next;
 }
 void SongModel::advanceTransportEpoch() {
-	if (++transportEpoch_ == 0)
-		++transportEpoch_;
+	transportEpoch_ = nextEpoch(transportEpoch_);
 }
 void SongModel::finishHistoryNavigation(Status status, bool complete) {
 	if (!navigation_.active)
@@ -343,6 +343,8 @@ Status SongModel::historyTarget(SlotId slot, bool redo, HistoryTarget& target) c
 		return Status::Unavailable;
 	if (!validSlot(slot))
 		return Status::Invalid;
+	if (!navigationEpochsAvailable(engine_.historyEpoch(slot), transportEpoch_))
+		return Status::Unavailable;
 	target.slot = slot;
 	target.redo = redo;
 	target.modelIdentity = modelIdentity_;
@@ -365,9 +367,12 @@ Status SongModel::historyTarget(SlotId slot, bool redo, HistoryTarget& target) c
 	// An active initial/overdub may be armed: confirmation closes it and reports
 	// honestly if no layer resulted. Known-unrestorable overdubs are not armable.
 	if (state.capture) {
-		if (!state.playing)
-			return Status::Ok; // Active initial: closure decides (may be zero-frame).
-		if (!history_.activeSessionChanged(slot))
+		if (!state.playing) {
+			if (audio_.recordedInitialFrames(slot) && !history_.canAdmitInitialBoundary())
+				return Status::SourceUnavailable;
+			return Status::Ok; // Zero-frame initial closure remains valid.
+		}
+		if (!audio_.captureHasWrittenFrames(slot))
 			return Status::Ok; // Unchanged: confirmation closes and reports no layer.
 		if (!history_.activeSessionComplete(slot))
 			return Status::SourceUnavailable; // Known-incomplete before-images.
@@ -384,6 +389,8 @@ bool SongModel::historyTargetCurrent(const HistoryTarget& target) const {
 	if (!target.modelIdentity || target.modelIdentity != modelIdentity_)
 		return false;
 	if (!ready() || !validSlot(target.slot))
+		return false;
+	if (!navigationEpochsAvailable(engine_.historyEpoch(target.slot), transportEpoch_))
 		return false;
 	if (!bindings_[target.slot])
 		return false;
@@ -417,7 +424,10 @@ Status SongModel::requestHistoryNavigation(const HistoryTarget& target, RestoreI
 		return Status::SourceUnavailable; // Redo while capturing is unavailable.
 	const bool activeCapture = !target.redo && state.capture;
 	const bool activeOverdub = activeCapture && state.playing;
-	const bool overdubChanged = activeOverdub && history_.activeSessionChanged(slot);
+	const bool overdubChanged = activeOverdub && audio_.captureHasWrittenFrames(slot);
+	const bool activeInitialChanged = activeCapture && !state.playing && audio_.recordedInitialFrames(slot) != 0;
+	if (activeInitialChanged && !history_.canAdmitInitialBoundary())
+		return Status::SourceUnavailable;
 	if (activeOverdub && overdubChanged) {
 		// A known-unrestorable changed overdub must not stop the recording. These
 		// conditions are observable under the boundary before any closure.
@@ -1021,6 +1031,10 @@ Status SongModel::dispatch(Command command) {
 		if (navigation_.active)
 			cancelHistoryNavigation(Status::Stale);
 		++generation_;
+		// An explicit transport command advances the target transport identity even
+		// when it is otherwise a no-op (already-stopped slot, canceled queued action),
+		// so an armed confirmation cannot act across it.
+		advanceTransportEpoch();
 	}
 	if ((command.type == CommandType::Press || command.type == CommandType::Release
 	     || command.type == CommandType::Select)
