@@ -120,8 +120,12 @@ bool Archive::take(SlotId slot, ArchiveCandidate& candidate) {
 	auto& job = jobs_[slot];
 	if (job.state != ArchiveState::ReadyForPublication || job.discard || job.pending)
 		return false;
-	if (job.request != job.candidate.identity
-	    || pool_.length({slot, job.candidate.phraseGeneration}) != job.candidate.frames) {
+	// A completed, validated candidate is an immutable staging identity: the file
+	// is fully written and finalized, so publication must not depend on the RAM
+	// source record remaining live after its snapshot is released (a Redo may
+	// have retired it). Precompletion cancellation/stale-write protection still
+	// holds through job.request identity, discard and pending above.
+	if (job.request != job.candidate.identity) {
 		cancel(slot);
 		return false;
 	}

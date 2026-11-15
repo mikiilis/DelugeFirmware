@@ -1786,6 +1786,66 @@ TEST(LoopBindings, RedoDuringSaveRetainsImmutableSnapshot) {
 	CHECK_EQUAL(staged.identity, persistence.committedManifest().phrases[0].identity);
 }
 
+// A save started from an undone replacement version, then Redo'd before the
+// archive finishes, must still publish: the completed immutable candidate no
+// longer depends on the retired RAM source remaining live.
+TEST(LoopBindings, SaveStartedBetweenUndoAndRedoPublishesAfterRetirement) {
+	archive_mock::storage = {};
+	FatFsArchiveStorage storage;
+	Fixture f;
+	f.model->archive().setStorage(&storage);
+	f.start();
+	auto settings = f.model->engine().settings();
+	settings.tracks[0].source = Source::Stereo; // Distinct left/right frames.
+	CHECK(Status::Ok == f.model->dispatch(Command::configure(settings)));
+	f.record(0, {256, -512});
+	// One changed overdub boundary, then Undo it so the live replacement is I and
+	// the Redo branch retains I+A.
+	CHECK(Status::Ok == f.model->dispatch({CommandType::Press, 0}));
+	f.render(8, {256, -512});
+	f.host.time += GestureRollback::kProvisionalSamples;
+	CHECK(Status::Ok == f.model->dispatch({CommandType::Press, 0}));
+	CHECK_EQUAL(int(HistoryNavigationState::Complete), int(f.undo(0, false).state));
+	CHECK(f.model->engine().state(0).hasPhrase);
+	CHECK(f.model->canRedo(0));
+
+	PersistenceState persistence;
+	CHECK(Status::Ok == persistence.installLoaded(defaultSettings(), Manifest{}));
+	const auto savedRevision = f.model->contentRevision(0);
+	CHECK(Status::Ok == persistence.requestSave(f.model.get()));
+	CHECK_EQUAL(int(ArchiveState::Pending), int(f.model->archive().state(0)));
+
+	// Redo while the save is pending: this retires the very record the snapshot owns.
+	CHECK_EQUAL(int(HistoryNavigationState::Complete), int(f.undo(0, true).state));
+	CHECK(f.model->engine().state(0).hasPhrase);
+	CHECK(f.model->contentRevision(0) != savedRevision);
+
+	for (unsigned i = 0; i < 64 && !persistence.pendingReady(); ++i) {
+		f.model->serviceArchive(4096);
+		persistence.serviceArchiveCandidates(*f.model);
+	}
+	CHECK(persistence.pendingReady());
+	const auto staged = persistence.pendingManifest().phrases[0];
+	CHECK_EQUAL(0, staged.slot);
+	CHECK_EQUAL(8, staged.frames);
+	const auto frames = f.readArchivedFrames(storage, staged.slot, staged.identity, staged.frames);
+	for (const auto& frame : frames) {
+		CHECK_EQUAL(256, frame.l);
+		CHECK_EQUAL(-512, frame.r);
+	}
+	const auto current = f.currentRevisions();
+	CHECK(Status::Ok == persistence.commitPendingAfterDocumentVerified(current));
+	CHECK_EQUAL(int(SaveState::Unsaved), int(persistence.saveState())); // Newer Redo state is dirty.
+	CHECK_EQUAL(savedRevision, persistence.committedAudioRevision(0));
+	CHECK_EQUAL(1, persistence.committedManifest().phraseCount);
+	CHECK_EQUAL(staged.identity, persistence.committedManifest().phrases[0].identity);
+	// The retired source's pinned pages are eventually released.
+	for (unsigned i = 0; i < 200 && (f.model->archive().idle() == false || f.model->engine().state(0).capture); ++i)
+		f.model->serviceArchive(4096);
+	for (unsigned i = 0; i < 200; ++i)
+		f.model->serviceRetirement();
+}
+
 // Replacing the Song while a confirmed history operation is applying cancels the
 // accepted job before any late publication; the live phrase is untouched.
 TEST(LoopBindings, LoadCancelsApplyingHistoryBeforeNewSongPublication) {

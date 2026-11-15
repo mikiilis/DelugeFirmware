@@ -443,17 +443,23 @@ TEST(LoopArchive, nextSlotStorageSuccessDoesNotErasePriorFailureDiagnostics) {
 	CHECK(archive.diagnostics(1).error == MediaError::None);
 	CHECK_EQUAL(106, archive.diagnostics(1).bytesWritten);
 }
-TEST(LoopArchive, readyCandidateCannotBeTakenAfterItsPhraseWasDeletedOrReplaced) {
+TEST(LoopArchive, completedCandidateStaysPublishableAfterItsPhraseWasDeletedOrReplaced) {
 	auto h = phrase();
 	CHECK(Status::Ok == archive.request(0, h.generation));
 	complete();
+	CHECK(ArchiveState::ReadyForPublication == archive.state(0));
+	// A validated completed candidate is an immutable staging identity: deleting
+	// or replacing the RAM phrase afterwards must not cancel an already written
+	// file. (A deletion *before* completion still rejects; see
+	// deletingPhraseDuringYieldRejectsStaleGenerationWithoutAffectingOtherSlot.)
 	audio.stop(0);
 	CHECK(Status::Ok == audio.clear(0));
 	phrase();
 	ArchiveCandidate candidate;
-	CHECK_FALSE(archive.take(0, candidate));
-	complete();
-	CHECK_EQUAL(1, storage.discards);
+	CHECK(archive.take(0, candidate));
+	CHECK_EQUAL(3, candidate.frames);
+	CHECK_EQUAL(h.generation, candidate.phraseGeneration);
+	CHECK_EQUAL(0, storage.discards);
 }
 TEST(LoopArchive, unmountedVolumeIsReportedAsAbsentMedia) {
 	FatFsArchiveStorage fat;
