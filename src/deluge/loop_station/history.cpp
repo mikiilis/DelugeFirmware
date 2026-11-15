@@ -114,6 +114,83 @@ void History::beginSession(SlotId slot, Generation generation) {
 	session.active = true;
 	slots_[slot].active = free;
 }
+
+void History::recordInitial(SlotId slot, PhraseHandle handle) {
+	if (!pages_.ready() || !validSlot(slot) || !handle.valid() || handle.slot != slot || pool_.length(handle) == 0)
+		return;
+	cancelRestore(slot);
+	// A new base recording is a fresh chain: any previous volatile chain, and the
+	// Redo branch of an undone-empty state, cannot survive it.
+	if (slots_[slot].active != none) {
+		const auto active = slots_[slot].active;
+		sessions_[active].previous = sessions_[active].next = none;
+		enqueueRetirement(active);
+	}
+	if (slots_[slot].head != none)
+		enqueueRetirement(slots_[slot].head);
+	slots_[slot] = {};
+	if (sequence_ == std::numeric_limits<Generation>::max()) {
+		// Exhaustion degrades to unavailable history rather than recycling identities.
+		++pressure_;
+		return;
+	}
+	unsigned free = none;
+	for (unsigned i = 0; i < kMaxSessions; ++i) {
+		if (!sessions_[i].identity) {
+			free = i;
+			break;
+		}
+	}
+	if (free == none) {
+		++pressure_;
+		// This recording cannot be tracked until a descriptor is retired. Reclaim
+		// one oldest reachable boundary elsewhere so later edits can recover.
+		SlotId oldestSlot = kInvalidSlot;
+		Generation oldestIdentity = std::numeric_limits<Generation>::max();
+		for (SlotId owner = 0; owner < kTrackCount; ++owner) {
+			const auto root = slots_[owner].head;
+			if (root == none || root >= kMaxSessions)
+				continue;
+			const auto& candidate = sessions_[root];
+			if (!candidate.identity || candidate.active || candidate.retiring)
+				continue;
+			if (candidate.identity < oldestIdentity) {
+				oldestIdentity = candidate.identity;
+				oldestSlot = owner;
+			}
+		}
+		if (validSlot(oldestSlot)) {
+			const auto root = slots_[oldestSlot].head;
+			if (sessions_[root].complete)
+				discard(root);
+			else
+				resetSlot(oldestSlot); // Never remove an incomplete fence alone.
+		}
+		return;
+	}
+	auto& session = sessions_[free];
+	session = {};
+	session.handle = handle;
+	session.identity = ++sequence_;
+	session.revision = rollback_.readRevision(slot);
+	session.initial = true;
+	session.changed = true;
+	slots_[slot].head = slots_[slot].tail = slots_[slot].cursor = slots_[slot].latest = free;
+	slots_[slot].stateRevision = rollback_.readRevision(slot);
+}
+
+bool History::activeSessionChanged(SlotId slot) const {
+	if (!validSlot(slot) || slots_[slot].active == none)
+		return false;
+	return sessions_[slots_[slot].active].changed;
+}
+
+bool History::activeSessionComplete(SlotId slot) const {
+	if (!validSlot(slot) || slots_[slot].active == none)
+		return false;
+	return sessions_[slots_[slot].active].complete;
+}
+
 void History::beforeWrite(SlotId slot, FrameIndex index, Frame original) {
 	if (!validSlot(slot) || slots_[slot].active == none)
 		return;
@@ -194,7 +271,11 @@ bool History::canUndo(SlotId slot) const {
 	const auto& session = sessions_[slots_[slot].cursor];
 	// Never search backwards past a missing/incomplete latest step.
 	const auto length = pool_.length(pool_.sealedHandle(slot));
-	return session.identity && session.complete && session.changed && length && pool_.canBeginDetached(slot, length);
+	if (!session.identity || !session.complete || !session.changed || !length)
+		return false;
+	// An initial boundary detaches the live recording instead of building a
+	// before-image candidate, so it needs no detached headroom.
+	return session.initial || pool_.canBeginDetached(slot, length);
 }
 
 bool History::canRedo(SlotId slot) const {
@@ -213,49 +294,62 @@ Status History::requestRestore(SlotId slot, bool redo, RestoreId& id) {
 		return Status::Busy;
 	if (slots_[slot].active != none || rollback_.provisional(slot) || rollback_.pending(slot))
 		return Status::Busy;
-	if (redo) {
-		if (!canRedo(slot))
-			return Status::SourceUnavailable;
-	}
-	else {
-		if (slots_[slot].active != none || slots_[slot].cursor == none
-		    || slots_[slot].stateRevision != rollback_.readRevision(slot))
-			return Status::SourceUnavailable;
-		const auto& target = sessions_[slots_[slot].cursor];
-		if (!target.identity || !target.complete || !target.changed)
-			return Status::SourceUnavailable;
-		const auto currentLength = pool_.length(pool_.sealedHandle(slot));
-		if (!currentLength)
-			return Status::SourceUnavailable;
-		if (!pool_.canBeginDetached(slot, currentLength))
-			return Status::NoMemory;
-	}
-	if (restoreSequence_ == std::numeric_limits<Generation>::max())
-		return Status::Unavailable;
-	const auto source = pool_.sealedHandle(slot);
-	const auto length = pool_.length(source);
-	if (!length)
-		return Status::Stale;
-	RestoreJob job{};
-	job.id = {++restoreSequence_};
-	job.slot = slot;
-	job.source = source;
-	job.length = length;
-	job.revision = rollback_.readRevision(slot);
-	job.redo = redo;
 	const auto sessionIndex =
 	    redo ? (slots_[slot].cursor == none ? slots_[slot].head : sessions_[slots_[slot].cursor].next)
 	         : slots_[slot].cursor;
 	if (sessionIndex == none)
 		return Status::SourceUnavailable;
 	auto& session = sessions_[sessionIndex];
+	if (!session.identity)
+		return Status::SourceUnavailable;
+	if (redo) {
+		if (!canRedo(slot))
+			return Status::SourceUnavailable;
+	}
+	else {
+		if (slots_[slot].stateRevision != rollback_.readRevision(slot) || !session.complete || !session.changed)
+			return Status::SourceUnavailable;
+		const auto currentLength = pool_.length(pool_.sealedHandle(slot));
+		if (!currentLength)
+			return Status::SourceUnavailable;
+		// An initial boundary detaches the live phrase; only overdub Undo needs a
+		// detached before-image candidate.
+		if (!session.initial && !pool_.canBeginDetached(slot, currentLength))
+			return Status::NoMemory;
+	}
+	if (restoreSequence_ == std::numeric_limits<Generation>::max())
+		return Status::Unavailable;
+	RestoreJob job{};
+	job.id = {++restoreSequence_};
+	job.slot = slot;
 	job.sessionIdentity = session.identity;
+	job.revision = rollback_.readRevision(slot);
+	job.redo = redo;
 	if (redo) {
 		job.candidate = session.afterVersion;
 		job.reusedVersion = true;
+		job.length = pool_.length(job.candidate);
+		if (!job.length)
+			return Status::SourceUnavailable;
+		job.source = pool_.sealedHandle(slot);
+		if (!job.source.valid()) {
+			// Redo from an undone-empty track: republish the retained version.
+			job.emptyCurrent = true;
+		}
+		else if (pool_.length(job.source) != job.length) {
+			return Status::SourceUnavailable;
+		}
 	}
-	else
-		job.candidateNeeded = true;
+	else {
+		job.source = pool_.sealedHandle(slot);
+		job.length = pool_.length(job.source);
+		if (!job.length)
+			return Status::SourceUnavailable;
+		if (session.initial)
+			job.initialUndo = true;
+		else
+			job.candidateNeeded = true;
+	}
 	job.active = true;
 	restore_ = job;
 	id = job.id;
@@ -266,7 +360,7 @@ Status History::reserveRestore(RestoreId id, uint32_t maxPages) {
 	if (!restore_.active || !id.valid() || id.generation != restore_.id.generation)
 		return Status::Stale;
 	auto& job = restore_;
-	if (job.reusedVersion)
+	if (job.reusedVersion || job.initialUndo)
 		return Status::Ok;
 	if (job.candidateNeeded) {
 		PhraseHandle candidate{};
@@ -283,12 +377,13 @@ Status History::serviceRestore(RestoreId id, uint32_t maxFrames) {
 	if (!restore_.active || !id.valid() || id.generation != restore_.id.generation)
 		return Status::Stale;
 	auto& job = restore_;
-	if (pool_.length(job.source) != job.length || rollback_.readRevision(job.slot) != job.revision
-	    || rollback_.provisional(job.slot) || rollback_.pending(job.slot)) {
+	if ((!job.emptyCurrent && pool_.length(job.source) != job.length)
+	    || rollback_.readRevision(job.slot) != job.revision || rollback_.provisional(job.slot)
+	    || rollback_.pending(job.slot)) {
 		cancelRestore(job.slot);
 		return Status::Stale;
 	}
-	if (job.reusedVersion)
+	if (job.reusedVersion || job.initialUndo)
 		return Status::Ok;
 	if (maxFrames == 0)
 		return Status::Busy;
@@ -343,7 +438,8 @@ Status History::commitRestore(RestoreId id) {
 	if (!restore_.active || !id.valid() || id.generation != restore_.id.generation)
 		return Status::Stale;
 	auto job = restore_;
-	if (pool_.length(job.source) != job.length || pool_.length(job.candidate) != job.length
+	if ((!job.emptyCurrent && pool_.length(job.source) != job.length)
+	    || (!job.initialUndo && pool_.length(job.candidate) != job.length)
 	    || rollback_.readRevision(job.slot) != job.revision || rollback_.provisional(job.slot)
 	    || rollback_.pending(job.slot)) {
 		cancelRestore(job.slot);
@@ -368,6 +464,21 @@ Status History::commitRestore(RestoreId id) {
 	    || (!job.redo && (!session.complete || !session.changed || session.active))) {
 		cancelRestore(job.slot);
 		return Status::Stale;
+	}
+	if (job.initialUndo) {
+		// Initial Undo detaches and retains the live recording for Redo; the
+		// caller publishes the empty track and refreshes the mapping revision.
+		PhraseHandle retained{};
+		const auto detached = pool_.detach(job.slot, retained);
+		if (detached != Status::Ok) {
+			cancelRestore(job.slot);
+			return detached;
+		}
+		session.afterVersion = retained;
+		slot.cursor = session.previous;
+		slot.stateRevision = rollback_.readRevision(job.slot);
+		restore_ = {};
+		return Status::Ok;
 	}
 	PhraseHandle previous{};
 	const auto status = pool_.replace(job.candidate, previous);
@@ -397,7 +508,7 @@ void History::cancelRestore(SlotId slot) {
 		restore_.cancelPending = true;
 		return;
 	}
-	if (!restore_.reusedVersion && restore_.candidate.valid())
+	if (!restore_.reusedVersion && !restore_.initialUndo && restore_.candidate.valid())
 		pool_.retire(restore_.candidate);
 	restore_ = {};
 }

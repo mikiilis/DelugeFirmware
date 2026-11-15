@@ -452,7 +452,7 @@ TEST(LoopBindings, archiveLeasePreventsReleaseDuringStorageYieldAndRejectsReentr
 	for (unsigned i = 0; i < 5 && !yielded; ++i)
 		f.model->serviceArchive(4096);
 	const bool safeBetweenSteps = f.model->safeToRelease();
-	for (unsigned i = 0; i < 5; ++i)
+	for (unsigned i = 0; i < 200 && !f.model->safeToRelease(); ++i)
 		f.model->serviceArchive(4096), f.model->serviceRetirement();
 	CHECK_FALSE(safeDuring);
 	CHECK_FALSE(safeBetweenSteps);

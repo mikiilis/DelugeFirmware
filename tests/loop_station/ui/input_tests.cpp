@@ -623,7 +623,11 @@ TEST(LoopUi, StutterAlonePreservesLoopPerformanceAndNavigation) {
 	::view.reset();
 	CHECK(f.view.buttonAction(BACK, true, false) == ActionResult::DEALT_WITH);
 	CHECK_EQUAL(0, ::view.calls.size());
-	CHECK_FALSE(f.view.pendingRestore_.valid());
+	// The recovered base recording now offers Undo, so BACK arms it; disarm so
+	// the rest of this stutter test keeps its original intent.
+	CHECK(f.view.pendingRestore_.valid());
+	f.model->cancelRestore(0);
+	f.view.pendingRestore_ = {};
 
 	// A new centre press is accepted and its release starts the stopped phrase.
 	f.view.padAction(1, 6, 100);

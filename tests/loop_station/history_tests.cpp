@@ -11,7 +11,7 @@ TEST(LoopHistory, retainsFirstPageImageAcrossRepeatedWrapsAndCoalescesOpenGate) 
 	CHECK_FALSE(history.canUndo(0));
 	CHECK(Status::Ok == audio.setCaptureGate(0, false));
 	CHECK(history.canUndo(0));
-	CHECK_EQUAL(1, history.retainedSessions());
+	CHECK_EQUAL(2, history.retainedSessions()); // Initial boundary plus the overdub.
 }
 TEST(LoopHistory, emptyOrTinyArenaNeverClosesCaptureAndMandatoryCancelStillRestores) {
 	CHECK(Status::Ok == history.initialize({}));
@@ -47,7 +47,9 @@ TEST(LoopHistory, pressureFencesOnlyTheSlotWithTheIncompleteStep) {
 	CHECK(history.canUndo(0));
 	dub(1);
 	CHECK(Status::Ok == audio.setCaptureGate(1, false));
-	CHECK_FALSE(history.canUndo(0));
+	// Pressure evicts slot 0's oldest boundary (its initial), leaving the newer
+	// overdub navigable; only the slot with the incomplete newest step is fenced.
+	CHECK(history.canUndo(0));
 	CHECK_FALSE(history.canUndo(1));
 }
 TEST(LoopHistory, pagePressureRetiresOldBoundaryAndLaterEditsCanCaptureAgain) {
@@ -79,9 +81,15 @@ TEST(LoopHistory, canceledGestureAndReusedPhraseCannotAdvertiseOldUndo) {
 	rollback.service(100);
 	audio.stop(0);
 	CHECK(Status::Ok == audio.clear(0));
-	serviceRetirement();
+	for (unsigned i = 0; i < 64 && history.retainedSessions(); ++i)
+		serviceRetirement();
+	CHECK_EQUAL(0, history.retainedSessions());
 	phrase();
-	CHECK_FALSE(history.canUndo(0));
+	// The reused slot legitimately starts a fresh initial boundary; the old
+	// overdub history is gone rather than advertised.
+	CHECK(history.canUndo(0));
+	CHECK_FALSE(history.canRedo(0));
+	CHECK_EQUAL(1, history.retainedSessions());
 	history.beginSession(kInvalidSlot, handle.generation);
 	history.beforeWrite(kInvalidSlot, 0, {});
 	history.endSession(kInvalidSlot);
@@ -99,7 +107,7 @@ TEST(LoopHistory, emptyBoundariesCoalesceWithoutLosingCheckpointAndStopEndsSessi
 		serviceRetirement();
 	}
 	CHECK(history.canUndo(0));
-	CHECK_EQUAL(1, history.retainedSessions());
+	CHECK_EQUAL(2, history.retainedSessions()); // Initial boundary plus one overdub.
 	CHECK_EQUAL(1, history.retainedPages());
 }
 TEST(LoopHistory, hundredThousandChangedBoundariesKeepFixedDescriptorsAndPages) {
@@ -191,4 +199,156 @@ TEST(LoopHistory, initializeRejectsMisalignmentAndReinitializationButAcceptsSubp
 	dub();
 	audio.stop(0);
 	CHECK_FALSE(history.canUndo(0));
+}
+TEST(LoopHistory, activeSessionReportsChangedAndCompleteForUndoEligibility) {
+	CHECK(Status::Ok == history.initialize(arena));
+	phrase(0, 3);
+	CHECK(Status::Ok == audio.setCaptureGate(0, true));
+	CHECK_FALSE(history.activeSessionChanged(0)); // No contributions yet.
+	CHECK(history.activeSessionComplete(0));
+	const Frame addition{1, -1};
+	Frame output{};
+	audio.render(0, {&addition, 1}, {&output, 1});
+	CHECK(history.activeSessionChanged(0));
+	CHECK(history.activeSessionComplete(0));
+	CHECK(Status::Ok == audio.setCaptureGate(0, false));
+	CHECK_FALSE(history.activeSessionChanged(0)); // No session is active.
+	CHECK_FALSE(history.activeSessionComplete(0));
+}
+TEST(LoopHistory, activeSessionReportsIncompleteWhenBeforeImagesAreLost) {
+	CHECK(Status::Ok == history.initialize({})); // Ready but zero before-image capacity.
+	phrase(0, 3);
+	CHECK(Status::Ok == audio.setCaptureGate(0, true));
+	const Frame addition{1, -1};
+	Frame output{};
+	audio.render(0, {&addition, 1}, {&output, 1});
+	CHECK(history.activeSessionChanged(0));
+	CHECK_FALSE(history.activeSessionComplete(0)); // The step is fenced rather than skippable.
+}
+TEST(LoopHistory, InitialUndoToEmptyAndRedoRestoresExactStereoFrames) {
+	CHECK(Status::Ok == history.initialize(arena));
+	auto base = phrase(0, 5); // Five-frame stereo base, registered as the initial boundary.
+	CHECK_EQUAL(1, history.retainedSessions());
+	CHECK(history.canUndo(0));
+	const auto freeWhileLive = pool.freePages();
+	// Initial Undo detaches the recording and leaves the track truly empty,
+	// while the retained handle stays readable for Redo.
+	CHECK_FALSE(restoreStep(0, false).valid());
+	CHECK_FALSE(pool.sealedHandle(0).valid());
+	CHECK_EQUAL(5, pool.length(base));
+	CHECK_EQUAL(1, pool.frame(base, 0)->l);
+	CHECK_EQUAL(-5, pool.frame(base, 4)->r);
+	CHECK_FALSE(audio.playing(0));
+	CHECK_FALSE(history.canUndo(0));
+	CHECK(history.canRedo(0));
+	CHECK_EQUAL(freeWhileLive, pool.freePages()); // Retained for Redo, never reclaimed.
+	// Redo republishes the exact same stereo frames and stays stopped.
+	CHECK(restoreStep(0, true).valid());
+	expectFrames(0, {1, 2, 3, 4, 5});
+	CHECK_EQUAL(5, pool.length(pool.sealedHandle(0)));
+	CHECK_FALSE(audio.playing(0));
+	CHECK(history.canUndo(0));
+	CHECK_FALSE(history.canRedo(0));
+	CHECK_EQUAL(freeWhileLive, pool.freePages());
+}
+TEST(LoopHistory, OneMultiwrapGateIsOneLayerOverMultipleWraps) {
+	CHECK(Status::Ok == history.initialize(arena));
+	phrase(0, 5);
+	CHECK(Status::Ok == audio.setCaptureGate(0, true));
+	std::vector<Frame> input(12);
+	for (unsigned i = 0; i < input.size(); ++i)
+		input[i] = {int32_t(i + 1), -int32_t(i + 1)};
+	std::vector<Frame> output(input.size());
+	audio.render(0, input, output);
+	CHECK(Status::Ok == audio.setCaptureGate(0, false));
+	// One open gate over several wraps is a single layer and one before-image page.
+	CHECK_EQUAL(2, history.retainedSessions());
+	CHECK_EQUAL(1, history.retainedPages());
+	CHECK(history.canUndo(0));
+	restoreStep(0, false);
+	expectFrames(0, {1, 2, 3, 4, 5});
+	CHECK(history.canUndo(0)); // The initial boundary remains the next layer.
+	CHECK(history.canRedo(0));
+	CHECK_FALSE(restoreStep(0, false).valid());
+	CHECK_FALSE(history.canUndo(0));
+	CHECK(history.canRedo(0));
+}
+TEST(LoopHistory, UnchangedSessionCannotUndoPreviousLayer) {
+	CHECK(Status::Ok == history.initialize(arena));
+	phrase(0, 5);
+	CHECK(Status::Ok == audio.setCaptureGate(0, true));
+	const Frame addition{10, -10};
+	Frame output{};
+	audio.render(0, {&addition, 1}, {&output, 1});
+	CHECK(Status::Ok == audio.setCaptureGate(0, false));
+	CHECK(history.canUndo(0));
+	// An empty gate contributes no layer and must not shadow the overdub beneath.
+	CHECK(Status::Ok == audio.setCaptureGate(0, true));
+	CHECK(Status::Ok == audio.setCaptureGate(0, false));
+	serviceRetirement();
+	CHECK_EQUAL(2, history.retainedSessions());
+	CHECK(history.canUndo(0));
+	restoreStep(0, false);
+	expectFrames(0, {1, 2, 3, 4, 5});
+	CHECK(history.canUndo(0)); // Still the initial boundary, not the unchanged session.
+	CHECK(history.canRedo(0));
+}
+TEST(LoopHistory, NewRecordingAfterEmptyUndoInvalidatesOldForwardBranch) {
+	CHECK(Status::Ok == history.initialize(arena));
+	phrase(0, 5);
+	CHECK(Status::Ok == audio.setCaptureGate(0, true));
+	const Frame addition{10, -10};
+	Frame output{};
+	audio.render(0, {&addition, 1}, {&output, 1});
+	CHECK(Status::Ok == audio.setCaptureGate(0, false));
+	restoreStep(0, false); // Undo the overdub.
+	restoreStep(0, false); // Undo the initial recording to empty.
+	CHECK_FALSE(history.canUndo(0));
+	CHECK(history.canRedo(0));
+	// A fresh recording starts a new chain and discards the old Redo branch.
+	const Frame replacement[] = {{7, -7}, {8, -8}, {9, -9}};
+	Frame captured[3];
+	CHECK(Status::Ok == audio.beginInitial(0, 3));
+	audio.render(0, replacement, captured);
+	PhraseHandle fresh{};
+	CHECK(Status::Ok == audio.finishInitial(0, fresh));
+	CHECK(history.canUndo(0));
+	CHECK_FALSE(history.canRedo(0));
+	RestoreId stale{};
+	CHECK(Status::SourceUnavailable == history.requestRestore(0, true, stale));
+	expectFrames(0, {7, 8, 9});
+}
+TEST(LoopHistory, EvictedInitialBoundaryCannotReappearAfterDescriptorReuse) {
+	std::vector<std::byte> larger((History::kMaxSessions + 1) * kPageBytes);
+	CHECK(Status::Ok == history.initialize(larger));
+	phrase(0, 1);
+	const auto freeWithBaseOnly = pool.freePages();
+	// Create a retained Redo branch on the overdub, then Undo it so the initial
+	// boundary is the cursor while the overdub version is retained.
+	CHECK(Status::Ok == audio.setCaptureGate(0, true));
+	const Frame addition{5, -5};
+	Frame output{};
+	audio.render(0, {&addition, 1}, {&output, 1});
+	CHECK(Status::Ok == audio.setCaptureGate(0, false));
+	restoreStep(0, false);
+	CHECK(history.canUndo(0));
+	CHECK(history.canRedo(0));
+	// Churn descriptors until the oldest boundary is evicted and its descriptor
+	// recycled by later edits.
+	const auto generation = pool.sealedHandle(0).generation;
+	for (unsigned i = 0; i < 3 * History::kMaxSessions; ++i) {
+		history.beginSession(0, generation);
+		history.beforeWrite(0, 0, *pool.frame(pool.sealedHandle(0), 0));
+		history.endSession(0);
+		serviceRetirement();
+	}
+	CHECK(history.retainedSessions() <= History::kMaxSessions);
+	// The evicted initial boundary cannot reappear: no Redo branch survives and
+	// its retained version's pages are reclaimed, not leaked.
+	CHECK_FALSE(history.canRedo(0));
+	RestoreId stale{};
+	CHECK(Status::SourceUnavailable == history.requestRestore(0, true, stale));
+	for (unsigned i = 0; i < 100 && pool.freePages() != freeWithBaseOnly; ++i)
+		serviceRetirement(16);
+	CHECK_EQUAL(freeWithBaseOnly, pool.freePages());
 }

@@ -103,7 +103,8 @@ TEST(LoopRestore, incompleteChangedSessionRemainsAsUndoFenceAfterBeforeImagesRet
 	CHECK(Status::Ok == audio.setCaptureGate(0, false));
 	CHECK_FALSE(history.canUndo(0));
 	CHECK_EQUAL(1, history.retainedPages());
-	history.serviceRetirement(16);
+	for (unsigned i = 0; i < 8 && history.retainedPages(); ++i)
+		history.serviceRetirement(16);
 	CHECK_EQUAL(0, history.retainedPages());
 	CHECK_FALSE(history.canUndo(0)); // The incomplete newest boundary still fences older undo.
 }
@@ -112,10 +113,10 @@ TEST(LoopRestore, resetDuringActiveOverdubDetachesHistoryAndReclaimsInForeground
 	CHECK(Status::Ok == history.initialize(arena));
 	phrase();
 	dub(0, 1);
-	CHECK_EQUAL(1, history.retainedSessions());
+	CHECK_EQUAL(2, history.retainedSessions()); // Initial boundary plus the overdub.
 	history.resetSlot(0);
 	CHECK_FALSE(history.canUndo(0));
-	CHECK_EQUAL(1, history.retainedSessions());
+	CHECK_EQUAL(2, history.retainedSessions()); // Both boundaries retire in the foreground.
 	for (unsigned i = 0; i < 80 && history.retainedSessions(); ++i) {
 		history.serviceRetirement(16);
 		pool.serviceRetirement(16);
@@ -366,31 +367,27 @@ TEST(LoopRestore, cursorTraversesMultipleSessionsInChronologicalOrder) {
 	};
 	edit(); // Initial state [1,2,3] -> [4,2,3]
 	edit(); // [4,2,3] -> [7,2,3]
-	auto restore = [&](bool redo) {
-		RestoreId id{};
-		CHECK(Status::Ok == history.requestRestore(0, redo, id));
-		CHECK(Status::Ok == reserveRestore(history, id));
-		Status result = Status::Busy;
-		while (result == Status::Busy)
-			result = history.serviceRestore(id, 2);
-		CHECK(Status::Ok == result);
-		CHECK(Status::Ok == history.commitRestore(id));
-		CHECK(Status::Ok == audio.replace(0, pool.sealedHandle(0)));
-	};
 	CHECK_EQUAL(7, pool.frame(pool.sealedHandle(0), 0)->l);
 	CHECK(history.canUndo(0));
-	restore(false);
+	restoreStep(0, false);
 	CHECK_EQUAL(4, pool.frame(pool.sealedHandle(0), 0)->l);
 	CHECK(history.canUndo(0));
 	CHECK(history.canRedo(0));
-	restore(false);
+	restoreStep(0, false);
 	CHECK_EQUAL(1, pool.frame(pool.sealedHandle(0), 0)->l);
+	CHECK(history.canUndo(0)); // The initial boundary remains the next layer.
+	CHECK(history.canRedo(0));
+	restoreStep(0, false); // Initial Undo to empty.
+	CHECK_FALSE(pool.sealedHandle(0).valid());
 	CHECK_FALSE(history.canUndo(0));
 	CHECK(history.canRedo(0));
-	restore(true);
+	restoreStep(0, true);
+	CHECK_EQUAL(1, pool.frame(pool.sealedHandle(0), 0)->l);
+	restoreStep(0, true);
 	CHECK_EQUAL(4, pool.frame(pool.sealedHandle(0), 0)->l);
-	restore(true);
+	restoreStep(0, true);
 	CHECK_EQUAL(7, pool.frame(pool.sealedHandle(0), 0)->l);
+	CHECK_FALSE(history.canRedo(0));
 }
 
 TEST(LoopRestore, incompleteNewestSessionBlocksSkippingToOlderUndo) {
@@ -471,4 +468,76 @@ TEST(LoopRestore, recordAgainWhileOldVersionRetainedCannotAliasIt) {
 		CHECK_EQUAL(5, pool.length(retained[slot]));
 		CHECK_EQUAL(100 * (slot + 1) + 4, pool.frame(retained[slot], 4)->l);
 	}
+}
+
+TEST(LoopRestore, TwoOverdubsUndoAndRedoThroughInitialBoundary) {
+	CHECK(Status::Ok == history.initialize(arena));
+	phrase(0, 5); // Initial boundary: 1 2 3 4 5.
+	// Session A adds 10 to frames 0-2.
+	const Frame first[] = {{10, -10}, {10, -10}, {10, -10}};
+	Frame firstOutput[3]{};
+	CHECK(Status::Ok == audio.setCaptureGate(0, true));
+	audio.render(0, first, firstOutput);
+	CHECK(Status::Ok == audio.setCaptureGate(0, false));
+	CHECK(Status::Ok == audio.start(0, false)); // Restart so session B writes frames 0-1.
+	// Session B adds 100 to frames 0-1.
+	const Frame second[] = {{100, -100}, {100, -100}};
+	Frame secondOutput[2]{};
+	CHECK(Status::Ok == audio.setCaptureGate(0, true));
+	audio.render(0, second, secondOutput);
+	CHECK(Status::Ok == audio.setCaptureGate(0, false));
+	expectFrames(0, {111, 112, 13, 4, 5});
+	CHECK(history.canUndo(0));
+	// Reverse: B -> A -> initial -> empty.
+	restoreStep(0, false);
+	expectFrames(0, {11, 12, 13, 4, 5});
+	CHECK(history.canUndo(0));
+	CHECK(history.canRedo(0));
+	restoreStep(0, false);
+	expectFrames(0, {1, 2, 3, 4, 5});
+	CHECK(history.canUndo(0));
+	restoreStep(0, false); // Initial Undo to empty.
+	CHECK_FALSE(pool.sealedHandle(0).valid());
+	CHECK_FALSE(audio.playing(0));
+	CHECK_FALSE(history.canUndo(0));
+	CHECK(history.canRedo(0));
+	// Forward: initial -> A -> B.
+	restoreStep(0, true);
+	expectFrames(0, {1, 2, 3, 4, 5});
+	CHECK_FALSE(audio.playing(0)); // Redo from empty restores stopped.
+	restoreStep(0, true);
+	expectFrames(0, {11, 12, 13, 4, 5});
+	restoreStep(0, true);
+	expectFrames(0, {111, 112, 13, 4, 5});
+	CHECK(history.canUndo(0));
+	CHECK_FALSE(history.canRedo(0));
+}
+
+TEST(LoopRestore, IncompleteOverdubCannotFallThroughToInitial) {
+	CHECK(Status::Ok == history.initialize(std::span(arena).first(kPageBytes)));
+	phrase(0, 513); // Initial boundary on a two-page phrase.
+	// A small overdub retains the one available before-image page.
+	CHECK(Status::Ok == audio.setCaptureGate(0, true));
+	const Frame addition{3, -3};
+	Frame output{};
+	audio.render(0, {&addition, 1}, {&output, 1});
+	CHECK(Status::Ok == audio.setCaptureGate(0, false));
+	CHECK(history.canUndo(0));
+	// A second, longer overdub cannot retain another page and becomes an
+	// incomplete newest step.
+	std::vector<Frame> longer(513);
+	for (unsigned i = 0; i < longer.size(); ++i)
+		longer[i] = {4, -4};
+	std::vector<Frame> longerOutput(longer.size());
+	CHECK(Status::Ok == audio.setCaptureGate(0, true));
+	audio.render(0, longer, longerOutput);
+	CHECK(Status::Ok == audio.setCaptureGate(0, false));
+	CHECK_FALSE(history.canUndo(0));
+	// The incomplete step fences navigation: no fall-through to the older
+	// overdub or to the initial recording.
+	RestoreId blocked{};
+	CHECK(Status::SourceUnavailable == history.requestRestore(0, false, blocked));
+	CHECK_FALSE(history.canUndo(0));
+	CHECK_FALSE(history.canRedo(0));
+	CHECK_EQUAL(513, pool.length(pool.sealedHandle(0)));
 }

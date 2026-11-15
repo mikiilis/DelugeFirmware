@@ -42,8 +42,13 @@ Status ResidentAudio::completeInitial(SlotId slot, CompletionReason reason, Stat
 	state.capture = false;
 	state.position = 0;
 	state.completion = {reason, state.length, status == Status::Ok ? sealed : status};
-	if (sealed == Status::Ok && state.length)
+	if (sealed == Status::Ok && state.length) {
 		contentChanged(slot);
+		// Register exactly one nonzero base recording as the initial history
+		// boundary, once the pool seal and rollback binding both succeeded.
+		if (history_)
+			history_->recordInitial(slot, state.handle);
+	}
 	return sealed;
 }
 

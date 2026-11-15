@@ -13,6 +13,11 @@ public:
 	void beginSession(SlotId slot, Generation generation);
 	void beforeWrite(SlotId slot, FrameIndex index, Frame original);
 	void endSession(SlotId slot);
+	// Register a completed, nonzero base recording as the initial boundary of a
+	// fresh chain. Detaches nothing; the caller has already sealed and bound.
+	void recordInitial(SlotId slot, PhraseHandle handle);
+	bool activeSessionChanged(SlotId slot) const;
+	bool activeSessionComplete(SlotId slot) const;
 	bool canUndo(SlotId slot) const;
 	bool canRedo(SlotId slot) const;
 	Status requestRestore(SlotId slot, bool redo, RestoreId& id);
@@ -40,6 +45,7 @@ private:
 		uint32_t pages = 0, lastPage = UINT32_MAX, retirementScan = 0;
 		unsigned previous = none, next = none;
 		bool active = false, changed = false, complete = true, retiring = false, cleanupQueued = false;
+		bool initial = false; // Base recording: Undo detaches, Redo republishes afterVersion.
 	};
 	void discard(unsigned session);
 	void losePages(unsigned session);
@@ -68,6 +74,10 @@ private:
 		FrameIndex cursor = 0, length = 0;
 		SlotId slot = kInvalidSlot;
 		bool active = false, redo = false, reusedVersion = false, candidateNeeded = false, cancelPending = false;
+		// Initial boundary Undo detaches the live recording instead of building a
+		// before-image candidate. Redo from empty republishes afterVersion and has
+		// no current source phrase.
+		bool initialUndo = false, emptyCurrent = false;
 	};
 	RestoreJob restore_{};
 	bool builderActive_ = false;

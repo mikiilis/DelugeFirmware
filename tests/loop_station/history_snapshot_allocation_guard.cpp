@@ -55,6 +55,40 @@ int main() {
 		if (audio.finishInitial(s, handles[s]) != Status::Ok || audio.start(s, false) != Status::Ok)
 			return 4;
 	}
+	// Initial-boundary pressure across all slots: Undo-to-empty retains the live
+	// recording, Redo republishes it, and the fixed descriptor budget holds.
+	auto drive = [&](SlotId s, bool redo) -> Status {
+		RestoreId id;
+		auto status = history.requestRestore(s, redo, id);
+		if (status != Status::Ok)
+			return status;
+		for (unsigned i = 0; i < PagePool::kMaxPagesPerRecord / 8 + 1 && status == Status::Busy; ++i)
+			status = history.reserveRestore(id, 8);
+		if (status != Status::Ok)
+			return status;
+		status = Status::Busy;
+		for (unsigned i = 0; i < 100000 && status == Status::Busy; ++i)
+			status = history.serviceRestore(id, 64);
+		if (status != Status::Ok)
+			return status;
+		return history.commitRestore(id);
+	};
+	for (SlotId s = 0; s < kTrackCount; ++s) {
+		if (drive(s, false) != Status::Ok || pool.sealedHandle(s).valid())
+			return 14;
+		if (audio.detachForHistory(s) != Status::Ok)
+			return 15;
+		history.mappingReplaced(s);
+		if (drive(s, true) != Status::Ok)
+			return 16;
+		const auto republished = pool.sealedHandle(s);
+		if (!republished.valid() || audio.replace(s, republished) != Status::Ok || audio.start(s, false) != Status::Ok)
+			return 17;
+		if (pool.frame(pool.sealedHandle(s), 0) == nullptr) // Live audio is never reclaimed.
+			return 18;
+		if (history.retainedSessions() > History::kMaxSessions || history.retainedPages() > 65)
+			return 19;
+	}
 	const Frame input{1, -1};
 	Frame staging[SnapshotStore::kStagingFrames];
 	SnapshotId previous[kTrackCount]{};
