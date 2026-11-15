@@ -6,6 +6,28 @@
 
 using namespace loop_station;
 
+namespace {
+PhraseHandle sealReservedPhrase(PagePool& pool, SlotId slot, std::span<const Frame> frames) {
+	CHECK(Status::Ok == pool.beginPhrase(slot, static_cast<FrameIndex>(frames.size())));
+	FrameIndex accepted = 0;
+	CHECK(Status::Ok == pool.append(slot, frames, accepted));
+	CHECK_EQUAL(static_cast<FrameIndex>(frames.size()), accepted);
+	PhraseHandle handle;
+	CHECK(Status::Ok == pool.seal(slot, handle));
+	return handle;
+}
+
+PhraseHandle sealDetachedPhrase(PagePool& pool, SlotId slot, std::span<const Frame> frames) {
+	PhraseHandle handle;
+	CHECK(Status::Ok == pool.beginDetached(slot, static_cast<FrameIndex>(frames.size()), handle));
+	CHECK(Status::Ok == pool.reserveDetachedPages(handle, PagePool::kMaxPagesPerRecord));
+	for (FrameIndex index = 0; index < frames.size(); ++index)
+		CHECK(Status::Ok == pool.writeDetached(handle, index, frames[index]));
+	CHECK(Status::Ok == pool.sealDetached(handle));
+	return handle;
+}
+} // namespace
+
 TEST_GROUP(LoopPages){};
 
 TEST(LoopPages, manualSlotsSharePagesOneRoundAtATime) {
@@ -223,4 +245,104 @@ TEST(LoopPages, bothProfilesFitEightIndependentTenSecondTakes) {
 	const auto remaining = pool.freePages();
 	CHECK(Status::NoMemory == pool.beginPhrase(6, 529200));
 	CHECK_EQUAL(remaining, pool.freePages());
+}
+
+TEST(LoopPages, detachRetainsFramesWithoutFreeingPages) {
+	alignas(Frame) std::byte storage[16 * kPageBytes]{};
+	PagePool pool;
+	CHECK(Status::Ok == pool.initialize(storage));
+	std::vector<Frame> frames(5);
+	for (unsigned i = 0; i < frames.size(); ++i)
+		frames[i] = {int32_t(i + 1), -int32_t(i + 1)};
+	PhraseHandle live[kTrackCount]{};
+	for (SlotId slot = 0; slot < kTrackCount; ++slot)
+		live[slot] = sealReservedPhrase(pool, slot, frames);
+	const auto freeBefore = pool.freePages();
+	CHECK_EQUAL(8, freeBefore);
+	PhraseHandle retained[kTrackCount]{};
+	for (SlotId slot = 0; slot < kTrackCount; ++slot) {
+		CHECK(Status::Ok == pool.detach(slot, retained[slot]));
+		CHECK_EQUAL(live[slot].generation, retained[slot].generation);
+		CHECK_FALSE(pool.sealedHandle(slot).valid());
+		CHECK_EQUAL(5, pool.length(retained[slot]));
+		CHECK_EQUAL(3, pool.frame(retained[slot], 2)->l);
+		CHECK_EQUAL(-3, pool.frame(retained[slot], 2)->r);
+		CHECK_EQUAL(freeBefore, pool.freePages());
+		for (SlotId other = 0; other < kTrackCount; ++other) {
+			if (other == slot)
+				continue;
+			if (other > slot) {
+				CHECK_EQUAL(live[other].generation, pool.sealedHandle(other).generation);
+				CHECK_EQUAL(1, pool.frame(pool.sealedHandle(other), 0)->l);
+				CHECK_EQUAL(5, pool.frame(pool.sealedHandle(other), 4)->l);
+			}
+			else {
+				CHECK_EQUAL(live[other].generation, retained[other].generation);
+				CHECK_EQUAL(1, pool.frame(retained[other], 0)->l);
+				CHECK_EQUAL(5, pool.length(retained[other]));
+			}
+		}
+	}
+	CHECK_EQUAL(freeBefore, pool.freePages());
+}
+
+TEST(LoopPages, detachFailureLeavesActiveMappingIntact) {
+	alignas(Frame) std::byte storage[4 * kPageBytes]{};
+	PagePool pool;
+	CHECK(Status::Ok == pool.initialize(storage));
+	PhraseHandle retained{};
+	CHECK(Status::Invalid == pool.detach(kTrackCount, retained));
+	CHECK_FALSE(retained.valid());
+	CHECK(Status::Invalid == pool.detach(1, retained));
+	CHECK_FALSE(retained.valid());
+	CHECK_EQUAL(4, pool.freePages());
+	const Frame input[] = {{11, -11}, {12, -12}};
+	CHECK(Status::Ok == pool.beginPhrase(0, 2));
+	FrameIndex accepted = 0;
+	CHECK(Status::Ok == pool.append(0, input, accepted));
+	CHECK_EQUAL(2, accepted);
+	CHECK(Status::Invalid == pool.detach(0, retained));
+	CHECK_FALSE(retained.valid());
+	CHECK_FALSE(pool.sealedHandle(0).valid());
+	PhraseHandle sealed{};
+	CHECK(Status::Ok == pool.seal(0, sealed));
+	CHECK(sealed.valid());
+	CHECK_EQUAL(11, pool.frame(sealed, 0)->l);
+	CHECK_EQUAL(-12, pool.frame(sealed, 1)->r);
+	CHECK_EQUAL(3, pool.freePages());
+}
+
+TEST(LoopPages, replaceIntoDetachedEmptyTrackPublishesOnlyCandidate) {
+	alignas(Frame) std::byte storage[4 * kPageBytes]{};
+	PagePool pool;
+	CHECK(Status::Ok == pool.initialize(storage));
+	std::vector<Frame> liveFrames(5);
+	for (unsigned i = 0; i < liveFrames.size(); ++i)
+		liveFrames[i] = {int32_t(i + 1), -int32_t(i + 1)};
+	const auto live = sealReservedPhrase(pool, 0, liveFrames);
+	const auto freeBefore = pool.freePages();
+	PhraseHandle retained{};
+	CHECK(Status::Ok == pool.detach(0, retained));
+	CHECK_EQUAL(freeBefore, pool.freePages());
+	const Frame candidateFrames[] = {{70, -70}, {80, -80}, {90, -90}};
+	const auto candidate = sealDetachedPhrase(pool, 0, candidateFrames);
+	PhraseHandle previous{};
+	CHECK(Status::Ok == pool.replace(candidate, previous));
+	CHECK_FALSE(previous.valid());
+	CHECK_EQUAL(candidate.generation, pool.sealedHandle(0).generation);
+	CHECK_EQUAL(3, pool.length(pool.sealedHandle(0)));
+	CHECK_EQUAL(80, pool.frame(pool.sealedHandle(0), 1)->l);
+	CHECK_EQUAL(live.generation, retained.generation);
+	CHECK_EQUAL(5, pool.length(retained));
+	CHECK_EQUAL(3, pool.frame(retained, 2)->l);
+	CHECK_EQUAL(freeBefore - 1, pool.freePages());
+	PhraseHandle rejected{};
+	const PhraseHandle stale{0, retained.generation + 1000000};
+	CHECK(Status::Stale == pool.replace(stale, rejected));
+	CHECK_FALSE(rejected.valid());
+	const auto otherTrack = sealDetachedPhrase(pool, 1, candidateFrames);
+	const PhraseHandle foreign{0, otherTrack.generation};
+	CHECK(Status::Stale == pool.replace(foreign, rejected));
+	CHECK_FALSE(rejected.valid());
+	CHECK_EQUAL(candidate.generation, pool.sealedHandle(0).generation);
 }

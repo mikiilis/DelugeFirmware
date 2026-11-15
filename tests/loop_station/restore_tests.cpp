@@ -424,3 +424,51 @@ TEST(LoopRestore, undoCandidateExhaustionReturnsNoMemoryWithoutChangingThePhrase
 	CHECK_EQUAL(8, pool.frame(live, 0)->l);
 	CHECK_EQUAL(0, pool.freePages());
 }
+
+TEST(LoopRestore, recordAgainWhileOldVersionRetainedCannotAliasIt) {
+	PhraseHandle live[kTrackCount]{};
+	for (SlotId slot = 0; slot < kTrackCount; ++slot) {
+		std::vector<Frame> frames(5);
+		for (unsigned i = 0; i < frames.size(); ++i)
+			frames[i] = {int32_t(100 * (slot + 1) + i), -int32_t(100 * (slot + 1) + i)};
+		CHECK(Status::Ok == pool.beginPhrase(slot, 5));
+		FrameIndex accepted = 0;
+		CHECK(Status::Ok == pool.append(slot, frames, accepted));
+		CHECK(Status::Ok == pool.seal(slot, live[slot]));
+	}
+	const auto freeBefore = pool.freePages();
+	PhraseHandle retained[kTrackCount]{};
+	for (SlotId slot = 0; slot < kTrackCount; ++slot)
+		CHECK(Status::Ok == pool.detach(slot, retained[slot]));
+	CHECK_EQUAL(freeBefore, pool.freePages());
+	// Every per-slot record row is now retained; re-recording must use the detached rows only.
+	PhraseHandle second[kTrackCount]{};
+	for (SlotId slot = 0; slot < kTrackCount; ++slot) {
+		std::vector<Frame> frames(3);
+		for (unsigned i = 0; i < frames.size(); ++i)
+			frames[i] = {int32_t(200 * (slot + 1) + i), -int32_t(200 * (slot + 1) + i)};
+		CHECK(Status::Ok == pool.beginPhrase(slot, 3));
+		FrameIndex accepted = 0;
+		CHECK(Status::Ok == pool.append(slot, frames, accepted));
+		CHECK(Status::Ok == pool.seal(slot, second[slot]));
+		CHECK(second[slot].generation != retained[slot].generation);
+		CHECK_EQUAL(3, pool.length(second[slot]));
+		CHECK_EQUAL(200 * (slot + 1), pool.frame(second[slot], 0)->l);
+	}
+	for (SlotId slot = 0; slot < kTrackCount; ++slot) {
+		CHECK_EQUAL(5, pool.length(retained[slot]));
+		CHECK_EQUAL(100 * (slot + 1), pool.frame(retained[slot], 0)->l);
+		CHECK_EQUAL(100 * (slot + 1) + 4, pool.frame(retained[slot], 4)->l);
+		CHECK_EQUAL(live[slot].generation, retained[slot].generation);
+		CHECK_EQUAL(second[slot].generation, pool.sealedHandle(slot).generation);
+	}
+	// Retiring the new recordings frees only their pages and cannot disturb the retained versions.
+	for (SlotId slot = 0; slot < kTrackCount; ++slot)
+		CHECK(Status::Ok == pool.retire(second[slot]));
+	CHECK_EQUAL(8, pool.serviceRetirement(64));
+	CHECK_EQUAL(freeBefore, pool.freePages());
+	for (SlotId slot = 0; slot < kTrackCount; ++slot) {
+		CHECK_EQUAL(5, pool.length(retained[slot]));
+		CHECK_EQUAL(100 * (slot + 1) + 4, pool.frame(retained[slot], 4)->l);
+	}
+}

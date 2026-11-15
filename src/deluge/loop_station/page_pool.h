@@ -38,6 +38,9 @@ public:
 	// Constant-time ownership swap. The former live phrase remains detached and
 	// is returned for bounded retirement after the boundary commit.
 	Status replace(PhraseHandle candidate, PhraseHandle& previous);
+	// Detaches the slot's sealed active record without freeing its pages or changing
+	// its handle. The retained record stays readable until release or retire.
+	Status detach(SlotId slot, PhraseHandle& retained);
 	Frame* frame(PhraseHandle handle, FrameIndex index);
 	// Returns zero for invalid, unsealed, or stale handles.
 	FrameIndex length(PhraseHandle handle) const;

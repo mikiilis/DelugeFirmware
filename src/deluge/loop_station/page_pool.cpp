@@ -400,13 +400,31 @@ Status PagePool::replace(PhraseHandle candidate, PhraseHandle& previous) {
 	if (record == kRecordCount || !validSlot(candidate.slot) || activeRecord_[candidate.slot] == record)
 		return Status::Stale;
 	const auto active = activeRecord_[candidate.slot];
-	if (active >= kRecordCount || slots_[active].owner != candidate.slot)
+	if (active >= kRecordCount) {
+		// The slot has no active record: publish the candidate and report an invalid
+		// previous rather than treating the genuinely empty track as stale.
+		activeRecord_[candidate.slot] = record;
+		return Status::Ok;
+	}
+	if (slots_[active].owner != candidate.slot)
 		return Status::Unavailable;
 	if (slots_[active].sealed)
 		previous = {candidate.slot, slots_[active].generation};
 	else if (slots_[active].pages || slots_[active].length || slots_[active].active)
 		return Status::Unavailable;
 	activeRecord_[candidate.slot] = record;
+	return Status::Ok;
+}
+
+Status PagePool::detach(SlotId slot, PhraseHandle& retained) {
+	retained = {};
+	if (!capacity_ || !validSlot(slot))
+		return Status::Invalid;
+	const unsigned record = activeRecord_[slot];
+	if (record >= kRecordCount || slots_[record].owner != slot || !slots_[record].sealed)
+		return Status::Invalid;
+	retained = {slot, slots_[record].generation};
+	activeRecord_[slot] = kRecordCount;
 	return Status::Ok;
 }
 
