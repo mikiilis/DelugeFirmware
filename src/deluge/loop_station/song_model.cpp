@@ -211,9 +211,9 @@ Status SongModel::requestViewExit() {
 	}
 	Boundary boundary(host_);
 	++generation_;
-	for (SlotId slot = 0; slot < kTrackCount; ++slot)
-		cancelRestore(slot);
-	cancelHistoryNavigation(Status::Cancelled);
+	// A root-view handoff is a supported transition, not model replacement: an
+	// accepted restore/navigation job keeps running (its own ownership epoch is
+	// unchanged). The generation bump still invalidates in-flight setup transactions.
 	return engine_.dispatch({CommandType::Exit}, host_.now(), clock_);
 }
 void SongModel::cancelHeldPadGestures() {
@@ -330,7 +330,7 @@ Status SongModel::requestRestore(SlotId slot, bool redo, RestoreId& id) {
 		restoreOwner_.slot = slot;
 		restoreOwner_.request = id.generation;
 		restoreOwner_.slotGeneration = slotGenerations_[slot];
-		restoreOwner_.modelGeneration = generation_;
+		restoreOwner_.modelGeneration = modelEpoch_;
 		restoreOwner_.historyId = historyId;
 	}
 	return status;
@@ -362,9 +362,18 @@ Status SongModel::historyTarget(SlotId slot, bool redo, HistoryTarget& target) c
 		return history_.canRedo(slot) ? Status::Ok : Status::SourceUnavailable;
 	}
 	// An active initial/overdub may be armed: confirmation closes it and reports
-	// honestly if no layer resulted. A pending non-capture action is not armable.
-	if (state.capture)
+	// honestly if no layer resulted. Known-unrestorable overdubs are not armable.
+	if (state.capture) {
+		if (!state.playing)
+			return Status::Ok; // Active initial: closure decides (may be zero-frame).
+		if (!history_.activeSessionChanged(slot))
+			return Status::Ok; // Unchanged: confirmation closes and reports no layer.
+		if (!history_.activeSessionComplete(slot))
+			return Status::SourceUnavailable; // Known-incomplete before-images.
+		if (!pool_.canBeginDetached(slot, state.phraseFrames))
+			return Status::NoMemory; // Known detached-admission failure.
 		return Status::Ok;
+	}
 	if (state.pending)
 		return Status::SourceUnavailable;
 	return history_.canUndo(slot) ? Status::Ok : Status::SourceUnavailable;
@@ -408,6 +417,14 @@ Status SongModel::requestHistoryNavigation(const HistoryTarget& target, RestoreI
 	const bool activeCapture = !target.redo && state.capture;
 	const bool activeOverdub = activeCapture && state.playing;
 	const bool overdubChanged = activeOverdub && history_.activeSessionChanged(slot);
+	if (activeOverdub && overdubChanged) {
+		// A known-unrestorable changed overdub must not stop the recording. These
+		// conditions are observable under the boundary before any closure.
+		if (!history_.activeSessionComplete(slot))
+			return Status::SourceUnavailable;
+		if (!pool_.canBeginDetached(slot, state.phraseFrames))
+			return Status::NoMemory;
+	}
 	if (activeCapture) {
 		// Recheck the same target immediately before closing; a change during any
 		// earlier work must leave capture running rather than close a different session.
@@ -430,13 +447,13 @@ Status SongModel::requestHistoryNavigation(const HistoryTarget& target, RestoreI
 	navigation_.id = id;
 	navigation_.slot = slot;
 	navigation_.redo = target.redo;
-	navigation_.modelGeneration = generation_;
+	navigation_.modelGeneration = modelEpoch_;
 	navigation_.slotGeneration = slotGenerations_[slot];
 	restoreOwner_ = {};
 	restoreOwner_.slot = slot;
 	restoreOwner_.request = id.generation;
 	restoreOwner_.slotGeneration = slotGenerations_[slot];
-	restoreOwner_.modelGeneration = generation_;
+	restoreOwner_.modelGeneration = modelEpoch_;
 	navigationResult_ = {id, slot, target.redo, HistoryNavigationState::Applying, Status::Ok};
 	return Status::Ok;
 }
@@ -452,7 +469,7 @@ void SongModel::serviceHistoryNavigation(uint32_t maxFrames) {
 		~NavigationGuard() { active = false; }
 	} guard{navigationServicing_};
 	const auto slot = navigation_.slot;
-	if (!ready() || navigation_.modelGeneration != generation_ || !validSlot(slot)
+	if (!ready() || navigation_.modelGeneration != modelEpoch_ || !validSlot(slot)
 	    || navigation_.slotGeneration != slotGenerations_[slot] || !bindings_[slot]) {
 		finishHistoryNavigation(Status::Stale, false);
 		return;
@@ -556,7 +573,7 @@ Status SongModel::serviceRestore(RestoreId id, uint32_t maxFrames) {
 		return Status::Stale;
 	}
 	if (restoreOwner_.slotGeneration != slotGenerations_[restoreOwner_.slot]
-	    || restoreOwner_.modelGeneration != generation_ || !ready()) {
+	    || restoreOwner_.modelGeneration != (restoreOwner_.checkpoint ? generation_ : modelEpoch_) || !ready()) {
 		cancelRestore(restoreOwner_.slot);
 		--inFlight_;
 		return Status::Stale;
@@ -720,8 +737,9 @@ Status SongModel::commitRestore(RestoreId id) {
 		return Status::Stale;
 	const auto slot = restoreOwner_.slot;
 	Boundary boundary(host_);
-	if (restoreOwner_.slotGeneration != slotGenerations_[slot] || restoreOwner_.modelGeneration != generation_
-	    || !ready() || !bindings_[slot]) {
+	if (restoreOwner_.slotGeneration != slotGenerations_[slot]
+	    || restoreOwner_.modelGeneration != (restoreOwner_.checkpoint ? generation_ : modelEpoch_) || !ready()
+	    || !bindings_[slot]) {
 		if (restoreOwner_.checkpoint && restoreOwner_.candidate.valid())
 			pool_.retire(restoreOwner_.candidate);
 		else
@@ -916,6 +934,8 @@ void SongModel::serviceRetirement() {
 void SongModel::requestRelease() {
 	Boundary boundary(host_);
 	++generation_;
+	if (++modelEpoch_ == 0)
+		++modelEpoch_;
 	releasing_ = true;
 	cancelHistoryNavigation(Status::Cancelled);
 	for (SlotId slot = 0; slot < kTrackCount; ++slot)
@@ -981,29 +1001,34 @@ Status SongModel::dispatch(Command command) {
 		for (SlotId slot = 0; slot < kTrackCount; ++slot)
 			configureRatios[slot] = Transpose::ratioForCentsQ24(command.configuration.tracks[slot].transposeCents);
 	Boundary boundary(host_);
-	if (validSlot(command.slot)
-	    && (command.type == CommandType::Press || command.type == CommandType::Release
-	        || command.type == CommandType::Select || command.type == CommandType::TransportStop
-	        || command.type == CommandType::Exit))
-		cancelRestore(command.slot);
+	// Required transport teardown invalidates accepted restore/navigation work.
 	if (command.type == CommandType::TransportStop || command.type == CommandType::Exit) {
 		for (SlotId slot = 0; slot < kTrackCount; ++slot) {
 			cancelRestore(slot);
 		}
-	}
-	if (navigation_.active
-	    && (command.type == CommandType::TransportStop || command.type == CommandType::Exit
-	        || (validSlot(command.slot) && navigation_.slot == command.slot
-	            && (command.type == CommandType::Press || command.type == CommandType::Release
-	                || command.type == CommandType::Select))))
-		cancelHistoryNavigation(Status::Stale);
-	if (command.type == CommandType::TransportStop || command.type == CommandType::Exit)
+		if (navigation_.active)
+			cancelHistoryNavigation(Status::Stale);
 		++generation_;
+	}
 	if ((command.type == CommandType::Press || command.type == CommandType::Release
 	     || command.type == CommandType::Select)
 	    && (!validSlot(command.slot) || !bindings_[command.slot]))
 		return Status::Unavailable;
+	const bool hadPhrase = validSlot(command.slot) ? engine_.state(command.slot).hasPhrase : false;
 	const auto status = engine_.dispatch(command, host_.now(), clock_);
+	// Invalidations are decided by the effect a pad/selection event actually had:
+	// a new capture, a pending initial take, or a Clear. Harmless presses, obsolete
+	// releases and selection must not abort accepted work.
+	if (validSlot(command.slot) && (command.type == CommandType::Press || command.type == CommandType::Release)) {
+		const auto state = engine_.state(command.slot);
+		const bool newCapture = state.capture || (state.pending && state.action == PendingAction::Initial);
+		const bool cleared = hadPhrase && !state.hasPhrase;
+		if (newCapture || cleared || replacing(command.slot)) {
+			if (navigation_.active && navigation_.slot == command.slot)
+				cancelHistoryNavigation(Status::Stale);
+			cancelRestore(command.slot);
+		}
+	}
 	if (status == Status::Ok && command.type == CommandType::Configure)
 		for (SlotId slot = 0; slot < kTrackCount; ++slot)
 			transpose_.setCentsAndRatio(slot, engine_.settings().tracks[slot].transposeCents, configureRatios[slot]);

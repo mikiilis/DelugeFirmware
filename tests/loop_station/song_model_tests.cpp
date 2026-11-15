@@ -1176,19 +1176,145 @@ TEST(LoopBindings, ReentrantServiceDoesNotDoublePublish) {
 	f.expectUniformBacking(0, 8, {100, 100});
 }
 
-// A restore that fails after confirmation already closed the capture keeps the
-// cumulative captured audio, leaves capture closed, reports the failure, and
-// does not substitute an older layer or disturb another track.
-TEST(LoopBindings, FailedRestoreKeepsCumulativeAudioAfterCaptureClosed) {
+// A supported root-view handoff must not abort an accepted Undo: the model-owned
+// job keeps progressing and publishes once.
+TEST(LoopBindings, AcceptedNavigationSurvivesRootViewExit) {
 	Fixture f;
 	f.start();
-	// Track 1 carries an overdub boundary whose undo candidates only serve to
-	// occupy the bounded detached records, so admission later fails under pressure.
+	f.record(0);
+	CHECK(Status::Ok == f.model->dispatch({CommandType::Press, 0}));
+	f.render(8);
+	HistoryTarget target{};
+	CHECK_EQUAL(int(Status::Ok), int(f.model->historyTarget(0, false, target)));
+	RestoreId id{};
+	CHECK_EQUAL(int(Status::Ok), int(f.model->requestHistoryNavigation(target, id)));
+	CHECK_EQUAL(int(HistoryNavigationState::Applying), int(f.model->historyNavigationResult().state));
+	const auto revision = f.model->contentRevision(0);
+	// Leaving the Loop Station root for supported navigation is not invalidation.
+	CHECK(Status::Ok == f.model->requestViewExit());
+	CHECK_EQUAL(int(HistoryNavigationState::Applying), int(f.model->historyNavigationResult().state));
+	const auto result = f.driveNavigation(id);
+	CHECK_EQUAL(int(HistoryNavigationState::Complete), int(result.state));
+	CHECK_EQUAL(int(Status::Ok), int(result.status));
+	CHECK_EQUAL(revision + 1, f.model->contentRevision(0));
+	CHECK(f.model->engine().state(0).hasPhrase);
+	CHECK(f.model->engine().state(0).playing);
+	CHECK_EQUAL(8, f.model->engine().state(0).phraseFrames);
+	f.expectUniformBacking(0, 8, {100, 100});
+}
+
+// Selecting a track is not an audio invalidation; an accepted job keeps running.
+TEST(LoopBindings, AcceptedNavigationSurvivesSelection) {
+	Fixture f;
+	f.start();
+	f.record(0);
+	CHECK(Status::Ok == f.model->dispatch({CommandType::Press, 0}));
+	f.render(8);
+	HistoryTarget target{};
+	CHECK_EQUAL(int(Status::Ok), int(f.model->historyTarget(0, false, target)));
+	RestoreId id{};
+	CHECK_EQUAL(int(Status::Ok), int(f.model->requestHistoryNavigation(target, id)));
+	CHECK(Status::Ok == f.model->dispatch({CommandType::Select, 0}));
+	CHECK_EQUAL(int(HistoryNavigationState::Applying), int(f.model->historyNavigationResult().state));
+	const auto result = f.driveNavigation(id);
+	CHECK_EQUAL(int(HistoryNavigationState::Complete), int(result.state));
+	CHECK(f.model->engine().state(0).hasPhrase);
+	CHECK(f.model->engine().state(0).playing);
+	CHECK_EQUAL(8, f.model->engine().state(0).phraseFrames);
+	f.expectUniformBacking(0, 8, {100, 100});
+}
+
+// A pad release the engine treats as a no-op must not cancel accepted work: the
+// confirmed closure already cleared the hold, so this release changes nothing.
+TEST(LoopBindings, ObsoleteReleaseDoesNotCancelAcceptedNavigation) {
+	Fixture f;
+	f.start();
+	f.record(0);
+	CHECK(Status::Ok == f.model->dispatch({CommandType::Press, 0}));
+	f.render(8);
+	HistoryTarget target{};
+	CHECK_EQUAL(int(Status::Ok), int(f.model->historyTarget(0, false, target)));
+	RestoreId id{};
+	CHECK_EQUAL(int(Status::Ok), int(f.model->requestHistoryNavigation(target, id)));
+	CHECK_FALSE(f.model->engine().state(0).capture);
+	CHECK(Status::Ok == f.model->dispatch({CommandType::Release, 0}));
+	CHECK_EQUAL(int(HistoryNavigationState::Applying), int(f.model->historyNavigationResult().state));
+	const auto result = f.driveNavigation(id);
+	CHECK_EQUAL(int(HistoryNavigationState::Complete), int(result.state));
+	CHECK(f.model->engine().state(0).hasPhrase);
+	CHECK(f.model->engine().state(0).playing);
+	CHECK_EQUAL(8, f.model->engine().state(0).phraseFrames);
+	f.expectUniformBacking(0, 8, {100, 100});
+}
+
+// An actual destructive Clear is a real invalidation and cancels accepted work.
+TEST(LoopBindings, ClearCancelsAcceptedNavigation) {
+	Fixture f;
+	f.start();
+	CHECK(Status::Ok == f.model->ensureBound(0));
+	CHECK(Status::Ok == f.model->dispatch({CommandType::Press, 0}));
+	f.render(8);
+	HistoryTarget target{};
+	CHECK_EQUAL(int(Status::Ok), int(f.model->historyTarget(0, false, target)));
+	RestoreId id{};
+	CHECK_EQUAL(int(Status::Ok), int(f.model->requestHistoryNavigation(target, id)));
+	CHECK_EQUAL(int(HistoryNavigationState::Applying), int(f.model->historyNavigationResult().state));
+	// Arm a hold on the now-stopped phrase, then release to Clear.
+	CHECK(Status::Ok == f.model->dispatch({CommandType::Press, 0}));
+	CHECK_EQUAL(int(HistoryNavigationState::Applying), int(f.model->historyNavigationResult().state));
+	f.host.time += 2 * kSampleRate;
+	CHECK(Status::Ok == f.model->dispatch({CommandType::Release, 0}));
+	CHECK_EQUAL(int(HistoryNavigationState::Failed), int(f.model->historyNavigationResult().state));
+	for (unsigned i = 0; i < 8; ++i)
+		f.model->serviceHistoryNavigation(128);
+	CHECK_FALSE(f.model->engine().state(0).hasPhrase);
+}
+
+// Known-incomplete before-images are observable before closure: confirmation must
+// leave an active overdub recording instead of stopping it to report the failure.
+TEST(LoopBindings, KnownIncompleteOverdubLeavesGateOpen) {
+	Fixture f;
+	f.start();
+	CHECK(Status::Ok == f.model->ensureBound(0));
+	CHECK(Status::Ok == f.model->dispatch({CommandType::Press, 0}));
+	for (unsigned i = 0; i < 4300; ++i)
+		f.render(128);
+	CHECK(f.model->engine().state(0).capture);
+	CHECK(Status::Ok == f.model->dispatch({CommandType::Press, 0})); // Finish the long base.
+	CHECK(f.model->engine().state(0).playing);
+	const auto baseFrames = f.model->engine().state(0).phraseFrames;
+	CHECK(baseFrames > 1024u * (kPageBytes / sizeof(Frame)));
+	CHECK(Status::Ok == f.model->dispatch({CommandType::Press, 0})); // Open overdub.
+	HistoryTarget armed{};
+	CHECK_EQUAL(int(Status::Ok), int(f.model->historyTarget(0, false, armed)));
+	// Overwrite every page once; before-images are lost under page pressure.
+	for (unsigned i = 0; i < 4300; ++i) {
+		if (f.model->historyTarget(0, false, armed) != Status::Ok)
+			break;
+		f.render(128);
+	}
+	CHECK_EQUAL(int(Status::SourceUnavailable), int(f.model->historyTarget(0, false, armed)));
+	CHECK(f.model->engine().state(0).capture);
+	// The target armed before the loss is still current (frames do not invalidate),
+	// yet confirmation must leave the gate running on this known-unrestorable layer.
+	CHECK(f.model->historyTargetCurrent(armed));
+	RestoreId id{};
+	CHECK_EQUAL(int(Status::SourceUnavailable), int(f.model->requestHistoryNavigation(armed, id)));
+	CHECK_FALSE(id.valid());
+	CHECK(f.model->engine().state(0).capture);
+	CHECK_EQUAL(int(HistoryNavigationState::Idle), int(f.model->historyNavigationResult().state));
+}
+
+// Known-exhausted detached capacity is observable before closure too: confirming
+// must not stop the recording only to report NoMemory.
+TEST(LoopBindings, KnownNoMemoryAdmissionLeavesOverdubGateOpen) {
+	Fixture f;
+	f.start();
 	f.record(1);
 	CHECK(Status::Ok == f.model->dispatch({CommandType::Press, 1}));
 	f.render(8);
 	f.host.time += GestureRollback::kProvisionalSamples;
-	CHECK(Status::Ok == f.model->dispatch({CommandType::Press, 1}));
+	CHECK(Status::Ok == f.model->dispatch({CommandType::Press, 1})); // Track 1 boundary.
 	unsigned retired = 0;
 	for (unsigned i = 0; i < 40; ++i) {
 		RestoreId candidate{};
@@ -1206,7 +1332,7 @@ TEST(LoopBindings, FailedRestoreKeepsCumulativeAudioAfterCaptureClosed) {
 		++retired;
 	}
 	CHECK(retired >= 8);
-	// Track 0: base plus an active overdub with additions, then confirm Undo.
+	// Track 0 changed overdub, without draining the exhausted detached records.
 	CHECK(Status::Ok == f.model->ensureBound(0));
 	CHECK(Status::Ok == f.model->dispatch({CommandType::Press, 0}));
 	f.render(8);
@@ -1214,20 +1340,54 @@ TEST(LoopBindings, FailedRestoreKeepsCumulativeAudioAfterCaptureClosed) {
 	CHECK(Status::Ok == f.model->dispatch({CommandType::Press, 0}));
 	f.render(8);
 	HistoryTarget target{};
+	CHECK_EQUAL(int(Status::NoMemory), int(f.model->historyTarget(0, false, target)));
+	CHECK(f.model->engine().state(0).capture);
+	RestoreId id{};
+	CHECK_EQUAL(int(Status::NoMemory), int(f.model->requestHistoryNavigation(target, id)));
+	CHECK_FALSE(id.valid());
+	CHECK(f.model->engine().state(0).capture); // Gate stays open.
+	CHECK_EQUAL(int(HistoryNavigationState::Idle), int(f.model->historyNavigationResult().state));
+}
+
+// A restore that fails after confirmation already closed the capture - here the
+// just-closed boundary is evicted by descriptor pressure - keeps the cumulative
+// captured audio, leaves capture closed, reports the failure, and does not
+// substitute an older layer.
+TEST(LoopBindings, LaterReconstructionFailureRetainsAudioAfterClosure) {
+	Fixture f;
+	f.start();
+	f.record(1);
+	CHECK(Status::Ok == f.model->ensureBound(0));
+	CHECK(Status::Ok == f.model->dispatch({CommandType::Press, 0}));
+	f.render(8);
+	CHECK(Status::Ok == f.model->dispatch({CommandType::Press, 0}));
+	CHECK(Status::Ok == f.model->dispatch({CommandType::Press, 0}));
+	f.render(8); // One changed overdub pass: {200,200}.
+	HistoryTarget target{};
 	CHECK_EQUAL(int(Status::Ok), int(f.model->historyTarget(0, false, target)));
 	RestoreId id{};
 	CHECK_EQUAL(int(Status::Ok), int(f.model->requestHistoryNavigation(target, id)));
 	CHECK_FALSE(f.model->engine().state(0).capture);
+	CHECK_EQUAL(int(HistoryNavigationState::Applying), int(f.model->historyNavigationResult().state));
+	// Descriptor pressure on track 1 evicts track 0's just-closed boundary while the
+	// accepted job is applying; this is not knowable before capture closure.
+	for (unsigned i = 0; i < 200; ++i) {
+		f.host.time += GestureRollback::kProvisionalSamples;
+		CHECK(Status::Ok == f.model->dispatch({CommandType::Press, 1}));
+		f.render(1);
+		f.host.time += GestureRollback::kProvisionalSamples;
+		CHECK(Status::Ok == f.model->dispatch({CommandType::Press, 1}));
+	}
+	// The just-closed boundary is gone, so the accepted job can only fail.
+	CHECK_FALSE(f.model->canUndo(0));
 	const auto result = f.driveNavigation(id);
 	CHECK_EQUAL(int(HistoryNavigationState::Failed), int(result.state));
-	CHECK_EQUAL(int(Status::NoMemory), int(result.status));
-	CHECK_EQUAL(id.generation, result.id.generation);
+	CHECK_EQUAL(int(Status::SourceUnavailable), int(result.status));
 	// Capture closed, cumulative additions preserved, no older layer removed.
 	CHECK(f.model->engine().state(0).hasPhrase);
 	CHECK(f.model->engine().state(0).playing);
 	CHECK_EQUAL(8, f.model->engine().state(0).phraseFrames);
 	f.expectUniformBacking(0, 8, {200, 200});
-	f.expectUniformBacking(1, 8, {200, 200});
 }
 
 // A new capture on the same track cancels an accepted job before it can publish

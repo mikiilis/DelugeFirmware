@@ -327,3 +327,22 @@ TEST(LoopLifecycle, ReleaseCancelsAcceptedNavigationAndLeavesNoOwnership) {
 	CHECK(f.model.safeToRelease());
 	CHECK_FALSE(f.host.registered);
 }
+
+// Binding replacement is a real invalidation: an accepted navigation on the
+// rebound slot cancels and never publishes.
+TEST(LoopLifecycle, RebindCancelsAcceptedNavigation) {
+	Fixture f;
+	f.take(0);
+	CHECK(Status::Ok == f.model.dispatch({CommandType::Press, 0}));
+	f.render(16);
+	HistoryTarget target{};
+	CHECK_EQUAL(int(Status::Ok), int(f.model.historyTarget(0, false, target)));
+	RestoreId id{};
+	CHECK_EQUAL(int(Status::Ok), int(f.model.requestHistoryNavigation(target, id)));
+	CHECK_EQUAL(int(HistoryNavigationState::Applying), int(f.model.historyNavigationResult().state));
+	CHECK(Status::Ok == f.model.unbind(0));
+	const auto result = f.model.historyNavigationResult();
+	CHECK_EQUAL(int(HistoryNavigationState::Failed), int(result.state));
+	CHECK_EQUAL(id.generation, result.id.generation);
+	CHECK_FALSE(f.model.engine().state(0).hasPhrase);
+}

@@ -132,6 +132,10 @@ private:
 	std::array<Generation, kTrackCount> savedRevisions_{};
 	std::array<bool, kTrackCount> hasSavedRevision_{};
 	Generation generation_ = 0;
+	// Ownership/replacement epoch: advances only when the whole model is replaced
+	// or released. Accepted restore/navigation jobs use it (not the volatile setup
+	// generation_) so a supported root-view handoff cannot abort accepted work.
+	Generation modelEpoch_ = 0;
 	Generation modelIdentity_ = 0;
 	Generation transportEpoch_ = 0;
 	struct RestoreOwner {
