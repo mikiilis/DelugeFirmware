@@ -72,6 +72,7 @@ add_executable(LoopStationTests
     ../../src/deluge/loop_station/diagnostics.cpp
     ../../src/deluge/loop_station/memory_reservation.cpp
     timing_tests.cpp
+    length_display_tests.cpp
     engine_tests.cpp
     ../../src/deluge/loop_station/timing.cpp
     ../../src/deluge/loop_station/engine.cpp
