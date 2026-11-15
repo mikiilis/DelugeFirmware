@@ -28,6 +28,7 @@ def main() -> None:
     text = "\n".join(
         [
             f'#include "{args.support.parent.as_posix()}/settings_probe_support.h"',
+            "class AudioClip : public TimelineCounter {};",
             "using namespace deluge::hid::button;\nusing namespace loop_station;",
             section(loop, "namespace {", "bool LoopStationView::opened()"),
             section(

@@ -1,5 +1,6 @@
 #include "deluge/loop_station/persistence.h"
 #include "fixture.h"
+#include "gui/views/affect_entire_led.h"
 
 using namespace loop_station;
 using namespace deluge::hid::button;
@@ -1051,6 +1052,74 @@ TEST(LoopUi, EntryAndNoSelectionUseSafeSongTarget) {
 	CHECK(UIModControllableContext::NONE == f.view.getUIModControllableContext());
 	CHECK_FALSE(f.view.getAffectEntire());
 	CHECK_FALSE(f.view.opened());
+}
+
+TEST(LoopUi, AffectEntireLedUsesLoopStationSongModeInAllTargetStates) {
+	deluge::gui::views::setAffectEntireLedState(true, UIType::LOOP_STATION, false, false, [](bool on) {
+		indicator_leds::setLedState(IndicatorLED::AFFECT_ENTIRE, on);
+	});
+	CHECK_FALSE(indicator_leds::states[IndicatorLED::AFFECT_ENTIRE]); // selected loop
+
+	deluge::gui::views::setAffectEntireLedState(false, UIType::LOOP_STATION, true, false, [](bool on) {
+		indicator_leds::setLedState(IndicatorLED::AFFECT_ENTIRE, on);
+	});
+	CHECK_TRUE(indicator_leds::states[IndicatorLED::AFFECT_ENTIRE]); // song-wide FX
+
+	deluge::gui::views::setAffectEntireLedState(false, UIType::LOOP_STATION, false, false, [](bool on) {
+		indicator_leds::setLedState(IndicatorLED::AFFECT_ENTIRE, on);
+	});
+	CHECK_FALSE(indicator_leds::states[IndicatorLED::AFFECT_ENTIRE]); // deselected, song mode off
+
+	// Preserve the pre-existing behavior in other clip views.
+	deluge::gui::views::setAffectEntireLedState(true, UIType::AUDIO_CLIP, false, false, [](bool on) {
+		indicator_leds::setLedState(IndicatorLED::AFFECT_ENTIRE, on);
+	});
+	CHECK_TRUE(indicator_leds::states[IndicatorLED::AFFECT_ENTIRE]);
+}
+
+TEST(LoopUi, StutterRetargetRestoresSourceRateAndConsumesRelease) {
+	Fixture f;
+	selectBorder(f, 0);
+	ParamManagerForTimeline sourceParams;
+	ParamManagerForTimeline destinationParams;
+	constexpr int32_t sourceRate = 20 << 25;
+	constexpr int32_t destinationRate = -(24 << 25);
+	constexpr int32_t rateParam = deluge::modulation::params::UNPATCHED_STUTTER_RATE;
+	sourceParams.params.params[rateParam].value = sourceRate;
+	destinationParams.params.params[rateParam].value = destinationRate;
+	ProbeAudioModControllable source;
+	source.mode = 6;
+	view.activeModControllableModelStack.modControllable = &source;
+	view.activeModControllableModelStack.paramManager = &sourceParams;
+	view.nextTargetModKnobMode = 2;
+	view.nextTargetParamManager = &destinationParams;
+	CHECK(source.mode != view.nextTargetModKnobMode);
+	CHECK_EQUAL(sourceRate, sourceParams.params.getValue(rateParam));
+	CHECK_EQUAL(destinationRate, destinationParams.params.getValue(rateParam));
+	CHECK(Error::NONE
+	      == stutterer.beginStutter(&source, &sourceParams, StutterConfig{.quantized = true}, 13, 0x40000000));
+	CHECK_EQUAL(0, sourceParams.params.getValue(rateParam));
+	CHECK_EQUAL(destinationRate, destinationParams.params.getValue(rateParam));
+	CHECK_TRUE(stutterer.isStuttering(&source));
+	currentUIMode = UI_MODE_STUTTERING;
+	f.view.updateModTarget(); // Same-target refreshes must not end the active gesture.
+	CHECK_TRUE(currentUIMode & UI_MODE_STUTTERING);
+	CHECK_EQUAL(0, sourceParams.params.getValue(rateParam));
+	CHECK_EQUAL(0, view.automationNotifications);
+
+	CHECK(f.view.buttonAction(AFFECT_ENTIRE, true, false) == ActionResult::DEALT_WITH);
+	CHECK_EQUAL(sourceRate, sourceParams.params.getValue(rateParam));
+	CHECK_EQUAL(destinationRate, destinationParams.params.getValue(rateParam));
+	CHECK_FALSE(stutterer.isStuttering(&source));
+	CHECK_FALSE(currentUIMode & UI_MODE_STUTTERING);
+	CHECK_EQUAL(1, view.automationNotifications);
+	POINTERS_EQUAL(&sourceParams, view.lastAutomationParamManager);
+	CHECK_EQUAL(view.nextTargetModKnobMode, view.activeModKnobMode);
+	POINTERS_EQUAL(&destinationParams, view.activeModControllableModelStack.paramManager);
+	f.view.modEncoderButtonAction(1, false);
+	CHECK_EQUAL(0, view.modEncoderButtonCalls);   // The original release is consumed, not sent to the destination.
+	CHECK_EQUAL(1, view.automationNotifications); // Release did not call endStutter a second time.
+	CHECK_EQUAL(destinationRate, destinationParams.params.getValue(rateParam));
 }
 
 TEST(LoopUi, EveryBorderAndEncoderSelectionTargetsItsOwnClip) {

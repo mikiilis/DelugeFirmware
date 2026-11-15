@@ -172,6 +172,9 @@ UIModControllableContext LoopStationView::getUIModControllableContext() {
 }
 void LoopStationView::updateModTarget() {
 	if (!currentSong) {
+		const bool targetChanges = view.activeModControllableModelStack.timelineCounterIsSet();
+		if (targetChanges)
+			finishStutterBeforeTargetChange();
 		modTargetIsClip_ = false;
 		view.setActiveModControllableTimelineCounter(nullptr);
 		return;
@@ -186,6 +189,13 @@ void LoopStationView::updateModTarget() {
 				clip = m->clip(slot);
 		}
 	}
+	TimelineCounter* currentTarget = view.activeModControllableModelStack.timelineCounterIsSet()
+	                                     ? view.activeModControllableModelStack.getTimelineCounter()
+	                                     : nullptr;
+	TimelineCounter* nextTarget =
+	    clip ? static_cast<TimelineCounter*>(clip) : static_cast<TimelineCounter*>(currentSong);
+	if (currentTarget != nextTarget)
+		finishStutterBeforeTargetChange();
 	if (clip) {
 		currentSong->setCurrentClip(clip);
 		modTargetIsClip_ = true;
@@ -195,6 +205,17 @@ void LoopStationView::updateModTarget() {
 		modTargetIsClip_ = false;
 		view.setActiveModControllableTimelineCounter(currentSong);
 	}
+}
+void LoopStationView::finishStutterBeforeTargetChange() {
+	if (view.finishActiveStutterForModTargetChange())
+		stutterEncoderReleasePending_ = true;
+}
+void LoopStationView::modEncoderButtonAction(uint8_t whichModEncoder, bool on) {
+	if (!on && whichModEncoder == 1 && stutterEncoderReleasePending_) {
+		stutterEncoderReleasePending_ = false;
+		return;
+	}
+	view.modEncoderButtonAction(whichModEncoder, on);
 }
 void LoopStationView::updateLed() {
 	indicator_leds::setLedState(IndicatorLED::CROSS_SCREEN_EDIT, true);

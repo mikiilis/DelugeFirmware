@@ -13,6 +13,7 @@ public:
 	ActionResult timerCallback() override;
 	ActionResult padAction(int32_t x, int32_t y, int32_t velocity) override;
 	ActionResult buttonAction(deluge::hid::Button button, bool on, bool inCardRoutine) override;
+	void modEncoderButtonAction(uint8_t whichModEncoder, bool on) override;
 	bool renderMainPads(uint32_t whichRows, RGB image[][kDisplayWidth + kSideBarWidth],
 	                    uint8_t occupancyMask[][kDisplayWidth + kSideBarWidth], bool drawUndefinedArea = true) override;
 	bool renderSidebar(uint32_t whichRows, RGB image[][kDisplayWidth + kSideBarWidth],
@@ -28,8 +29,10 @@ private:
 	loop_station::SlotId pendingRestoreSlot_ = loop_station::kInvalidSlot;
 	bool pendingExit_ = false;
 	bool modTargetIsClip_ = false;
+	bool stutterEncoderReleasePending_ = false;
 	void updateLed();
 	void updateModTarget();
+	void finishStutterBeforeTargetChange();
 	void attemptExit();
 	bool prepareTrack(loop_station::SlotId slot);
 };

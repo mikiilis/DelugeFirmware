@@ -34,6 +34,7 @@
 #include "gui/ui/sound_editor.h"
 #include "gui/ui/ui.h"
 #include "gui/ui_timer_manager.h"
+#include "gui/views/affect_entire_led.h"
 #include "gui/views/arranger_view.h"
 #include "gui/views/automation_view.h"
 #include "gui/views/instrument_clip_view.h"
@@ -66,6 +67,7 @@
 #include "model/instrument/kit.h"
 #include "model/instrument/melodic_instrument.h"
 #include "model/instrument/midi_instrument.h"
+#include "model/mod_controllable/mod_controllable_audio.h"
 #include "model/model_stack.h"
 #include "model/note/note_row.h"
 #include "model/settings/runtime_feature_settings.h"
@@ -1580,21 +1582,14 @@ void View::setModLedStates() {
 	// here we will set a boolean flag to let the function know whether we are dealing with the Song context
 	bool itsTheSong = !isClipContext();
 
-	// here we will set a boolean flag to let the function know if affect entire is enabled
-	// so that it can correctly illuminate the affect entire LED indicator
-	bool affectEntire = rootUI && rootUI->getAffectEntire();
-
-	// if you are not in a song
-	// affect entire is always true if you are in an audio clip, or automation view for an audio clip
-	// otherwise the affect entire status is derived from the instrument clip
-	if (!itsTheSong) {
-		Clip* clip = getCurrentClip();
-		// if you're in an instrument clip, get affectEntire status from clip class
-		// otherwise you're in an audio clip or automation view for an audio clip, in which case affect entire is always
-		// enabled
-		affectEntire = (uiContextType == UIType::INSTRUMENT_CLIP) ? ((InstrumentClip*)clip)->affectEntire : true;
-	}
-	indicator_leds::setLedState(IndicatorLED::AFFECT_ENTIRE, affectEntire);
+	// Most clip contexts retain the historical forced-on policy for audio clips.
+	// Loop Station instead reflects its song-wide mode for both song and selected-loop FX.
+	const bool instrumentClipAffectEntire = !itsTheSong && uiContextType == UIType::INSTRUMENT_CLIP
+	                                            ? ((InstrumentClip*)getCurrentClip())->affectEntire
+	                                            : false;
+	deluge::gui::views::setAffectEntireLedState(
+	    !itsTheSong, uiContextType, rootUI && rootUI->getAffectEntire(), instrumentClipAffectEntire,
+	    [](bool on) { indicator_leds::setLedState(IndicatorLED::AFFECT_ENTIRE, on); });
 
 	bool onAutomationClipView = false;
 
@@ -1917,6 +1912,15 @@ void View::setActiveModControllableTimelineCounter(TimelineCounter* timelineCoun
 	if (shouldSendMidiFeedback) {
 		sendMidiFollowFeedback();
 	}
+}
+
+bool View::finishActiveStutterForModTargetChange() {
+	if (!isUIModeActive(UI_MODE_STUTTERING) || !activeModControllableModelStack.modControllable) {
+		return false;
+	}
+	static_cast<ModControllableAudio*>(activeModControllableModelStack.modControllable)
+	    ->endStutter(static_cast<ParamManagerForTimeline*>(activeModControllableModelStack.paramManager));
+	return true;
 }
 
 void View::setActiveModControllableWithoutTimelineCounter(ModControllable* modControllable,

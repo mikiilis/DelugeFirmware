@@ -2,6 +2,7 @@ find_package(Python3 REQUIRED COMPONENTS Interpreter)
 set(LOOP_UI_PROBE "${CMAKE_CURRENT_BINARY_DIR}/generated/production_ui.cpp")
 set(LOOP_UI_VIEW "${CMAKE_CURRENT_SOURCE_DIR}/../../src/deluge/gui/views/loop_station_view.cpp")
 set(LOOP_UI_SETTINGS "${CMAKE_CURRENT_SOURCE_DIR}/../../src/deluge/gui/menu_item/loop_station/settings.cpp")
+set(STUTTER_LIFECYCLE_PROBE "${CMAKE_CURRENT_BINARY_DIR}/generated/production_stutter_lifecycle.cpp")
 set(LOOP_DISPATCH_PROBE "${CMAKE_CURRENT_BINARY_DIR}/generated/production_dispatch.cpp")
 add_custom_command(
     OUTPUT "${LOOP_DISPATCH_PROBE}"
@@ -33,11 +34,26 @@ add_custom_command(
             ../../src/deluge/gui/menu_item/loop_station/settings_items.cpp
     VERBATIM
 )
+add_custom_command(
+    OUTPUT "${STUTTER_LIFECYCLE_PROBE}"
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/ui/generate_stutter_lifecycle_probe.py"
+            --stutterer "${CMAKE_CURRENT_SOURCE_DIR}/../../src/deluge/model/fx/stutterer.cpp"
+            --audio "${CMAKE_CURRENT_SOURCE_DIR}/../../src/deluge/model/mod_controllable/mod_controllable_audio.cpp"
+            --view "${CMAKE_CURRENT_SOURCE_DIR}/../../src/deluge/gui/views/view.cpp"
+            --support "${CMAKE_CURRENT_SOURCE_DIR}/ui/probe_support.h"
+            --output "${STUTTER_LIFECYCLE_PROBE}"
+    DEPENDS ui/generate_stutter_lifecycle_probe.py ui/probe_support.h ui/stutter_lifecycle_support.h
+            ../../src/deluge/model/fx/stutterer.cpp
+            ../../src/deluge/model/mod_controllable/mod_controllable_audio.cpp
+            ../../src/deluge/gui/views/view.cpp
+    VERBATIM
+)
 
 add_executable(LoopStationTests
     "${CMAKE_CURRENT_BINARY_DIR}/generated/real_canvas.cpp"
     ../../src/deluge/gui/fonts/fonts.c
     "${LOOP_UI_PROBE}"
+    "${STUTTER_LIFECYCLE_PROBE}"
     "${LOOP_DISPATCH_PROBE}"
     "${CMAKE_CURRENT_BINARY_DIR}/generated/horizontal_settings.cpp"
     "${CMAKE_CURRENT_BINARY_DIR}/generated/shared_menu.cpp"

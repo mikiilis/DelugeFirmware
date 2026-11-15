@@ -19,6 +19,7 @@ uint64_t loopStationSampleClock() {
 ProbeSessionView sessionView;
 uint32_t currentUIMode = 0;
 ProbeView view;
+LifecycleView targetChangeView;
 namespace Buttons {
 bool shiftPressed = false;
 }

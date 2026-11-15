@@ -9,6 +9,7 @@
 #include "gui/colour/palette.h"
 #include "hid/button.h"
 #include "strings_declarations.h"
+#include "stutter_lifecycle_support.h"
 #include <algorithm>
 #include <array>
 #include <cstddef>
@@ -65,6 +66,21 @@ class TimelineCounter {
 public:
 	virtual ~TimelineCounter() = default;
 };
+extern uint32_t currentUIMode;
+
+class ProbeAudioModControllable : public LifecycleModControllableAudio {
+public:
+	virtual ~ProbeAudioModControllable() = default;
+	uint8_t mode = 0;
+};
+
+struct ProbeActiveModStack {
+	TimelineCounter* timelineCounter = nullptr;
+	ProbeAudioModControllable* modControllable = nullptr;
+	void* paramManager = nullptr;
+	bool timelineCounterIsSet() const { return timelineCounter != nullptr; }
+	TimelineCounter* getTimelineCounter() const { return timelineCounter; }
+};
 
 class Song : public TimelineCounter {
 public:
@@ -113,7 +129,7 @@ inline bool isShiftButtonPressed() {
 	return shiftPressed;
 }
 } // namespace Buttons
-enum class IndicatorLED { CROSS_SCREEN_EDIT, SESSION_VIEW, SCALE_MODE, SYNTH, KIT, MIDI, CV };
+enum class IndicatorLED { AFFECT_ENTIRE, CROSS_SCREEN_EDIT, SESSION_VIEW, SCALE_MODE, SYNTH, KIT, MIDI, CV };
 namespace indicator_leds {
 inline std::map<IndicatorLED, bool> states;
 inline void setLedState(IndicatorLED led, bool on) {
@@ -141,7 +157,12 @@ extern ProbeSessionView sessionView;
 #define UI_MODE_HOLDING_LOAD_BUTTON 52
 #define EXCLUSIVE_UI_MODES_MASK ((uint32_t)255)
 #define UI_MODE_STUTTERING ((uint32_t)1 << 28)
-extern uint32_t currentUIMode;
+inline bool isUIModeActive(uint32_t uiMode) {
+	return (currentUIMode & uiMode) != 0;
+}
+inline void exitUIMode(uint32_t uiMode) {
+	currentUIMode &= ~uiMode;
+}
 struct ProbeSharedCall {
 	deluge::hid::Button button;
 	bool on;
@@ -152,18 +173,67 @@ public:
 	ActionResult result = ActionResult::NOT_DEALT_WITH;
 	std::vector<ProbeSharedCall> calls;
 	std::vector<void*> targets;
+	ProbeActiveModStack activeModControllableModelStack;
+	unsigned modEncoderButtonCalls = 0;
+	unsigned automationNotifications = 0;
+	void* lastAutomationParamManager = nullptr;
+	uint8_t activeModKnobMode = 0;
+	uint8_t nextTargetModKnobMode = 0;
+	ParamManagerForTimeline* nextTargetParamManager = nullptr;
 	ActionResult buttonAction(deluge::hid::Button button, bool on, bool inCardRoutine) {
 		calls.push_back({button, on, inCardRoutine});
 		return result;
 	}
 	// Exact pointer log for the shared modulation-target boundary. The real API
 	// refreshes effect LED/knob indicators; no effect processing is simulated here.
-	void setActiveModControllableTimelineCounter(TimelineCounter* target, bool = true) { targets.push_back(target); }
-	void setActiveModControllableTimelineCounter(AudioClip* target, bool = true) { targets.push_back(target); }
-	void setActiveModControllableTimelineCounter(std::nullptr_t, bool = true) { targets.push_back(nullptr); }
+	void setActiveModControllableTimelineCounter(TimelineCounter* target, bool = true) {
+		const bool targetChanged = activeModControllableModelStack.timelineCounter != target;
+		targets.push_back(target);
+		activeModControllableModelStack.timelineCounter = target;
+		if (targetChanged) {
+			activeModControllableModelStack.modControllable = nullptr;
+			activeModControllableModelStack.paramManager = nextTargetParamManager;
+			activeModKnobMode = nextTargetModKnobMode;
+		}
+	}
+	void setActiveModControllableTimelineCounter(AudioClip* target, bool = true) {
+		TimelineCounter* timelineTarget = reinterpret_cast<TimelineCounter*>(target);
+		const bool targetChanged = activeModControllableModelStack.timelineCounter != timelineTarget;
+		targets.push_back(target);
+		activeModControllableModelStack.timelineCounter = timelineTarget;
+		if (targetChanged) {
+			activeModControllableModelStack.modControllable = nullptr;
+			activeModControllableModelStack.paramManager = nextTargetParamManager;
+			activeModKnobMode = nextTargetModKnobMode;
+		}
+	}
+	void setActiveModControllableTimelineCounter(std::nullptr_t, bool = true) {
+		targets.push_back(nullptr);
+		activeModControllableModelStack.timelineCounter = nullptr;
+		activeModControllableModelStack.modControllable = nullptr;
+		activeModControllableModelStack.paramManager = nextTargetParamManager;
+		activeModKnobMode = nextTargetModKnobMode;
+	}
+	void modEncoderButtonAction(uint8_t, bool) { ++modEncoderButtonCalls; }
+	void notifyParamAutomationOccurred(ParamManagerForTimeline* paramManager) {
+		++automationNotifications;
+		lastAutomationParamManager = paramManager;
+	}
+	bool finishActiveStutterForModTargetChange() {
+		targetChangeView.activeModControllableModelStack.modControllable =
+		    activeModControllableModelStack.modControllable;
+		targetChangeView.activeModControllableModelStack.paramManager = activeModControllableModelStack.paramManager;
+		return targetChangeView.finishActiveStutterForModTargetChange();
+	}
 	void reset() {
 		calls.clear();
 		targets.clear();
+		activeModControllableModelStack = {};
+		modEncoderButtonCalls = 0;
+		automationNotifications = 0;
+		lastAutomationParamManager = nullptr;
+		activeModKnobMode = nextTargetModKnobMode = 0;
+		nextTargetParamManager = nullptr;
 		result = ActionResult::NOT_DEALT_WITH;
 	}
 };
@@ -181,6 +251,7 @@ public:
 	ActionResult timerCallback();
 	ActionResult padAction(int32_t, int32_t, int32_t);
 	ActionResult buttonAction(deluge::hid::Button, bool, bool);
+	void modEncoderButtonAction(uint8_t, bool);
 	bool getAffectEntire() override;
 	UIModControllableContext getUIModControllableContext() override;
 	bool renderMainPads(uint32_t, RGB[][kDisplayWidth + kSideBarWidth], uint8_t[][kDisplayWidth + kSideBarWidth],
@@ -196,4 +267,6 @@ public:
 	loop_station::SlotId pendingRestoreSlot_ = loop_station::kInvalidSlot;
 	bool pendingExit_ = false;
 	bool modTargetIsClip_ = false;
+	bool stutterEncoderReleasePending_ = false;
+	void finishStutterBeforeTargetChange();
 };
