@@ -212,6 +212,9 @@ extern View view;
 struct LoopStationView : UI {
 	ActionResult buttonAction(deluge::hid::Button, bool, bool);
 	void focusRegained() override;
+	// Narrow routing boundary: counts events only and does not dispatch to the
+	// engine, so it cannot itself evidence continuously-still-held or duplicate
+	// release safety (that rests on the production trace and real-engine tests).
 	ActionResult padAction(int32_t, int32_t, int32_t velocity) override {
 		if (velocity == 0)
 			++padReleases;

@@ -79,15 +79,20 @@ int main() {
 	check(!model.held && model.cancellations == 1, "failed Save open cancels the stale accepted hold");
 	check(root.refreshed && root.cancellationsAtRefresh == 1, "Save cancellation precedes the ordinary refresh");
 
-	// A still-held gesture's later physical release reaches the restored root; it
-	// must not be replayed to the modal, re-cancel, or duplicate any action.
+	// Post-rollback routing of a fresh gesture: a new press and its release reach
+	// the restored root, are not replayed to the modal, and do not re-run
+	// cancellation. This narrow sequence does not return with the pad continuously
+	// held or send duplicate releases, and the root pad handler here only counts
+	// events. Continuously-still-held/duplicate-release safety therefore rests on
+	// the production source trace (a later release finds held == false and cannot
+	// queue Start/Clear) plus the complementary real-engine tests, not on this case.
 	const unsigned cancellationsBefore = model.cancellations;
-	check(matrixDriver.padAction(2, 3, 100) == ActionResult::DEALT_WITH, "later root press is handled");
-	check(matrixDriver.padAction(2, 3, 0) == ActionResult::DEALT_WITH, "later root release is handled");
-	check(root.padPresses == 1 && root.padReleases == 1, "later gesture reaches the restored root");
+	check(matrixDriver.padAction(2, 3, 100) == ActionResult::DEALT_WITH, "post-rollback fresh press is handled");
+	check(matrixDriver.padAction(2, 3, 0) == ActionResult::DEALT_WITH, "post-rollback fresh release is handled");
+	check(root.padPresses == 1 && root.padReleases == 1, "post-rollback fresh gesture reaches the restored root");
 	check(saveSongUI.releases == 1, "no delayed release is replayed to the modal");
-	check(model.cancellations == cancellationsBefore, "later releases do not re-run cancellation");
-	check(!model.held, "later releases leave the hold cleared");
+	check(model.cancellations == cancellationsBefore, "the fresh release does not re-run cancellation");
+	check(!model.held, "the fresh release leaves the hold cleared");
 
 	// Failed Load opening, consuming the release through the real LoadSongUI body.
 	uiNavigationHierarchy[0] = &root;
