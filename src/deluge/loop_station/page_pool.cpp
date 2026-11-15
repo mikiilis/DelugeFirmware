@@ -46,13 +46,18 @@ Status PagePool::initialize(std::span<std::byte> storage) {
 unsigned PagePool::findRecord(PhraseHandle handle) const {
 	if (!handle.valid())
 		return kRecordCount;
+	// A sealed record is findable until retired; a retiring record stays findable
+	// only while a snapshot pin still owns it, so preserved reads never lose pages.
+	auto findable = [&](unsigned i) {
+		const auto& phrase = slots_[i];
+		return phrase.owner == handle.slot && phrase.generation == handle.generation
+		       && ((phrase.sealed && !phrase.retiring) || (phrase.retiring && phrase.references != 0));
+	};
 	const auto active = activeRecord_[handle.slot];
-	if (active < kRecordCount && !slots_[active].retiring && slots_[active].sealed
-	    && slots_[active].generation == handle.generation)
+	if (active < kRecordCount && findable(active))
 		return active;
 	for (unsigned i = 0; i < kRecordCount; ++i)
-		if (i != active && slots_[i].owner == handle.slot && slots_[i].generation == handle.generation
-		    && slots_[i].sealed && !slots_[i].retiring)
+		if (i != active && findable(i))
 			return i;
 	return kRecordCount;
 }
@@ -223,6 +228,8 @@ Status PagePool::release(PhraseHandle handle) {
 	if (record == kRecordCount)
 		return Status::Stale;
 	auto& phrase = slots_[record];
+	if (phrase.references)
+		return Status::Busy; // A preserved snapshot still owns this version.
 	for (uint32_t page = 0; page < phrase.pages; ++page)
 		freeStack_[freeCount_++] = this->page(record, page);
 	phrase.pages = 0;
@@ -260,8 +267,8 @@ uint32_t PagePool::serviceRetirement(uint32_t maxPages) {
 	for (unsigned checked = 0; checked < kRecordCount && released < maxPages; ++checked) {
 		const unsigned record = retirementCursor_++ % kRecordCount;
 		auto& phrase = slots_[record];
-		if (!phrase.retiring)
-			continue;
+		if (!phrase.retiring || phrase.references)
+			continue; // A snapshot pin keeps this version readable until unpinned.
 		while (phrase.pages && released < maxPages) {
 			const auto ordinal = --phrase.pages;
 			freeStack_[freeCount_++] = page(record, ordinal);
@@ -426,6 +433,27 @@ Status PagePool::detach(SlotId slot, PhraseHandle& retained) {
 	retained = {slot, slots_[record].generation};
 	activeRecord_[slot] = kRecordCount;
 	return Status::Ok;
+}
+
+Status PagePool::pin(PhraseHandle handle) {
+	const auto record = findRecord(handle);
+	if (record == kRecordCount)
+		return Status::Stale;
+	++slots_[record].references;
+	return Status::Ok;
+}
+
+Status PagePool::unpin(PhraseHandle handle) {
+	if (!handle.valid())
+		return Status::Invalid;
+	for (unsigned i = 0; i < kRecordCount; ++i) {
+		auto& phrase = slots_[i];
+		if (phrase.references && phrase.owner == handle.slot && phrase.generation == handle.generation) {
+			--phrase.references;
+			return Status::Ok;
+		}
+	}
+	return Status::Stale;
 }
 
 uint32_t PagePool::freePages() const {

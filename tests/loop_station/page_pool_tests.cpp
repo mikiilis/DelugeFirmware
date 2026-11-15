@@ -346,3 +346,36 @@ TEST(LoopPages, replaceIntoDetachedEmptyTrackPublishesOnlyCandidate) {
 	CHECK_FALSE(rejected.valid());
 	CHECK_EQUAL(candidate.generation, pool.sealedHandle(0).generation);
 }
+
+TEST(LoopPages, pinnedRecordDefersRetirementUntilUnpinnedThenReclaimsBoundedly) {
+	alignas(Frame) std::byte storage[4 * kPageBytes]{};
+	PagePool pool;
+	CHECK(Status::Ok == pool.initialize(storage));
+	std::vector<Frame> frames(5);
+	for (unsigned i = 0; i < frames.size(); ++i)
+		frames[i] = {int32_t(i + 1), -int32_t(i + 1)};
+	const auto live = sealReservedPhrase(pool, 0, frames);
+	const auto freeBefore = pool.freePages();
+	CHECK(Status::Ok == pool.pin(live));
+	CHECK(Status::Ok == pool.retire(live));
+	for (unsigned i = 0; i < 16; ++i)
+		pool.serviceRetirement(16);
+	// The pinned version stays readable; retirement is deferred, not discarded.
+	CHECK(pool.retirementPending());
+	CHECK_EQUAL(freeBefore, pool.freePages());
+	CHECK_EQUAL(5, pool.length(live));
+	CHECK_EQUAL(3, pool.frame(live, 2)->l);
+	CHECK_EQUAL(-5, pool.frame(live, 4)->r);
+	CHECK(Status::Busy == pool.release(live)); // A snapshot still owns this version.
+	// Releasing the last pin lets bounded retirement reclaim exactly those pages.
+	CHECK(Status::Ok == pool.unpin(live));
+	for (unsigned i = 0; i < 16; ++i)
+		pool.serviceRetirement(16);
+	CHECK_FALSE(pool.retirementPending());
+	CHECK_EQUAL(freeBefore + 1, pool.freePages());
+	CHECK_EQUAL(0, pool.length(live));
+	CHECK(Status::Stale == pool.unpin(live));
+	PhraseHandle invalid{};
+	CHECK(Status::Stale == pool.pin(invalid));
+	CHECK(Status::Invalid == pool.unpin(invalid));
+}

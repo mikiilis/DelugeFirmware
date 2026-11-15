@@ -14,14 +14,56 @@ const SnapshotStore::Snapshot* SnapshotStore::lookup(SnapshotId id) const {
 }
 bool SnapshotStore::valid(SnapshotId id) const {
 	const auto* snapshot = lookup(id);
-	return snapshot && pool_.length(snapshot->handle) == snapshot->length
+	if (!snapshot)
+		return false;
+	// A preserved snapshot owns its record via the pool pin, so it stays valid
+	// across a provider rebind (rollback revision change); a plain snapshot still
+	// tracks the current rollback mapping.
+	if (snapshot->preserved)
+		return pool_.length(snapshot->handle) == snapshot->length;
+	return pool_.length(snapshot->handle) == snapshot->length
 	       && snapshot->revision == rollback_.readRevision(snapshot->handle.slot);
 }
+Status SnapshotStore::preserve(SlotId slot) {
+	if (!validSlot(slot))
+		return Status::Invalid;
+	auto& snapshot = snapshots_[slot];
+	if (!snapshot.identity || snapshot.preserved)
+		return Status::Ok;
+	if (rollback_.provisional(slot) || rollback_.pending(slot))
+		return Status::Busy; // Never freeze an unfinalized gesture mapping.
+	if (!valid({snapshot.identity})) {
+		invalidate(slot);
+		return Status::Stale;
+	}
+	// Take one bounded record reference so retirement cannot reclaim the source;
+	// reads then use the frozen record directly, never a later rollback binding.
+	const auto pinned = pool_.pin(snapshot.handle);
+	if (pinned != Status::Ok) {
+		invalidate(slot);
+		return pinned;
+	}
+	snapshot.preserved = true;
+	return Status::Ok;
+}
+void SnapshotStore::invalidateSlot(SlotId slot) {
+	if (validSlot(slot))
+		invalidate(slot);
+}
+void SnapshotStore::releaseAll() {
+	for (SlotId slot = 0; slot < kTrackCount; ++slot)
+		invalidate(slot);
+}
 void SnapshotStore::invalidate(SlotId slot) {
-	const auto identity = snapshots_[slot].identity;
-	snapshots_[slot] = {}; // Invalidate before returning any pinned pages to the arena.
+	auto& snapshot = snapshots_[slot];
+	const auto identity = snapshot.identity;
+	const auto handle = snapshot.handle;
+	const bool pinned = snapshot.preserved;
+	snapshot = {}; // Invalidate before returning any pinned pages to the arena.
 	if (identity)
 		pages_.erase(identity);
+	if (pinned)
+		pool_.unpin(handle);
 }
 Status SnapshotStore::request(SlotId slot, Generation generation, SnapshotId& result) {
 	result = {};
@@ -66,7 +108,9 @@ Status SnapshotStore::read(SnapshotId id, FrameIndex first, std::span<Frame> out
 			const auto* source = pool_.frame(snapshot.handle, index);
 			if (!source)
 				return Status::Stale;
-			output[i] = rollback_.read(snapshot.handle.slot, index, *source);
+			// A preserved snapshot reads its frozen record directly; a plain one
+			// reads the effective original through the current rollback mapping.
+			output[i] = snapshot.preserved ? *source : rollback_.read(snapshot.handle.slot, index, *source);
 		}
 	}
 	return valid(id) ? Status::Ok : Status::Stale;
@@ -86,7 +130,13 @@ void SnapshotStore::beforeWrite(SlotId slot, FrameIndex index, Frame original) {
 	if (!validSlot(slot) || !snapshots_[slot].identity)
 		return;
 	auto& snapshot = snapshots_[slot];
-	if (!valid({snapshot.identity})) {
+	if (snapshot.preserved) {
+		// A preserved snapshot owns an earlier version. Capture only edits to that
+		// same version; a newer same-slot recording must not be folded into it.
+		if (pool_.sealedHandle(slot).generation != snapshot.handle.generation)
+			return;
+	}
+	else if (!valid({snapshot.identity})) {
 		invalidate(slot);
 		return;
 	}

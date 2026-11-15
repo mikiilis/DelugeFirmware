@@ -13,6 +13,15 @@ public:
 	SnapshotStore(PagePool& pool, GestureRollback& rollback) : pool_(pool), rollback_(rollback) {}
 	Status initialize(std::span<std::byte> storage);
 	Status request(SlotId slot, Generation generation, SnapshotId& result);
+	// Freeze a currently valid snapshot across a confirmed history navigation.
+	// Pins the source record with the pool and freezes its effective mapping so
+	// the acquired version stays readable with its original frames after the
+	// provider is detached/replaced. No copy, scan, page or allocation.
+	Status preserve(SlotId slot);
+	// Explicit destructive invalidation (Clear, unbind, teardown): drops pages and
+	// releases any pin so bounded retirement can reclaim the version.
+	void invalidateSlot(SlotId slot);
+	void releaseAll();
 	Status read(SnapshotId id, FrameIndex first, std::span<Frame> output);
 	Status cancel(SnapshotId id);
 	bool valid(SnapshotId id) const;
@@ -28,6 +37,7 @@ private:
 		PhraseHandle handle{};
 		FrameIndex length = 0;
 		uint32_t lastPage = UINT32_MAX;
+		bool preserved = false;
 	};
 	const Snapshot* lookup(SnapshotId id) const;
 	void invalidate(SlotId slot);

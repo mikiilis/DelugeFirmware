@@ -177,6 +177,8 @@ Status ResidentAudio::clear(SlotId slot) {
 	contentChanged(slot);
 	if (history_)
 		history_->resetSlot(slot);
+	if (snapshots_)
+		snapshots_->invalidateSlot(slot);
 	return Status::Ok;
 }
 

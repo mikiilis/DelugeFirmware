@@ -77,8 +77,21 @@ int main() {
 		return history.commitRestore(id);
 	};
 	for (SlotId s = 0; s < kTrackCount; ++s) {
+		// A snapshot acquired before navigation is frozen and pinned: it must stay
+		// readable with its original frames across Undo-to-empty and Redo, then
+		// release boundedly, all without allocating.
+		SnapshotId retained;
+		if (snapshots.request(s, handles[s].generation, retained) != Status::Ok)
+			return 36;
+		if (snapshots.preserve(s) != Status::Ok || !snapshots.valid(retained))
+			return 37;
 		if (drive(s, false) != Status::Ok || pool.sealedHandle(s).valid())
 			return 14;
+		if (!snapshots.valid(retained))
+			return 38;
+		Frame preservedStaging[SnapshotStore::kStagingFrames];
+		if (snapshots.read(retained, 0, preservedStaging) != Status::Ok || preservedStaging[0].l != 0)
+			return 39;
 		if (audio.detachForHistory(s) != Status::Ok)
 			return 15;
 		history.mappingReplaced(s);
@@ -87,6 +100,11 @@ int main() {
 		const auto republished = pool.sealedHandle(s);
 		if (!republished.valid() || audio.replace(s, republished) != Status::Ok || audio.start(s, false) != Status::Ok)
 			return 17;
+		if (snapshots.read(retained, 0, preservedStaging) != Status::Ok)
+			return 40;
+		snapshots.release(retained);
+		if (snapshots.valid(retained))
+			return 41;
 		if (pool.frame(pool.sealedHandle(s), 0) == nullptr) // Live audio is never reclaimed.
 			return 18;
 		if (history.retainedSessions() > History::kMaxSessions || history.retainedPages() > 65)

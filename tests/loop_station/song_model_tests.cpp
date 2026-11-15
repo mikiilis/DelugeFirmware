@@ -1602,6 +1602,17 @@ TEST(LoopBindings, SaveAfterUndoToEmptyDoesNotResurrectRecordingOnReload) {
 	CHECK_EQUAL(0, reloaded.loadAdmission().count);
 	CHECK_FALSE(reloaded.loadAdmission().admitted[0]);
 	CHECK(savedIdentity != 0);
+
+	// A fresh model loading the empty document has no hidden Undo/Redo, while the
+	// bound settings survive the reload.
+	Fixture reloadedModel;
+	reloadedModel.start();
+	CHECK(Status::Ok == reloadedModel.model->dispatch(Command::configure(reloadedSettings)));
+	CHECK(Status::Ok == reloadedModel.model->ensureBound(0));
+	CHECK_FALSE(reloadedModel.model->engine().state(0).hasPhrase);
+	CHECK_FALSE(reloadedModel.model->canUndo(0));
+	CHECK_FALSE(reloadedModel.model->canRedo(0));
+	CHECK_EQUAL(1200, reloadedModel.model->engine().settings().tracks[0].transposeCents);
 }
 
 // Saving an undone-empty bound track must not retire its volatile Redo branch,
@@ -1747,4 +1758,94 @@ TEST(LoopBindings, LoadCancelsApplyingHistoryBeforeNewSongPublication) {
 	CHECK(f.model->safeToRelease());
 	CHECK_EQUAL(revision, f.model->contentRevision(0));
 	CHECK_EQUAL(frames, f.model->engine().state(0).phraseFrames);
+}
+
+// A real in-flight archive keeps its acquired snapshot across initial Undo/Redo:
+// the frozen SnapshotId is never finished before navigation, and once it
+// progresses it still writes the original stereo frames.
+TEST(LoopBindings, InFlightSaveSnapshotSurvivesInitialUndoAndRedo) {
+	archive_mock::storage = {};
+	FatFsArchiveStorage storage;
+	Fixture f;
+	f.model->archive().setStorage(&storage);
+	f.start();
+	auto settings = f.model->engine().settings();
+	settings.tracks[0].source = Source::Stereo; // Distinct left/right frames.
+	CHECK(Status::Ok == f.model->dispatch(Command::configure(settings)));
+	f.record(0, {256, -512});
+
+	PersistenceState persistence;
+	CHECK(Status::Ok == persistence.installLoaded(defaultSettings(), Manifest{}));
+	const auto savedRevision = f.model->contentRevision(0);
+	CHECK(Status::Ok == persistence.requestSave(f.model.get()));
+	CHECK_EQUAL(int(ArchiveState::Pending), int(f.model->archive().state(0)));
+
+	// Navigate while the save is genuinely in flight (never serviced).
+	CHECK_EQUAL(int(HistoryNavigationState::Complete), int(f.undo(0, false).state));
+	CHECK_FALSE(f.model->engine().state(0).hasPhrase);
+	CHECK(f.model->archive().state(0) != ArchiveState::Failed);
+	CHECK_EQUAL(int(HistoryNavigationState::Complete), int(f.undo(0, true).state));
+	CHECK(f.model->engine().state(0).hasPhrase);
+
+	// Now it progresses and reads the frozen original frames.
+	for (unsigned i = 0; i < 64 && !persistence.pendingReady(); ++i) {
+		f.model->serviceArchive(4096);
+		persistence.serviceArchiveCandidates(*f.model);
+	}
+	CHECK(persistence.pendingReady());
+	const auto staged = persistence.pendingManifest().phrases[0];
+	CHECK_EQUAL(0, staged.slot);
+	CHECK_EQUAL(8, staged.frames);
+	const auto frames = f.readArchivedFrames(storage, staged.slot, staged.identity, staged.frames);
+	for (const auto& frame : frames) {
+		CHECK_EQUAL(256, frame.l);
+		CHECK_EQUAL(-512, frame.r);
+	}
+	const auto current = f.currentRevisions();
+	CHECK(Status::Ok == persistence.commitPendingAfterDocumentVerified(current));
+	CHECK_EQUAL(int(SaveState::Unsaved), int(persistence.saveState()));
+	CHECK_EQUAL(savedRevision, persistence.committedAudioRevision(0));
+	CHECK_EQUAL(1, persistence.committedManifest().phraseCount);
+}
+
+// The same acquired snapshot survives an ordinary overdub Undo/Redo, which
+// detaches/replaces the provider while retaining the original record.
+TEST(LoopBindings, InFlightSaveSnapshotSurvivesOverdubUndoAndRedo) {
+	archive_mock::storage = {};
+	FatFsArchiveStorage storage;
+	Fixture f;
+	f.model->archive().setStorage(&storage);
+	f.start();
+	auto settings = f.model->engine().settings();
+	settings.tracks[0].source = Source::Stereo;
+	CHECK(Status::Ok == f.model->dispatch(Command::configure(settings)));
+	f.record(0, {256, -512});
+
+	PersistenceState persistence;
+	CHECK(Status::Ok == persistence.installLoaded(defaultSettings(), Manifest{}));
+	CHECK(Status::Ok == persistence.requestSave(f.model.get()));
+	CHECK_EQUAL(int(ArchiveState::Pending), int(f.model->archive().state(0)));
+
+	// Open and close one changed overdub pass while the save stays in flight.
+	CHECK(Status::Ok == f.model->dispatch({CommandType::Press, 0}));
+	f.render(8, {256, -512});
+	f.host.time += GestureRollback::kProvisionalSamples;
+	CHECK(Status::Ok == f.model->dispatch({CommandType::Press, 0}));
+	CHECK(f.model->engine().state(0).playing);
+	CHECK_EQUAL(int(HistoryNavigationState::Complete), int(f.undo(0, false).state));
+	CHECK(f.model->archive().state(0) != ArchiveState::Failed);
+	CHECK_EQUAL(int(HistoryNavigationState::Complete), int(f.undo(0, true).state));
+	CHECK(f.model->engine().state(0).hasPhrase);
+
+	for (unsigned i = 0; i < 64 && !persistence.pendingReady(); ++i) {
+		f.model->serviceArchive(4096);
+		persistence.serviceArchiveCandidates(*f.model);
+	}
+	CHECK(persistence.pendingReady());
+	const auto staged = persistence.pendingManifest().phrases[0];
+	const auto frames = f.readArchivedFrames(storage, staged.slot, staged.identity, staged.frames);
+	for (const auto& frame : frames) {
+		CHECK_EQUAL(256, frame.l);
+		CHECK_EQUAL(-512, frame.r);
+	}
 }

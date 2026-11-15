@@ -161,6 +161,7 @@ Status SongModel::unbind(SlotId slot) {
 	if (navigation_.active && navigation_.slot == slot)
 		cancelHistoryNavigation(Status::Stale);
 	history_.resetSlot(slot);
+	snapshots_.invalidateSlot(slot);
 	++slotGenerations_[slot]; // Other slots' setup transactions remain independent.
 	archive_.cancel(slot);
 	transpose_.reset(slot);
@@ -778,6 +779,9 @@ Status SongModel::commitRestore(RestoreId id) {
 		restoreOwner_ = {};
 		return Status::Ok;
 	}
+	// Freeze any snapshot acquired before this navigation (e.g. an in-flight save)
+	// so it stays owned with its original frames across the provider swap.
+	snapshots_.preserve(slot);
 	const auto status = history_.commitRestore(restoreOwner_.historyId);
 	if (status != Status::Ok) {
 		if (status == Status::Stale)
@@ -952,6 +956,7 @@ void SongModel::requestRelease() {
 		if (live.valid())
 			pool_.retire(live);
 	}
+	snapshots_.releaseAll();
 	archive_.close();
 	if (registered_) {
 		for (SlotId id = 0; id < kTrackCount; ++id) {

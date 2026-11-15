@@ -164,3 +164,157 @@ TEST(LoopSnapshots, subpageCapacityAndMisalignedArenaAreExplicitAndRepeatedIniti
 	dub();
 	CHECK_FALSE(snapshots.valid(id));
 }
+
+// A snapshot acquired before a confirmed navigation is frozen and owned by the
+// store: initial Undo detaches the provider to empty and Redo republishes it,
+// yet the acquired view still reads its exact original frames throughout.
+TEST(LoopSnapshots, RetainedSnapshotReadsOriginalFramesAcrossInitialUndoAndRedo) {
+	CHECK(Status::Ok == snapshots.initialize(arena));
+	alignas(Frame) std::byte historyBytes[8 * kPageBytes]{};
+	CHECK(Status::Ok == history.initialize(historyBytes));
+	const auto base = phrase(0, 5);
+	SnapshotId id;
+	CHECK(Status::Ok == snapshots.request(0, base.generation, id));
+	CHECK(Status::Ok == snapshots.preserve(0));
+	CHECK(snapshots.valid(id));
+
+	const auto emptied = restoreStep(0, false);
+	CHECK_FALSE(emptied.valid());
+	CHECK_FALSE(pool.sealedHandle(0).valid());
+	CHECK(snapshots.valid(id));
+	Frame staging[5]{};
+	CHECK(Status::Ok == snapshots.read(id, 0, staging));
+	for (int i = 0; i < 5; ++i) {
+		CHECK_EQUAL(i + 1, staging[i].l);
+		CHECK_EQUAL(-(i + 1), staging[i].r);
+	}
+
+	const auto redone = restoreStep(0, true);
+	CHECK(redone.valid());
+	CHECK(snapshots.valid(id));
+	CHECK(Status::Ok == snapshots.read(id, 0, staging));
+	for (int i = 0; i < 5; ++i) {
+		CHECK_EQUAL(i + 1, staging[i].l);
+		CHECK_EQUAL(-(i + 1), staging[i].r);
+	}
+	snapshots.release(id);
+	CHECK_FALSE(snapshots.valid(id));
+	CHECK_EQUAL(0, snapshots.activeSnapshots());
+}
+
+// An ordinary overdub Undo retains the original record as the Redo version; the
+// frozen snapshot keeps reading the overdub's original frames before and after
+// Redo, not the overdubbed or later-written frames.
+TEST(LoopSnapshots, RetainedSnapshotKeepsOriginalFramesAcrossOverdubUndoAndRedo) {
+	CHECK(Status::Ok == snapshots.initialize(arena));
+	alignas(Frame) std::byte historyBytes[8 * kPageBytes]{};
+	CHECK(Status::Ok == history.initialize(historyBytes));
+	const auto base = phrase(0, 5);
+	SnapshotId id;
+	CHECK(Status::Ok == snapshots.request(0, base.generation, id));
+	CHECK(Status::Ok == snapshots.preserve(0));
+	dub(0, 5); // Adds {3,-3} per frame and captures the snapshot's before-images.
+	CHECK(Status::Ok == audio.setCaptureGate(0, false));
+
+	const auto undone = restoreStep(0, false);
+	CHECK(undone.valid());
+	CHECK(snapshots.valid(id));
+	Frame staging[5]{};
+	CHECK(Status::Ok == snapshots.read(id, 0, staging));
+	for (int i = 0; i < 5; ++i) {
+		CHECK_EQUAL(i + 1, staging[i].l);
+		CHECK_EQUAL(-(i + 1), staging[i].r);
+	}
+
+	const auto redone = restoreStep(0, true);
+	CHECK(redone.valid());
+	CHECK(snapshots.valid(id));
+	CHECK(Status::Ok == snapshots.read(id, 0, staging));
+	for (int i = 0; i < 5; ++i) {
+		CHECK_EQUAL(i + 1, staging[i].l);
+		CHECK_EQUAL(-(i + 1), staging[i].r);
+	}
+	snapshots.release(id);
+}
+
+// Retirement cannot reclaim a preserved version's pages until the snapshot is
+// released; the release then drops the pin and bounded retirement reclaims it.
+TEST(LoopSnapshots, RetainedSnapshotSurvivesRetirementUntilReleaseThenReclaims) {
+	CHECK(Status::Ok == snapshots.initialize(arena));
+	const auto base = phrase(0, 5);
+	SnapshotId id;
+	CHECK(Status::Ok == snapshots.request(0, base.generation, id));
+	CHECK(Status::Ok == snapshots.preserve(0));
+	const auto freeBefore = pool.freePages();
+	CHECK(Status::Ok == pool.retire(base));
+	for (unsigned i = 0; i < 64; ++i)
+		pool.serviceRetirement(64);
+	CHECK(pool.retirementPending());
+	CHECK_EQUAL(freeBefore, pool.freePages());
+	CHECK(snapshots.valid(id));
+	Frame staging[5]{};
+	CHECK(Status::Ok == snapshots.read(id, 0, staging));
+	for (int i = 0; i < 5; ++i)
+		CHECK_EQUAL(i + 1, staging[i].l);
+
+	snapshots.release(id);
+	for (unsigned i = 0; i < 64; ++i)
+		pool.serviceRetirement(64);
+	CHECK_FALSE(pool.retirementPending());
+	CHECK_EQUAL(freeBefore + 1, pool.freePages());
+	CHECK_EQUAL(0, snapshots.activeSnapshots());
+}
+
+// A newer same-slot recording must not be folded into a preserved snapshot: its
+// writes target a different version, so the snapshot keeps its original frames.
+TEST(LoopSnapshots, RetainedSnapshotIgnoresANewerSameSlotRecordingWrite) {
+	CHECK(Status::Ok == snapshots.initialize(arena));
+	const auto original = phrase(0, 5);
+	SnapshotId id;
+	CHECK(Status::Ok == snapshots.request(0, original.generation, id));
+	CHECK(Status::Ok == snapshots.preserve(0));
+
+	PhraseHandle retained{};
+	CHECK(Status::Ok == pool.detach(0, retained));
+	const Frame other[] = {{70, -70}, {80, -80}, {90, -90}};
+	PhraseHandle replacement{};
+	CHECK(Status::Ok == pool.beginDetached(0, 3, replacement));
+	CHECK(Status::Ok == pool.reserveDetachedPages(replacement, 16));
+	for (FrameIndex i = 0; i < 3; ++i)
+		CHECK(Status::Ok == pool.writeDetached(replacement, i, other[i]));
+	CHECK(Status::Ok == pool.sealDetached(replacement));
+	PhraseHandle previous{};
+	CHECK(Status::Ok == pool.replace(replacement, previous));
+	CHECK_FALSE(previous.valid());
+	CHECK_EQUAL(replacement.generation, pool.sealedHandle(0).generation);
+
+	Frame staging[5]{};
+	snapshots.beforeWrite(0, 0, {999, -999});
+	CHECK(snapshots.valid(id));
+	CHECK(Status::Ok == snapshots.read(id, 0, staging));
+	CHECK_EQUAL(1, staging[0].l);
+	CHECK_EQUAL(-1, staging[0].r);
+	CHECK_EQUAL(5, staging[4].l);
+	CHECK_EQUAL(-5, staging[4].r);
+	snapshots.release(id);
+	CHECK(Status::Ok == pool.release(original));
+}
+
+// Explicit Clear stays destructive for a preserved snapshot: it drops the pin and
+// the retained pages, and the version is no longer readable.
+TEST(LoopSnapshots, PreservedSnapshotIsInvalidatedByExplicitClear) {
+	CHECK(Status::Ok == snapshots.initialize(arena));
+	const auto base = phrase(0, 5);
+	SnapshotId id;
+	CHECK(Status::Ok == snapshots.request(0, base.generation, id));
+	CHECK(Status::Ok == snapshots.preserve(0));
+	CHECK(snapshots.valid(id));
+	audio.stop(0);
+	CHECK(Status::Ok == audio.clear(0));
+	CHECK_FALSE(snapshots.valid(id));
+	CHECK_EQUAL(0, snapshots.retainedPages());
+	CHECK_EQUAL(0, snapshots.activeSnapshots());
+	for (unsigned i = 0; i < 64; ++i)
+		pool.serviceRetirement(64);
+	CHECK_FALSE(pool.retirementPending());
+}

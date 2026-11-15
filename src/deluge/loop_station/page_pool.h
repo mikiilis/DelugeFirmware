@@ -41,6 +41,11 @@ public:
 	// Detaches the slot's sealed active record without freeing its pages or changing
 	// its handle. The retained record stays readable until release or retire.
 	Status detach(SlotId slot, PhraseHandle& retained);
+	// A snapshot-owned reference to one sealed version. A pinned record stays
+	// readable (even across retire) until unpinned; retirement then reclaims it
+	// boundedly. Bounded: one retained reference per record, no pages/allocation.
+	Status pin(PhraseHandle handle);
+	Status unpin(PhraseHandle handle);
 	Frame* frame(PhraseHandle handle, FrameIndex index);
 	// Returns zero for invalid, unsealed, or stale handles.
 	FrameIndex length(PhraseHandle handle) const;
@@ -77,6 +82,7 @@ private:
 		FrameIndex length = 0;
 		FrameIndex reserved = 0;
 		uint32_t pages = 0;
+		uint32_t references = 0; // Snapshot-owned pins; retire defers while nonzero.
 		bool active = false, retiring = false;
 		bool sealed = false;
 	};
