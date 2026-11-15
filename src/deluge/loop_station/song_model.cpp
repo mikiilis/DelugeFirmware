@@ -527,7 +527,11 @@ Status SongModel::requestCheckpointRestore(SlotId slot, Generation checkpointIde
 	if (!validSlot(slot) || !checkpointIdentity)
 		return Status::Invalid;
 	const auto slotGeneration = slotGenerations_[slot];
-	const auto modelGeneration = generation_;
+	// Accepted checkpoint work uses the ownership epoch (like user jobs), not the
+	// volatile setup generation: a supported root-view handoff must not abandon an
+	// accepted restore. Genuine edits/rebinds/teardown cancel through slot
+	// generation, source revision and release instead.
+	const auto modelGeneration = modelEpoch_;
 	{
 		Boundary boundary(host_);
 		const auto state = engine_.state(slot);
@@ -574,7 +578,7 @@ Status SongModel::serviceRestore(RestoreId id, uint32_t maxFrames) {
 		return Status::Stale;
 	}
 	if (restoreOwner_.slotGeneration != slotGenerations_[restoreOwner_.slot]
-	    || restoreOwner_.modelGeneration != (restoreOwner_.checkpoint ? generation_ : modelEpoch_) || !ready()) {
+	    || restoreOwner_.modelGeneration != modelEpoch_ || !ready()) {
 		cancelRestore(restoreOwner_.slot);
 		--inFlight_;
 		return Status::Stale;
@@ -738,9 +742,8 @@ Status SongModel::commitRestore(RestoreId id) {
 		return Status::Stale;
 	const auto slot = restoreOwner_.slot;
 	Boundary boundary(host_);
-	if (restoreOwner_.slotGeneration != slotGenerations_[slot]
-	    || restoreOwner_.modelGeneration != (restoreOwner_.checkpoint ? generation_ : modelEpoch_) || !ready()
-	    || !bindings_[slot]) {
+	if (restoreOwner_.slotGeneration != slotGenerations_[slot] || restoreOwner_.modelGeneration != modelEpoch_
+	    || !ready() || !bindings_[slot]) {
 		if (restoreOwner_.checkpoint && restoreOwner_.candidate.valid())
 			pool_.retire(restoreOwner_.candidate);
 		else
@@ -879,7 +882,6 @@ void SongModel::serviceArchive(uint32_t maxBytes) {
 		const auto request = restoreOwner_.request;
 		const auto slot = restoreOwner_.slot;
 		const auto identity = restoreOwner_.checkpointIdentity;
-		const auto modelGeneration = restoreOwner_.modelGeneration;
 		const auto slotGeneration = restoreOwner_.slotGeneration;
 		const auto source = restoreOwner_.source;
 		const auto sourceRevision = restoreOwner_.sourceRevision;
@@ -902,10 +904,10 @@ void SongModel::serviceArchive(uint32_t maxBytes) {
 			                                 std::span(restoreFrames_).first(count), framesRead, totalFrames);
 		}
 		if (restoreOwner_.request == request && restoreOwner_.checkpoint && !restoreOwner_.canceled && ready()
-		    && restoreOwner_.modelGeneration == modelGeneration && generation_ == modelGeneration
-		    && restoreOwner_.slotGeneration == slotGeneration && slotGenerations_[slot] == slotGeneration
-		    && restoreOwner_.source.slot == source.slot && restoreOwner_.source.generation == source.generation
-		    && pool_.sealedHandle(slot).slot == source.slot && pool_.sealedHandle(slot).generation == source.generation
+		    && restoreOwner_.modelGeneration == modelEpoch_ && restoreOwner_.slotGeneration == slotGeneration
+		    && slotGenerations_[slot] == slotGeneration && restoreOwner_.source.slot == source.slot
+		    && restoreOwner_.source.generation == source.generation && pool_.sealedHandle(slot).slot == source.slot
+		    && pool_.sealedHandle(slot).generation == source.generation
 		    && restoreOwner_.sourceRevision == sourceRevision && rollback_.readRevision(slot) == sourceRevision) {
 			restoreOwner_.ioStatus = status;
 			restoreOwner_.ioFramesRead = framesRead;

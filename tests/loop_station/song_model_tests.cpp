@@ -1616,6 +1616,57 @@ TEST(LoopBindings, LoadedCheckpointIsOneUndoableBase) {
 	CHECK(loaded.model->canUndo(0));
 }
 
+// An accepted checkpoint restore is accepted background work: a harmless root
+// view exit must not abandon it, while an actual teardown still cancels it.
+TEST(LoopBindings, AcceptedCheckpointRestoreSurvivesViewExitButNotTeardown) {
+	archive_mock::storage = {};
+	ArchiveCandidate checkpoint{};
+	{
+		FatFsArchiveStorage writerStorage;
+		Fixture source;
+		source.model->archive().setStorage(&writerStorage);
+		source.start();
+		source.record(0, {256, -256});
+		CHECK(Status::Ok == source.model->requestArchive(0));
+		for (unsigned i = 0; i < 20 && source.model->archive().state(0) != ArchiveState::ReadyForPublication; ++i)
+			source.model->serviceArchive(4096);
+		CHECK(source.model->archive().take(0, checkpoint));
+	}
+
+	FatFsArchiveStorage readerStorage;
+	Fixture loaded;
+	loaded.model->archive().setStorage(&readerStorage);
+	loaded.start();
+	CHECK(Status::Ok
+	      == readerStorage.registerPublishedFile(checkpoint.slot, checkpoint.identity, checkpoint.path.data()));
+	CHECK(Status::Ok == loaded.model->ensureBound(checkpoint.slot));
+	RestoreId restore{};
+	CHECK(Status::Ok == loaded.model->requestCheckpointRestore(checkpoint.slot, checkpoint.identity, restore));
+	// Partially read the real checkpoint, then leave the root view mid-read.
+	loaded.model->serviceArchive(50);
+	CHECK(loaded.model->checkpointRestorePending(checkpoint.slot));
+	CHECK(Status::Ok == loaded.model->requestViewExit());
+	CHECK(loaded.model->checkpointRestorePending(checkpoint.slot)); // Not abandoned.
+	CHECK(Status::Ok == loaded.driveRestore(restore, 512));
+	CHECK(Status::Ok == loaded.model->commitRestore(restore));
+	CHECK(loaded.model->engine().state(0).hasPhrase);
+	CHECK_FALSE(loaded.model->engine().state(0).playing);
+	CHECK(loaded.model->canUndo(0)); // Exactly one base boundary...
+	CHECK_FALSE(loaded.model->canRedo(0));
+	CHECK_EQUAL(checkpoint.frames, loaded.model->engine().state(0).phraseFrames);
+	CHECK(Status::Ok == loaded.model->dispatch({CommandType::StartAll}));
+	loaded.expectUniformBacking(0, checkpoint.frames, {256, 256});
+
+	// An actual teardown still cancels an accepted checkpoint restore.
+	RestoreId second{};
+	CHECK(Status::Ok == loaded.model->requestCheckpointRestore(0, checkpoint.identity, second));
+	loaded.model->serviceArchive(50);
+	CHECK(loaded.model->checkpointRestorePending(0));
+	loaded.model->requestRelease();
+	CHECK_EQUAL(int(Status::Stale), int(loaded.driveRestore(second, 512)));
+	CHECK_FALSE(loaded.model->checkpointRestorePending(0));
+}
+
 // Undoing the only layer to empty and saving must omit the old audio checkpoint
 // while keeping bound settings; a reload must not resurrect the removed recording.
 TEST(LoopBindings, SaveAfterUndoToEmptyDoesNotResurrectRecordingOnReload) {
