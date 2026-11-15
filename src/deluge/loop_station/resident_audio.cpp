@@ -24,6 +24,11 @@ Status ResidentAudio::beginInitial(SlotId slot, FrameIndex durationLimit) {
 	const auto status = pool_.beginPhrase(slot, durationLimit);
 	if (status != Status::Ok)
 		return status;
+	// Admission succeeded: a fresh base recording is the new-edit boundary and
+	// invalidates any prior Redo branch immediately, not only on later nonzero
+	// completion. A failed admission above never reaches this.
+	if (history_)
+		history_->beginInitialEdit(slot);
 	auto& state = slots_[slot];
 	state = {};
 	state.durationLimit = durationLimit;

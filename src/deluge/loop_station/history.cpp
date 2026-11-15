@@ -121,6 +121,15 @@ void History::fenceForward(unsigned root) {
 		id = next;
 	}
 }
+void History::beginInitialEdit(SlotId slot) {
+	if (!validSlot(slot))
+		return;
+	cancelRestore(slot);
+	// Opening a new base recording is the new-edit boundary: any prior volatile
+	// chain, and the Redo branch of an undone-empty state, cannot survive it even
+	// if the take later closes with zero frames.
+	invalidateRedo(slot);
+}
 void History::beginSession(SlotId slot, Generation generation) {
 	if (!pages_.ready() || !validSlot(slot))
 		return;

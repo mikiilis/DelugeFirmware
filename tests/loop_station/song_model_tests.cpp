@@ -1079,6 +1079,30 @@ TEST(LoopBindings, ActiveUnchangedOverdubDoesNotUndoInitial) {
 	CHECK_FALSE(f.model->engine().state(0).hasPhrase);
 }
 
+// Opening a fresh initial recording is the new-edit boundary: even a zero-frame
+// take invalidates the prior Redo branch, while another track's history is
+// untouched.
+TEST(LoopBindings, NewInitialTakeInvalidatesRedoAtAdmission) {
+	Fixture f;
+	f.start();
+	f.record(0);
+	f.record(1);
+	CHECK_EQUAL(int(HistoryNavigationState::Complete), int(f.undo(0, false).state));
+	CHECK_EQUAL(int(HistoryNavigationState::Complete), int(f.undo(1, false).state));
+	CHECK_FALSE(f.model->engine().state(0).hasPhrase);
+	CHECK(f.model->canRedo(0));
+	CHECK(f.model->canRedo(1));
+	// Start a fresh initial take on track 0 and close it with zero captured frames.
+	CHECK(Status::Ok == f.model->dispatch({CommandType::Press, 0}));
+	CHECK(f.model->engine().state(0).capture && !f.model->engine().state(0).playing);
+	CHECK(Status::Ok == f.model->dispatch({CommandType::Press, 0})); // Zero-frame closure.
+	CHECK_FALSE(f.model->engine().state(0).hasPhrase);
+	CHECK_FALSE(f.model->canRedo(0)); // The old branch is invalidated at admission.
+	HistoryTarget redo{};
+	CHECK_EQUAL(int(Status::SourceUnavailable), int(f.model->historyTarget(0, true, redo)));
+	CHECK(f.model->canRedo(1)); // Another track is unaffected.
+}
+
 // Incoming frames inside one capture session must not invalidate a confirmed
 // target, so a prompt armed at the start still confirms the same session later.
 TEST(LoopBindings, FramesWithinSameCaptureDoNotInvalidateTarget) {

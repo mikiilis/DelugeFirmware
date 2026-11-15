@@ -11,6 +11,11 @@ public:
 	History(PagePool& pool, GestureRollback& rollback) : pool_(pool), rollback_(rollback) {}
 	Status initialize(std::span<std::byte> storage);
 	void beginSession(SlotId slot, Generation generation);
+	// Called at successful new-initial-capture admission, before completion:
+	// opening a fresh base recording invalidates any prior volatile chain and
+	// Redo branch, independent of the eventual frame count. A failed admission
+	// never reaches this.
+	void beginInitialEdit(SlotId slot);
 	void beforeWrite(SlotId slot, FrameIndex index, Frame original);
 	void endSession(SlotId slot);
 	// Register a completed, nonzero base recording as the initial boundary of a
