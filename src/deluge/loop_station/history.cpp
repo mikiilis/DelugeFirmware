@@ -362,7 +362,7 @@ Status History::reserveRestore(RestoreId id, uint32_t maxPages) {
 	if (!restore_.active || !id.valid() || id.generation != restore_.id.generation)
 		return Status::Stale;
 	auto& job = restore_;
-	if (job.reusedVersion || job.initialUndo)
+	if (job.reusedVersion || job.initialUndo || job.candidateReady)
 		return Status::Ok;
 	if (job.candidateNeeded) {
 		PhraseHandle candidate{};
@@ -385,7 +385,7 @@ Status History::serviceRestore(RestoreId id, uint32_t maxFrames) {
 		cancelRestore(job.slot);
 		return Status::Stale;
 	}
-	if (job.reusedVersion || job.initialUndo)
+	if (job.reusedVersion || job.initialUndo || job.candidateReady)
 		return Status::Ok;
 	if (maxFrames == 0)
 		return Status::Busy;
@@ -433,6 +433,7 @@ Status History::serviceRestore(RestoreId id, uint32_t maxFrames) {
 		cancelRestore(job.slot);
 		return status;
 	}
+	job.candidateReady = true;
 	return Status::Ok;
 }
 

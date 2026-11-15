@@ -1188,6 +1188,49 @@ TEST(LoopBindings, CommitBusyRetainsJobAndRetries) {
 	CHECK_FALSE(f.model->engine().state(0).hasPhrase);
 }
 
+// An ordinary overdub Undo whose reconstruction has already sealed its candidate
+// must survive a commit Busy: the retained job retries its commit instead of
+// re-reserving the now-sealed candidate and failing.
+TEST(LoopBindings, OrdinaryOverdubUndoRetriesCommitBusyAfterSeal) {
+	Fixture f;
+	f.start();
+	f.record(0);                                                     // Initially playing, capture closed.
+	CHECK(Status::Ok == f.model->dispatch({CommandType::Press, 0})); // Open a changed overdub.
+	for (unsigned i = 0; i < 9; ++i)
+		f.render(128);
+	f.host.time += GestureRollback::kProvisionalSamples;
+	CHECK(Status::Ok == f.model->dispatch({CommandType::Press, 0}));      // Close the overdub boundary.
+	CHECK(Status::Ok == f.model->dispatch({CommandType::TransportStop})); // Ordinary Undo on a stopped track.
+	CHECK_FALSE(f.model->engine().state(0).playing);
+	HistoryTarget target{};
+	CHECK_EQUAL(int(Status::Ok), int(f.model->historyTarget(0, false, target)));
+	RestoreId id{};
+	CHECK_EQUAL(int(Status::Ok), int(f.model->requestHistoryNavigation(target, id)));
+	const auto revisionBefore = f.model->contentRevision(0);
+	// Queue a quantized Start so the commit is Busy once the candidate has sealed.
+	auto settings = f.model->engine().settings();
+	settings.startAction.mode = ActionMode::Synced;
+	CHECK(Status::Ok == f.model->dispatch(Command::configure(settings)));
+	CHECK(Status::Ok == f.model->dispatch({CommandType::StartAll}));
+	CHECK(f.model->engine().state(0).pending);
+	// Several foreground quanta seal the reconstruction while commit stays Busy.
+	for (unsigned i = 0; i < 8; ++i)
+		f.model->serviceHistoryNavigation(128);
+	const auto retained = f.model->historyNavigationResult();
+	CHECK_EQUAL(int(HistoryNavigationState::Applying), int(retained.state));
+	CHECK_EQUAL(id.generation, retained.id.generation);
+	// Resolve the pending transport action; the retained job commits exactly once.
+	for (unsigned i = 0; i < 400 && f.model->engine().state(0).pending; ++i)
+		f.render(128);
+	CHECK_FALSE(f.model->engine().state(0).pending);
+	const auto result = f.driveNavigation(id);
+	CHECK_EQUAL(int(HistoryNavigationState::Complete), int(result.state));
+	CHECK_EQUAL(int(Status::Ok), int(result.status));
+	CHECK_EQUAL(revisionBefore + 1, f.model->contentRevision(0));
+	CHECK(f.model->engine().state(0).hasPhrase);
+	f.expectUniformBacking(0, 8, {100, 100});
+}
+
 // Reentrant foreground service cannot service or commit the job twice.
 TEST(LoopBindings, ReentrantServiceDoesNotDoublePublish) {
 	Fixture f;

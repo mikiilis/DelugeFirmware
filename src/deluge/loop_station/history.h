@@ -79,6 +79,10 @@ private:
 		FrameIndex cursor = 0, length = 0;
 		SlotId slot = kInvalidSlot;
 		bool active = false, redo = false, reusedVersion = false, candidateNeeded = false, cancelPending = false;
+		// Reconstruction/commit-pending: once the before-image candidate has been
+		// fully built and sealed, reserve/service are idempotent and a later commit
+		// retry must not re-reserve the now-sealed record as if it were Stale.
+		bool candidateReady = false;
 		// Initial boundary Undo detaches the live recording instead of building a
 		// before-image candidate. Redo from empty republishes afterVersion and has
 		// no current source phrase.
