@@ -2,6 +2,7 @@
 
 #include "definitions_cxx.hpp"
 #include "deluge/loop_station/geometry.h"
+#include "deluge/loop_station/length_display.h"
 #include "deluge/loop_station/menu_model.h"
 #include "deluge/loop_station/song_model.h"
 #include "deluge/loop_station/view_state.h"

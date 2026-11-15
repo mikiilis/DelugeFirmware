@@ -8,6 +8,7 @@
 
 #include "deluge/loop_station/config.h"
 #include "deluge/loop_station/engine.h"
+#include "deluge/loop_station/length_display.h"
 #include "deluge/loop_station/menu_model.h"
 #include "deluge/loop_station/types.h"
 #include "gui/fonts/fonts.h"

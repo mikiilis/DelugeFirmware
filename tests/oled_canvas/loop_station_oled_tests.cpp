@@ -175,7 +175,7 @@ void testTempoRoundsToNearestWholeBpm() {
 void testEmptyCaptureAndPhraseLabels() {
 	SongModel model;
 	model.testEngine.selectedSlot = 2;
-	model.testClock.framesPerBarValue = 1000;
+	model.testClock.bpmQ16 = 120U * 65536U;
 	auto& state = model.testEngine.slotStates[2];
 
 	expectMainScreen(model, "TRACK 3", "120 BPM", "IN: LEFT", "READY");
@@ -186,27 +186,74 @@ void testEmptyCaptureAndPhraseLabels() {
 	expectMainScreen(model, "TRACK 3", "120 BPM", "IN: LEFT", "REC");
 	state.capture = false;
 	state.playing = false;
-	state.phraseFrames = 4000;
+	state.phraseFrames = 352800;
 	expectMainScreen(model, "TRACK 3", "120 BPM", "IN: LEFT", "4 BARS");
 	state.hasPhrase = false;
-	state.phraseFrames = 0; // cleared phrase must not retain the old count
+	// A cleared phrase must ignore the retained length.
 	expectMainScreen(model, "TRACK 3", "120 BPM", "IN: LEFT", "READY");
 }
 
-void testBarCountRoundsToNearestAndNeverShowsZero() {
+void testCompletedPhraseUsesMeasuredLength() {
 	SongModel model;
 	model.testEngine.selectedSlot = 0;
-	model.testClock.framesPerBarValue = 1000;
+	model.testClock.bpmQ16 = 120U * 65536U;
 	auto& state = model.testEngine.slotStates[0];
 	state.hasPhrase = true;
 	const struct {
 		loop_station::FrameIndex frames;
 		const char* label;
-	} cases[] = {{1, "1 BAR"}, {1499, "1 BAR"}, {1500, "2 BARS"}, {64000, "64 BARS"}};
+	} cases[] = {{1, "<0.01 s"}, {5513, "1/16 BAR"}, {16317, "0.37 s"}, {132300, "3/2 BARS"}, {352800, "4 BARS"}};
 	for (const auto& c : cases) {
 		state.phraseFrames = c.frames;
 		expectMainScreen(model, "TRACK 1", "120 BPM", "IN: LEFT", c.label);
 	}
+}
+
+void testCurrentTempoReclassifiesLength() {
+	SongModel model;
+	model.testEngine.selectedSlot = 0;
+	auto& state = model.testEngine.slotStates[0];
+	state.hasPhrase = true;
+	state.phraseFrames = 5513;
+	expectMainScreen(model, "TRACK 1", "120 BPM", "IN: LEFT", "1/16 BAR");
+	model.testClock.bpmQ16 = 121U * 65536U;
+	expectMainScreen(model, "TRACK 1", "121 BPM", "IN: LEFT", "0.13 s");
+	CHECK(state.phraseFrames == 5513);
+	model.testClock.bpmQ16 = 112U * 65536U + 32768U;
+	state.phraseFrames = 5880;
+	expectMainScreen(model, "TRACK 1", "113 BPM", "IN: LEFT", "1/16 BAR");
+}
+
+void testLengthTransitionsClearPreviousPixels() {
+	SongModel model;
+	Song song;
+	song.model = &model;
+	currentSong = &song;
+	LoopStationView view;
+	Canvas actual, expected;
+	initialize(actual);
+	auto& state = model.testEngine.slotStates[0];
+	state.hasPhrase = true;
+	state.phraseFrames = 352800;
+	auto expectFrame = [&](const char* track, const char* tempo, const char* input, const char* length) {
+		imageContext = length ? length : "cleared info row";
+		composeMainExpected(expected, track, tempo, input, length);
+		view.renderOLED(actual);
+		compareImages(actual, expected);
+		checkCanaries(actual);
+	};
+	expectFrame("TRACK 1", "120 BPM", "IN: LEFT", "4 BARS");
+	state.phraseFrames = 16317;
+	expectFrame("TRACK 1", "120 BPM", "IN: LEFT", "0.37 s");
+	state.capture = true;
+	expectFrame("TRACK 1", "120 BPM", "IN: LEFT", "REC");
+	state.capture = false;
+	state.hasPhrase = false;
+	expectFrame("TRACK 1", "120 BPM", "IN: LEFT", "READY");
+	model.testEngine.selectedSlot = loop_station::kInvalidSlot;
+	expectFrame("NO TRACK", "120 BPM", nullptr, nullptr);
+	currentSong = nullptr;
+	expectFrame(nullptr, nullptr, nullptr, nullptr);
 }
 
 void testNoSelectionShowsNoTrackAndNoInfoRow() {
@@ -234,6 +281,12 @@ void testLongestLinesFitWithoutOverlap() {
 	CHECK(width("TRACK 8") + width("1000 BPM") < OLED_MAIN_WIDTH_PIXELS);
 	CHECK(width("NO TRACK") + width("1000 BPM") < OLED_MAIN_WIDTH_PIXELS);
 	CHECK(width("IN: STEREO") + width("64 BARS") < OLED_MAIN_WIDTH_PIXELS);
+	const char* lengths[] = {"0.00 s",   "<0.01 s", "0.01 s",   "1/48 BAR", "1/32 BAR", "1/24 BAR", "1/16 BAR",
+	                         "1/12 BAR", "1/8 BAR", "1/6 BAR",  "3/16 BAR", "1/4 BAR",  "1/3 BAR",  "1/2 BAR",
+	                         "3/4 BAR",  "1 BAR",   "3/2 BARS", "4 BARS",   "0.37 s",   "0.12 s",   "0.13 s",
+	                         "7.50 s",   "1.00 s",  "999.99 s", "1000 s",   "97392 s",  "READY",    "REC"};
+	for (const auto* length : lengths)
+		CHECK(width("IN: BALANCED") + width(length) < OLED_MAIN_WIDTH_PIXELS);
 }
 
 struct ExpectedRow {
@@ -351,7 +404,9 @@ int main() {
 	testEverySelectedTrackShowsItsNumberAndSource();
 	testTempoRoundsToNearestWholeBpm();
 	testEmptyCaptureAndPhraseLabels();
-	testBarCountRoundsToNearestAndNeverShowsZero();
+	testCompletedPhraseUsesMeasuredLength();
+	testCurrentTempoReclassifiesLength();
+	testLengthTransitionsClearPreviousPixels();
 	testNoSelectionShowsNoTrackAndNoInfoRow();
 	testNoModelShowsOnlyCentredTitle();
 	testLongestLinesFitWithoutOverlap();

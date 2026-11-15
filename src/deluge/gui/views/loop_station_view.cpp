@@ -1,6 +1,7 @@
 #include "loop_station_view.h"
 
 #include "deluge/loop_station/geometry.h"
+#include "deluge/loop_station/length_display.h"
 #include "deluge/loop_station/song_model.h"
 #include "deluge/loop_station/view_state.h"
 #include "extern.h"
@@ -45,17 +46,13 @@ char const* sourceLabel(loop_station::Source source) {
 	return "LEFT";
 }
 
-void formatBarCount(const SlotState& state, FrameIndex framesPerBar, char* out, size_t size) {
+void formatTrackLength(const SlotState& state, uint32_t tempoQ16, char* out, size_t size) {
 	if (state.capture)
 		snprintf(out, size, "REC");
 	else if (!state.hasPhrase)
 		snprintf(out, size, "READY");
-	else {
-		uint32_t bars = static_cast<uint32_t>((uint64_t(state.phraseFrames) + framesPerBar / 2) / framesPerBar);
-		if (bars < 1)
-			bars = 1;
-		snprintf(out, size, "%u BAR%s", bars, bars == 1 ? "" : "S");
-	}
+	else
+		formatPhraseLength(state.phraseFrames, tempoQ16, out, size);
 }
 RGB colourFor(Colour c) {
 	switch (c) {
@@ -443,7 +440,7 @@ void LoopStationView::renderOLED(deluge::hid::display::oled_canvas::Canvas& canv
 	snprintf(line, sizeof(line), "IN: %s", sourceLabel(m->engine().settings().tracks[selected].source));
 	canvas.drawString(line, 0, 30, kTextSpacingX, kTextSizeYUpdated);
 
-	formatBarCount(m->engine().state(selected), m->clock().framesPerBar(), line, sizeof(line));
+	formatTrackLength(m->engine().state(selected), m->clock().tempoQ16(), line, sizeof(line));
 	canvas.drawStringAlignRight(line, 30, kTextSpacingX, kTextSizeYUpdated);
 }
 void LoopStationView::selectEncoderAction(int8_t offset) {
