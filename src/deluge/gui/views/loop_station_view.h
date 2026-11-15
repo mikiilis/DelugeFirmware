@@ -23,6 +23,7 @@ public:
 	void modEncoderAction(int32_t whichModEncoder, int32_t offset) override;
 	void modButtonAction(uint8_t whichButton, bool on) override;
 	void modEncoderButtonAction(uint8_t whichModEncoder, bool on) override;
+	void noteUnrelatedEncoderAction() override;
 	UIType getUIType() override { return UIType::LOOP_STATION; }
 	bool getAffectEntire() override;
 	UIModControllableContext getUIModControllableContext() override;
@@ -36,9 +37,14 @@ private:
 	loop_station::RestoreId historyId_{};
 	loop_station::Status historyStatus_ = loop_station::Status::Ok;
 	bool historyBackDown_ = false;
+	// Owned seven-segment scrolling feedback. Updated only when its content
+	// changes and removed when the prompt is canceled or handed off.
+	char historyFeedbackText_[64] = {};
+	bool historyFeedbackOwned_ = false;
 	bool pendingExit_ = false;
 	bool modTargetIsClip_ = false;
 	void cancelHistoryConfirmation();
+	void clearHistoryFeedback();
 	void handleHistoryPress(bool redo);
 	void observeHistoryResult();
 	void refreshHistoryFeedback();

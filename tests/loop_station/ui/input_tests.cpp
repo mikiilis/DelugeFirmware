@@ -1454,6 +1454,47 @@ bool backingIs(loop_ui_test::Fixture& f, SlotId slot, int32_t value) {
 			return false;
 	return true;
 }
+
+// A second, independent production model. It owns a completed initial take and
+// can accept navigation request number 1, which collides with the first model's
+// per-model request sequence. Used to prove cross-model result correlation.
+struct AltModel {
+	loop_ui_test::Allocator alloc;
+	loop_ui_test::Host host;
+	loop_station::SongModel model;
+	AltModel() : model(alloc, host) {
+		CHECK(Status::Ok == model.start());
+		auto settings = loop_station::defaultSettings();
+		settings.startAction.mode = settings.stopAction.mode = loop_station::ActionMode::Immediate;
+		CHECK(Status::Ok == model.dispatch(Command::configure(settings)));
+		CHECK(Status::Ok == model.ensureBound(0));
+		CHECK(Status::Ok == model.dispatch({CommandType::Press, 0}));
+		std::array<loop_station::Frame, 128> input{}, output{};
+		input.fill({100, -100});
+		size_t count = 8;
+		model.adapter().finalizeWindow(host.time, count, model.clock());
+		model.adapter().renderDry(0, std::span(input).first(count), std::span(output).first(count));
+		host.time += count;
+		CHECK(Status::Ok == model.dispatch({CommandType::Press, 0}));
+	}
+	HistoryNavigationResult startCollidingUndo() {
+		HistoryTarget target{};
+		CHECK_EQUAL(int(Status::Ok), int(model.historyTarget(0, false, target)));
+		RestoreId id{};
+		CHECK_EQUAL(int(Status::Ok), int(model.requestHistoryNavigation(target, id)));
+		for (unsigned i = 0; i < 5000 && model.historyNavigationResult().pending(); ++i)
+			model.serviceHistoryNavigation(128);
+		return model.historyNavigationResult();
+	}
+	~AltModel() {
+		model.requestRelease();
+		for (unsigned i = 0; i < 10000 && !model.safeToRelease(); ++i) {
+			model.serviceRetirement();
+			model.serviceArchive(4096);
+		}
+		CHECK(model.safeToRelease());
+	}
+};
 } // namespace
 
 TEST(LoopUi, UndoRequiresTwoReleasedBackPresses) {
@@ -1886,4 +1927,116 @@ TEST(LoopUi, TransportOrModelChangeCancelsPrompt) {
 		CHECK(Prompt::None == f.view.historyPromptState_);
 		CHECK_EQUAL(int(HistoryNavigationState::Idle), int(f.model->historyNavigationResult().state));
 	}
+}
+
+// A delivered BACK release must clear the down latch even when a shared
+// exclusive mode (not the loop shortcut) receives the edge. Otherwise the next
+// press is silently swallowed.
+TEST(LoopUi, SharedModeBackReleaseClearsDownLatch) {
+	Fixture f;
+	modelRecord(f, 0);
+	modelOverdub(f, 0);
+	selectBorder(f, 0);
+	// Arm with a press whose release has not yet been delivered.
+	CHECK(f.view.buttonAction(BACK, true, false) == ActionResult::DEALT_WITH);
+	CHECK(Prompt::Confirm == f.view.historyPromptState_);
+
+	// Hold SAVE to enter the shared exclusive mode while BACK is still down.
+	currentUIMode = UI_MODE_HOLDING_SAVE_BUTTON;
+	::view.reset();
+	::view.result = ActionResult::NOT_DEALT_WITH;
+	// The release is delivered to the shared owner, not to the shortcut.
+	CHECK(f.view.buttonAction(BACK, false, false) == ActionResult::NOT_DEALT_WITH);
+	CHECK_EQUAL(1, ::view.calls.size());
+	CHECK(BACK == ::view.calls.front().button);
+	CHECK_FALSE(::view.calls.front().on);
+	currentUIMode = UI_MODE_NONE;
+
+	// SAVE released after a long hold without opening a menu.
+	::view.reset();
+	::view.result = ActionResult::NOT_DEALT_WITH;
+	CHECK(f.view.buttonAction(SAVE, false, false) == ActionResult::NOT_DEALT_WITH);
+
+	// The fresh BACK press must be processed as a released second press.
+	CHECK(f.view.buttonAction(BACK, true, false) == ActionResult::DEALT_WITH);
+	CHECK(Prompt::Applying == f.view.historyPromptState_);
+	CHECK(f.view.buttonAction(BACK, false, false) == ActionResult::DEALT_WITH);
+	CHECK_EQUAL(int(HistoryNavigationState::Complete), int(driveHistory(f, f.view.historyId_).state));
+}
+
+// The Applying observation must be correlated with the originating model, not
+// just a per-model numeric request id. A replacement model's reused id or a
+// model with no matching result must never be accepted or leave us stuck.
+TEST(LoopUi, ApplyingIsCorrelatedWithOriginatingModel) {
+	// A replaced model whose request 1 reuses our id and completes must be discarded.
+	{
+		Fixture f;
+		modelRecord(f, 0);
+		modelOverdub(f, 0);
+		selectBorder(f, 0);
+		armUndo(f);
+		confirmSecondPress(f);
+		const auto id = f.view.historyId_;
+		CHECK(Prompt::Applying == f.view.historyPromptState_);
+		CHECK_EQUAL(1, id.generation);
+		AltModel alt;
+		const auto altResult = alt.startCollidingUndo();
+		CHECK_EQUAL(int(HistoryNavigationState::Complete), int(altResult.state));
+		CHECK_EQUAL(id.generation, altResult.id.generation); // the reuse we must reject
+		f.song.model = &alt.model;
+		f.view.graphicsRoutine();
+		CHECK(Prompt::None == f.view.historyPromptState_);
+		f.song.model = f.model.get();
+	}
+	// A replaced model with no matching result must not leave us stuck Applying.
+	{
+		Fixture f;
+		modelRecord(f, 0);
+		modelOverdub(f, 0);
+		selectBorder(f, 0);
+		armUndo(f);
+		confirmSecondPress(f);
+		CHECK(Prompt::Applying == f.view.historyPromptState_);
+		loop_ui_test::Allocator alloc;
+		loop_ui_test::Host host;
+		loop_station::SongModel fresh(alloc, host);
+		f.song.model = &fresh;
+		f.view.graphicsRoutine();
+		CHECK(Prompt::None == f.view.historyPromptState_);
+		f.song.model = f.model.get();
+	}
+	// View reentry while Applying resets the observation without canceling the
+	// accepted model work, and the completed job is not misreported.
+	{
+		Fixture f;
+		modelRecord(f, 0);
+		modelOverdub(f, 0);
+		selectBorder(f, 0);
+		armUndo(f);
+		confirmSecondPress(f);
+		const auto id = f.view.historyId_;
+		CHECK(Prompt::Applying == f.view.historyPromptState_);
+		f.view.focusRegained(); // reenter the view (for example from a menu)
+		CHECK(Prompt::None == f.view.historyPromptState_);
+		const auto result = driveHistory(f, id);
+		CHECK_EQUAL(int(HistoryNavigationState::Complete), int(result.state));
+		f.view.graphicsRoutine();
+		CHECK(Prompt::None == f.view.historyPromptState_);
+	}
+}
+
+// The tempo encoder reaches the view through the dispatcher's unrelated-action
+// notification, not through any per-view encoder handler.
+TEST(LoopUi, TempoStyleUnrelatedEncoderActionCancelsPrompt) {
+	Fixture f;
+	modelRecord(f, 0);
+	modelOverdub(f, 0);
+	selectBorder(f, 0);
+	armUndo(f);
+	CHECK(Prompt::Confirm == f.view.historyPromptState_);
+	// This is the exact call the physical tempo dispatcher makes on the current UI.
+	f.view.noteUnrelatedEncoderAction();
+	CHECK(Prompt::None == f.view.historyPromptState_);
+	CHECK_EQUAL(int(HistoryNavigationState::Idle), int(f.model->historyNavigationResult().state));
+	CHECK_TRUE(f.model->engine().state(0).hasPhrase);
 }

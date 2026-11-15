@@ -290,23 +290,33 @@ TEST(LoopSettingsDisplay, ConfirmationSurvivesGraphicsRefreshOnOledAndSevenSegme
 			CHECK(hasText(OLED::main, "BACK TO CONFIRM"));
 		}
 	}
-	// Seven segment: the popup re-emits on every graphics refresh and never times
-	// out on its own.
+	// Seven segment: the view owns a persistent scrolling layer, pushes it only
+	// when the content changes, and removes it on cancel.
 	{
 		loop_ui_test::Fixture f;
 		f.screen.oled = false;
 		f.recordPhrase();
 		f.view.padAction(0, 7, 100);
 		CHECK(f.view.buttonAction(BACK, true, false) == ActionResult::DEALT_WITH);
-		STRCMP_EQUAL("UNDO TRACK 1? BACK TO CONFIRM", f.screen.popups.back().c_str());
+		CHECK(f.screen.scrollingTexts.size() == 1);
+		CHECK_FALSE(f.screen.scrollingTexts.empty());
+		if (!f.screen.scrollingTexts.empty())
+			STRCMP_EQUAL("UNDO TRACK 1? BACK TO CONFIRM", f.screen.scrollingTexts.back().c_str());
+		// A periodic refresh must not re-push (which would reset scrolling/blink).
 		f.view.graphicsRoutine();
-		STRCMP_EQUAL("UNDO TRACK 1? BACK TO CONFIRM", f.screen.popups.back().c_str());
+		CHECK_EQUAL(1, f.screen.scrollingTexts.size());
 		// A long sample-clock advance with no further action does not expire it.
 		f.host.time += 10ull * ::loop_station::kSampleRate;
 		probeSampleClock = f.host.time;
 		f.view.graphicsRoutine();
 		CHECK(LoopStationView::HistoryPromptState::Confirm == f.view.historyPromptState_);
-		STRCMP_EQUAL("UNDO TRACK 1? BACK TO CONFIRM", f.screen.popups.back().c_str());
+		CHECK_EQUAL(1, f.screen.scrollingTexts.size());
+		// An unrelated action cancels and removes the owned layer, restoring the
+		// view's resting seven-segment text without a new scrolling push.
+		f.view.padAction(4, 7, 100);
+		CHECK(LoopStationView::HistoryPromptState::None == f.view.historyPromptState_);
+		STRCMP_EQUAL("LOOP", f.screen.text.c_str());
+		CHECK_EQUAL(1, f.screen.scrollingTexts.size());
 	}
 	// The shifted prompt shows the Redo action and its distinct instruction.
 	{
@@ -369,7 +379,9 @@ TEST(LoopSettingsDisplay, ApplyingAndTerminalResultReflectActualModelStatus) {
 		CHECK(f.view.buttonAction(BACK, true, false) == ActionResult::DEALT_WITH);
 		CHECK(LoopStationView::HistoryPromptState::Result == f.view.historyPromptState_);
 		CHECK_EQUAL(int(Status::Busy), int(f.view.historyStatus_));
-		STRCMP_EQUAL("Track 1 BUSY", f.screen.popups.back().c_str());
+		CHECK_FALSE(f.screen.scrollingTexts.empty());
+		if (!f.screen.scrollingTexts.empty())
+			STRCMP_EQUAL("Track 1 BUSY", f.screen.scrollingTexts.back().c_str());
 	}
 	// An empty track honestly reports no history instead of arming.
 	{
@@ -380,7 +392,9 @@ TEST(LoopSettingsDisplay, ApplyingAndTerminalResultReflectActualModelStatus) {
 		CHECK(f.view.buttonAction(BACK, true, false) == ActionResult::DEALT_WITH);
 		CHECK(LoopStationView::HistoryPromptState::Result == f.view.historyPromptState_);
 		CHECK_EQUAL(int(Status::SourceUnavailable), int(f.view.historyStatus_));
-		STRCMP_EQUAL("Track 1 NO UNDO", f.screen.popups.back().c_str());
+		CHECK_FALSE(f.screen.scrollingTexts.empty());
+		if (!f.screen.scrollingTexts.empty())
+			STRCMP_EQUAL("Track 1 NO UNDO", f.screen.scrollingTexts.back().c_str());
 	}
 	// No memory is a distinct, honest failure message.
 	{
@@ -442,24 +456,33 @@ TEST(LoopSettingsDisplay, BackLedFollowsSelectedOperationAvailability) {
 
 TEST(LoopSettingsDisplay, ReturnFromMenuCannotReviveOldConfirmation) {
 	loop_ui_test::Fixture f;
+	f.screen.oled = false; // also exercise the owned seven-segment layer
 	f.recordPhrase();
 	f.view.padAction(0, 7, 100);
 	CHECK(f.view.buttonAction(BACK, true, false) == ActionResult::DEALT_WITH);
 	CHECK(LoopStationView::HistoryPromptState::Confirm == f.view.historyPromptState_);
+	CHECK_TRUE(f.view.historyFeedbackOwned_);
+	CHECK_EQUAL(1, f.screen.scrollingTexts.size());
 
-	// Opening the shared menu drops the prompt as an outgoing action.
+	// Opening the shared menu drops the prompt and its owned layer as an outgoing
+	// action, restoring the view's resting seven-segment text.
 	CHECK(f.view.buttonAction(SELECT_ENC, true, false) == ActionResult::DEALT_WITH);
 	POINTERS_EQUAL(&loopStationSettingsMenu, getCurrentUI());
 	CHECK(LoopStationView::HistoryPromptState::None == f.view.historyPromptState_);
+	CHECK_FALSE(f.view.historyFeedbackOwned_);
+	CHECK_EQUAL(1, f.screen.scrollingTexts.size());
 	// The menu keeps BACK; focus regain must not resurrect the old confirmation.
 	loopStationSettingsMenu.buttonAction(BACK, true, false);
 	POINTERS_EQUAL(&f.view, getCurrentUI());
 	CHECK(LoopStationView::HistoryPromptState::None == f.view.historyPromptState_);
+	CHECK_FALSE(f.view.historyFeedbackOwned_);
 
 	// A single fresh press only arms; it can never stand in for the old second press.
 	f.view.buttonAction(BACK, false, false);
 	CHECK(f.view.buttonAction(BACK, true, false) == ActionResult::DEALT_WITH);
 	CHECK(LoopStationView::HistoryPromptState::Confirm == f.view.historyPromptState_);
+	CHECK_TRUE(f.view.historyFeedbackOwned_);
+	CHECK_EQUAL(2, f.screen.scrollingTexts.size());
 	CHECK_EQUAL(int(HistoryNavigationState::Idle), int(f.model->historyNavigationResult().state));
 	CHECK_TRUE(f.model->engine().state(0).hasPhrase);
 }

@@ -131,6 +131,10 @@ checkResult:
 				break;
 
 			case 2: // tempo
+				// A tempo edit is an accepted unrelated action even though it bypasses
+				// the per-view encoder handlers; let the current root view drop any
+				// transient UI state this edit makes stale.
+				getCurrentUI()->noteUnrelatedEncoderAction();
 				if ((getCurrentUI() == &instrumentClipView
 				     || (getCurrentUI() == &automationView && automationView.inNoteEditor()))
 				    && runtimeFeatureSettings.get(RuntimeFeatureSettingType::Quantize)

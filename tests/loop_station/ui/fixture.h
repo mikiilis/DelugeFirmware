@@ -77,6 +77,7 @@ struct Fixture {
 		probeSentPadFrames.clear();
 		probeOledRequests = 0;
 		probeSampleClock = host.time;
+		screen.scrollingTexts.clear();
 		auto& menu = deluge::gui::menu_item::loop_station::loopStationSettingsMenu;
 		std::destroy_at(&menu);
 		std::construct_at(&menu);

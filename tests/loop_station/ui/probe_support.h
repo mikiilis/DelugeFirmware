@@ -38,6 +38,8 @@ public:
 	virtual void modEncoderButtonAction(uint8_t whichModEncoder, bool on);
 	virtual void modEncoderAction(int32_t whichModEncoder, int32_t offset);
 	virtual void modButtonAction(uint8_t whichButton, bool on);
+	// Default no-op; the real dispatcher calls this for tempo-style edits.
+	virtual void noteUnrelatedEncoderAction() {}
 	virtual bool getAffectEntire() { return false; }
 	virtual UIModControllableContext getUIModControllableContext() { return UIModControllableContext::NONE; }
 	void close();
@@ -120,6 +122,13 @@ struct ProbeDisplay {
 	}
 	void setText(const char* value) { text = value; }
 	void displayPopup(const char* value) { popups.emplace_back(value); }
+	// The production seven-segment path uses a persistent scrolling layer for the
+	// confirmation feedback; record each push so the view's lifecycle is visible.
+	std::vector<std::string> scrollingTexts;
+	void* setScrollingText(const char* value, int32_t = 0, int32_t = 600, int = -1, uint8_t = 255) {
+		scrollingTexts.emplace_back(value);
+		return nullptr;
+	}
 };
 extern ProbeDisplay* display;
 namespace Buttons {
@@ -304,11 +313,13 @@ public:
 	void modEncoderAction(int32_t, int32_t) override;
 	void modButtonAction(uint8_t, bool) override;
 	void modEncoderButtonAction(uint8_t, bool) override;
+	void noteUnrelatedEncoderAction() override;
 	bool prepareTrack(loop_station::SlotId);
 	void updateModTarget();
 	void updateLed();
 	void attemptExit();
 	void cancelHistoryConfirmation();
+	void clearHistoryFeedback();
 	void handleHistoryPress(bool);
 	void observeHistoryResult();
 	void refreshHistoryFeedback();
@@ -319,6 +330,8 @@ public:
 	loop_station::RestoreId historyId_{};
 	loop_station::Status historyStatus_ = loop_station::Status::Ok;
 	bool historyBackDown_ = false;
+	char historyFeedbackText_[64] = {};
+	bool historyFeedbackOwned_ = false;
 	bool pendingExit_ = false;
 	bool modTargetIsClip_ = false;
 	void finishStutterBeforeTargetChange();

@@ -104,6 +104,10 @@ public:
 	virtual void modEncoderAction(int32_t whichModEncoder, int32_t offset);
 	virtual void modButtonAction(uint8_t whichButton, bool on);
 	virtual void modEncoderButtonAction(uint8_t whichModEncoder, bool on);
+	// Called by the physical encoder dispatcher for accepted edits that bypass
+	// the per-view encoder handlers (for example the tempo encoder). Views that
+	// hold transient UI state which such an edit makes stale may override this.
+	virtual void noteUnrelatedEncoderAction() {}
 
 	virtual void graphicsRoutine();
 	virtual ActionResult timerCallback() { return ActionResult::DEALT_WITH; }

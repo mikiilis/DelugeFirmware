@@ -109,6 +109,42 @@ add_custom_command(
             ../../src/deluge/hid/buttons.cpp
     VERBATIM
 )
+set(ENCODER_PROBE "${CMAKE_CURRENT_BINARY_DIR}/generated/production_encoder.cpp")
+add_custom_command(
+    OUTPUT "${ENCODER_PROBE}"
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/ui/generate_encoder_probe.py"
+            --encoder "${CMAKE_CURRENT_SOURCE_DIR}/../../src/deluge/hid/encoder_input.cpp"
+            --support "${CMAKE_CURRENT_SOURCE_DIR}/ui/encoder_probe_support.h"
+            --tests "${CMAKE_CURRENT_SOURCE_DIR}/ui/encoder_probe_tests.cpp"
+            --output "${ENCODER_PROBE}"
+    DEPENDS ui/generate_encoder_probe.py ui/encoder_probe_support.h ui/encoder_probe_tests.cpp
+            ../../src/deluge/hid/encoder_input.cpp
+    VERBATIM
+)
+add_executable(LoopStationEncoderProbe "${ENCODER_PROBE}")
+set_target_properties(LoopStationEncoderProbe PROPERTIES CXX_STANDARD 23 CXX_STANDARD_REQUIRED ON)
+add_test(NAME LoopStationEncoderProbe COMMAND LoopStationEncoderProbe)
+set(SEVEN_SEGMENT_PROBE "${CMAKE_CURRENT_BINARY_DIR}/generated/production_seven_segment.cpp")
+add_custom_command(
+    OUTPUT "${SEVEN_SEGMENT_PROBE}"
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/ui/generate_seven_segment_probe.py"
+            --seven "${CMAKE_CURRENT_SOURCE_DIR}/../../src/deluge/hid/display/seven_segment.cpp"
+            --numeric-layer "${CMAKE_CURRENT_SOURCE_DIR}/../../src/deluge/hid/display/numeric_layer/numeric_layer.cpp"
+            --basic-layer "${CMAKE_CURRENT_SOURCE_DIR}/../../src/deluge/hid/display/numeric_layer/numeric_layer_basic_text.cpp"
+            --scrolling-layer "${CMAKE_CURRENT_SOURCE_DIR}/../../src/deluge/hid/display/numeric_layer/numeric_layer_scrolling_text.cpp"
+            --support "${CMAKE_CURRENT_SOURCE_DIR}/ui/seven_segment_probe_support.h"
+            --tests "${CMAKE_CURRENT_SOURCE_DIR}/ui/seven_segment_probe_tests.cpp"
+            --output "${SEVEN_SEGMENT_PROBE}"
+    DEPENDS ui/generate_seven_segment_probe.py ui/seven_segment_probe_support.h ui/seven_segment_probe_tests.cpp
+            ../../src/deluge/hid/display/seven_segment.cpp
+            ../../src/deluge/hid/display/numeric_layer/numeric_layer.cpp
+            ../../src/deluge/hid/display/numeric_layer/numeric_layer_basic_text.cpp
+            ../../src/deluge/hid/display/numeric_layer/numeric_layer_scrolling_text.cpp
+    VERBATIM
+)
+add_executable(LoopStationSevenSegmentProbe "${SEVEN_SEGMENT_PROBE}")
+set_target_properties(LoopStationSevenSegmentProbe PROPERTIES CXX_STANDARD 23 CXX_STANDARD_REQUIRED ON)
+add_test(NAME LoopStationSevenSegmentProbe COMMAND LoopStationSevenSegmentProbe)
 add_custom_command(
     OUTPUT "${LOOP_UI_PROBE}" "${CMAKE_CURRENT_BINARY_DIR}/generated/shared_menu.cpp" "${CMAKE_CURRENT_BINARY_DIR}/generated/shared_menu_declarations.h" "${CMAKE_CURRENT_BINARY_DIR}/generated/settings_items.cpp" "${CMAKE_CURRENT_BINARY_DIR}/generated/settings_items_declarations.h" "${CMAKE_CURRENT_BINARY_DIR}/generated/horizontal_settings.cpp" "${CMAKE_CURRENT_BINARY_DIR}/generated/horizontal_settings_declarations.h" "${CMAKE_CURRENT_BINARY_DIR}/generated/strings_declarations.h" "${CMAKE_CURRENT_BINARY_DIR}/generated/english_cases.h"
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/ui/generate_probe.py"

@@ -67,6 +67,10 @@ public:
 	// frames or a changed free-page count as a different session.
 	Status historyTarget(SlotId slot, bool redo, HistoryTarget& target) const;
 	bool historyTargetCurrent(const HistoryTarget& target) const;
+	// Monotonic identity of this constructed model. A view uses it to bind an
+	// accepted navigation's observation to the model that accepted it, so a
+	// replaced model reusing its per-model request sequence cannot be misreported.
+	Generation modelIdentity() const { return modelIdentity_; }
 	Status requestHistoryNavigation(const HistoryTarget& target, RestoreId& id);
 	void serviceHistoryNavigation(uint32_t maxFrames);
 	HistoryNavigationResult historyNavigationResult() const { return navigationResult_; }
