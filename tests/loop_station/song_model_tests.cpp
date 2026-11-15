@@ -121,21 +121,64 @@ struct Fixture {
 		s.startAction.mode = s.stopAction.mode = ActionMode::Immediate;
 		CHECK(Status::Ok == model->dispatch(Command::configure(s)));
 	}
-	void render(size_t count = 8) {
-		std::array<Frame, 128> input{}, output{};
-		input.fill({100, -100});
+	void render(size_t count = 8, Frame input = {100, -100}) {
+		std::array<Frame, 128> inputBuffer{}, output{};
+		inputBuffer.fill(input);
 		model->adapter().finalizeWindow(host.time, count, model->clock());
 		for (SlotId id = 0; id < kTrackCount; ++id)
 			if (model->clip(id))
-				model->adapter().renderDry(id, std::span(input).first(count), std::span(output).first(count));
+				model->adapter().renderDry(id, std::span(inputBuffer).first(count), std::span(output).first(count));
 		host.time += count;
 	}
-	void record(SlotId id) {
+	void record(SlotId id, Frame input = {100, -100}) {
 		model->serviceRetirement();
 		CHECK(Status::Ok == model->ensureBound(id));
 		CHECK(Status::Ok == model->dispatch({CommandType::Press, id}));
-		render();
+		render(8, input);
 		CHECK(Status::Ok == model->dispatch({CommandType::Press, id}));
+	}
+	// Run one confirmed history step to its terminal result through the real
+	// model-owned foreground service (no view timer).
+	HistoryNavigationResult undo(SlotId slot, bool redo) {
+		HistoryTarget target{};
+		CHECK_EQUAL(int(Status::Ok), int(model->historyTarget(slot, redo, target)));
+		RestoreId id{};
+		CHECK_EQUAL(int(Status::Ok), int(model->requestHistoryNavigation(target, id)));
+		return driveNavigation(id);
+	}
+	// Begin a save and drive it to a ready pending manifest (not committed).
+	void runSave(PersistenceState& persistence) {
+		CHECK_EQUAL(int(Status::Ok), int(persistence.requestSave(model.get())));
+		for (unsigned i = 0; i < 64 && !persistence.pendingReady(); ++i) {
+			model->serviceArchive(4096);
+			persistence.serviceArchiveCandidates(*model);
+		}
+		CHECK(persistence.pendingReady());
+	}
+	std::array<Generation, kTrackCount> currentRevisions() const {
+		std::array<Generation, kTrackCount> revisions{};
+		for (SlotId slot = 0; slot < kTrackCount; ++slot)
+			revisions[slot] = model->contentRevision(slot);
+		return revisions;
+	}
+	// Read an archived checkpoint through the real foreground reader and return
+	// its decoded frames (24-bit format values, not the source RAM frames).
+	std::vector<Frame> readArchivedFrames(ArchiveStorage& storage, SlotId slot, Generation identity,
+	                                      FrameIndex frames) {
+		std::vector<Frame> decoded(frames);
+		size_t framesRead = 0;
+		FrameIndex totalFrames = 0;
+		Status status = Status::Busy;
+		for (unsigned i = 0; i < 40 && status == Status::Busy; ++i)
+			status = storage.readCheckpoint(slot, identity, 0, decoded, framesRead, totalFrames);
+		CHECK_EQUAL(int(Status::Ok), int(status));
+		CHECK_EQUAL(frames, framesRead);
+		CHECK_EQUAL(frames, totalFrames);
+		decoded.resize(framesRead);
+		storage.cancelCheckpointRead(slot, identity);
+		while (!storage.checkpointReadIdle())
+			storage.serviceCheckpointReadCleanup();
+		return decoded;
 	}
 	Status driveRestore(RestoreId id, uint32_t maxFrames) {
 		for (unsigned i = 0; i < 1000; ++i) {
@@ -1439,4 +1482,269 @@ TEST(LoopBindings, ExternalTransportTransitionInvalidatesTarget) {
 	RestoreId id{};
 	CHECK_EQUAL(int(Status::Stale), int(f.model->requestHistoryNavigation(target, id)));
 	CHECK_FALSE(id.valid());
+}
+
+// A loaded checkpoint is the base recording of one new volatile history chain:
+// exactly one undoable base. Undo detaches it to empty, Redo republishes the same
+// whole recording stopped, and a later failed checkpoint read adds no second base.
+TEST(LoopBindings, LoadedCheckpointIsOneUndoableBase) {
+	archive_mock::storage = {};
+	ArchiveCandidate checkpoint{};
+	{
+		FatFsArchiveStorage writerStorage;
+		Fixture source;
+		source.model->archive().setStorage(&writerStorage);
+		source.start();
+		source.record(0, {256, -256}); // 24-bit-safe so the reload is exact.
+		CHECK(Status::Ok == source.model->requestArchive(0));
+		for (unsigned i = 0; i < 20 && source.model->archive().state(0) != ArchiveState::ReadyForPublication; ++i)
+			source.model->serviceArchive(4096);
+		CHECK(source.model->archive().take(0, checkpoint));
+	}
+
+	FatFsArchiveStorage readerStorage;
+	Fixture loaded;
+	loaded.model->archive().setStorage(&readerStorage);
+	loaded.start();
+	CHECK(Status::Ok
+	      == readerStorage.registerPublishedFile(checkpoint.slot, checkpoint.identity, checkpoint.path.data()));
+	CHECK(Status::Ok == loaded.model->ensureBound(checkpoint.slot));
+	RestoreId restore{};
+	CHECK(Status::Ok == loaded.model->requestCheckpointRestore(checkpoint.slot, checkpoint.identity, restore));
+	CHECK(Status::Ok == loaded.driveRestore(restore, 512));
+	CHECK(Status::Ok == loaded.model->commitRestore(restore));
+	CHECK(loaded.model->engine().state(0).hasPhrase);
+	CHECK_FALSE(loaded.model->engine().state(0).playing);
+	// Exactly one base boundary: immediately undoable, with no Redo branch yet.
+	CHECK(loaded.model->canUndo(0));
+	CHECK_FALSE(loaded.model->canRedo(0));
+
+	// A failed later checkpoint read must not register a partial second base.
+	const char* path = readerStorage.candidatePath(checkpoint.slot, checkpoint.identity);
+	CHECK(path != nullptr);
+	archive_mock::storage.files[path][0] = std::byte{'X'};
+	RestoreId failed{};
+	CHECK(Status::Ok == loaded.model->requestCheckpointRestore(0, checkpoint.identity, failed));
+	CHECK_EQUAL(int(Status::StorageError), int(loaded.driveRestore(failed, 512)));
+	loaded.drainStorage();
+	CHECK(loaded.model->canUndo(0));
+	CHECK_FALSE(loaded.model->canRedo(0));
+
+	// Undo to empty retains the recording for Redo; one step empties the track.
+	const auto undone = loaded.undo(0, false);
+	CHECK_EQUAL(int(HistoryNavigationState::Complete), int(undone.state));
+	CHECK_FALSE(loaded.model->engine().state(0).hasPhrase);
+	CHECK_FALSE(loaded.model->canUndo(0));
+	CHECK(loaded.model->canRedo(0));
+	// Redo republishes the same recording, stopped from zero.
+	const auto redone = loaded.undo(0, true);
+	CHECK_EQUAL(int(HistoryNavigationState::Complete), int(redone.state));
+	CHECK(loaded.model->engine().state(0).hasPhrase);
+	CHECK(redone.redo);
+	CHECK_EQUAL(checkpoint.frames, loaded.model->engine().state(0).phraseFrames);
+	CHECK(Status::Ok == loaded.model->dispatch({CommandType::StartAll}));
+	// Source::Left captures the left channel into both sides; 256 survives 24-bit
+	// exactly, so this is format-appropriate rather than a 32-bit identity claim.
+	loaded.expectUniformBacking(0, checkpoint.frames, {256, 256});
+	CHECK(loaded.model->canUndo(0));
+}
+
+// Undoing the only layer to empty and saving must omit the old audio checkpoint
+// while keeping bound settings; a reload must not resurrect the removed recording.
+TEST(LoopBindings, SaveAfterUndoToEmptyDoesNotResurrectRecordingOnReload) {
+	archive_mock::storage = {};
+	FatFsArchiveStorage storage;
+	Fixture f;
+	f.model->archive().setStorage(&storage);
+	f.start();
+	auto settings = f.model->engine().settings();
+	settings.tracks[0].transposeCents = 1200;
+	CHECK(Status::Ok == f.model->dispatch(Command::configure(settings)));
+	f.record(0);
+
+	PersistenceState persistence;
+	CHECK(Status::Ok == persistence.installLoaded(defaultSettings(), Manifest{}));
+	f.runSave(persistence);
+	CHECK(Status::Ok == persistence.commitPendingAfterDocumentVerified());
+	CHECK_EQUAL(1, persistence.committedManifest().phraseCount);
+	CHECK_EQUAL(0, persistence.committedManifest().phrases[0].slot);
+	const auto savedIdentity = persistence.committedManifest().phrases[0].identity;
+	f.model->markAudioSaved(0, persistence.committedAudioRevision(0));
+	CHECK_FALSE(f.model->hasUnsavedAudio());
+
+	// Undo the only layer to empty.
+	CHECK_EQUAL(int(HistoryNavigationState::Complete), int(f.undo(0, false).state));
+	CHECK_FALSE(f.model->engine().state(0).hasPhrase);
+	CHECK(f.model->canRedo(0));
+
+	// Saving the empty bound track omits the existing checkpoint but keeps settings.
+	f.runSave(persistence);
+	CHECK(Status::Ok == persistence.commitPendingAfterDocumentVerified());
+	CHECK_EQUAL(0, persistence.committedManifest().phraseCount);
+	CHECK_EQUAL(2, persistence.committedManifest().generation);
+	CHECK_EQUAL(1200, persistence.committedSettings().tracks[0].transposeCents);
+	CHECK_EQUAL(int(f.model->engine().settings().recordAction), int(persistence.committedSettings().recordAction));
+	SettingsDocument document{};
+	CHECK(Status::Ok == persistence.encodeForSave(document));
+	CHECK_EQUAL(0, document.phraseCount);
+	CHECK_EQUAL(2, document.manifestGeneration);
+	CHECK_EQUAL(1200, document.tracks[0].transposeCents);
+
+	// A reload admits no phrase and does not resurrect the removed recording.
+	Settings reloadedSettings{};
+	Manifest reloadedManifest{};
+	CHECK(Status::Ok == Persistence::decode(document, reloadedSettings, reloadedManifest));
+	CHECK_EQUAL(0, reloadedManifest.phraseCount);
+	CHECK_EQUAL(1200, reloadedSettings.tracks[0].transposeCents);
+	PersistenceState reloaded;
+	CHECK(Status::Ok == reloaded.installLoaded(reloadedSettings, reloadedManifest));
+	CHECK(Status::Ok == reloaded.prepareLoadAdmission(MemoryProfile::Preferred));
+	CHECK_EQUAL(0, reloaded.loadAdmission().count);
+	CHECK_FALSE(reloaded.loadAdmission().admitted[0]);
+	CHECK(savedIdentity != 0);
+}
+
+// Saving an undone-empty bound track must not retire its volatile Redo branch,
+// and that Redo must not become durable in the saved manifest.
+TEST(LoopBindings, SaveDoesNotDiscardVolatileInitialRedo) {
+	archive_mock::storage = {};
+	FatFsArchiveStorage storage;
+	Fixture f;
+	f.model->archive().setStorage(&storage);
+	f.start();
+	f.record(0, {256, -256});
+	PersistenceState persistence;
+	CHECK(Status::Ok == persistence.installLoaded(defaultSettings(), Manifest{}));
+	f.runSave(persistence);
+	CHECK(Status::Ok == persistence.commitPendingAfterDocumentVerified());
+	CHECK_EQUAL(1, persistence.committedManifest().phraseCount);
+
+	CHECK_EQUAL(int(HistoryNavigationState::Complete), int(f.undo(0, false).state));
+	CHECK_FALSE(f.model->engine().state(0).hasPhrase);
+	CHECK(f.model->canRedo(0));
+
+	// Save the now-empty track. The Redo branch survives as volatile, not durable.
+	f.runSave(persistence);
+	CHECK(Status::Ok == persistence.commitPendingAfterDocumentVerified());
+	CHECK_EQUAL(0, persistence.committedManifest().phraseCount);
+	CHECK(f.model->canRedo(0));
+
+	// The retained volatile Redo still republishes the exact recording.
+	const auto redone = f.undo(0, true);
+	CHECK_EQUAL(int(HistoryNavigationState::Complete), int(redone.state));
+	CHECK(f.model->engine().state(0).hasPhrase);
+	CHECK_EQUAL(8, f.model->engine().state(0).phraseFrames);
+	CHECK(Status::Ok == f.model->dispatch({CommandType::StartAll}));
+	f.expectUniformBacking(0, 8, {256, 256});
+}
+
+// A save started before Undo captured the earlier content revision; committing it
+// after the Undo must not mark the later revision saved, and the committed
+// manifest keeps the original immutable checkpoint reference.
+TEST(LoopBindings, OldSnapshotCannotMarkLaterUndoStateSaved) {
+	archive_mock::storage = {};
+	FatFsArchiveStorage storage;
+	Fixture f;
+	f.model->archive().setStorage(&storage);
+	f.start();
+	f.record(0, {256, -256});
+	PersistenceState persistence;
+	CHECK(Status::Ok == persistence.installLoaded(defaultSettings(), Manifest{}));
+	f.runSave(persistence);
+	const auto savedRevision = f.model->contentRevision(0);
+	const auto savedIdentity = persistence.pendingManifest().phrases[0].identity;
+
+	// Undo while the save is still pending.
+	CHECK_EQUAL(int(HistoryNavigationState::Complete), int(f.undo(0, false).state));
+	CHECK(f.model->contentRevision(0) != savedRevision);
+
+	const auto current = f.currentRevisions();
+	CHECK(Status::Ok == persistence.commitPendingAfterDocumentVerified(current));
+	CHECK_EQUAL(int(SaveState::Unsaved), int(persistence.saveState()));
+	// The committed baseline is the old snapshot revision, never the later one.
+	CHECK(persistence.hasCommittedAudioRevision(0));
+	CHECK_EQUAL(savedRevision, persistence.committedAudioRevision(0));
+	CHECK_EQUAL(1, persistence.committedManifest().phraseCount);
+	CHECK_EQUAL(savedIdentity, persistence.committedManifest().phrases[0].identity);
+	// Marking the model with that revision cannot clear the later Undo edit.
+	f.model->markAudioSaved(0, persistence.committedAudioRevision(0));
+	CHECK(f.model->hasUnsavedAudio());
+}
+
+// While a save is pending, Undo then Redo swaps the live provider; the frozen
+// snapshot still reads its original frames and cannot mark the Redo state saved.
+TEST(LoopBindings, RedoDuringSaveRetainsImmutableSnapshot) {
+	archive_mock::storage = {};
+	FatFsArchiveStorage storage;
+	Fixture f;
+	f.model->archive().setStorage(&storage);
+	f.start();
+	f.record(0, {256, -256});
+	PersistenceState persistence;
+	CHECK(Status::Ok == persistence.installLoaded(defaultSettings(), Manifest{}));
+	f.runSave(persistence);
+	const auto savedRevision = f.model->contentRevision(0);
+	const auto staged = persistence.pendingManifest().phrases[0];
+	CHECK_EQUAL(0, staged.slot);
+	CHECK_EQUAL(8, staged.frames);
+
+	// Undo then Redo while the save is still pending.
+	CHECK_EQUAL(int(HistoryNavigationState::Complete), int(f.undo(0, false).state));
+	CHECK_EQUAL(int(HistoryNavigationState::Complete), int(f.undo(0, true).state));
+	CHECK(f.model->engine().state(0).hasPhrase);
+	CHECK(f.model->contentRevision(0) != savedRevision);
+
+	// The immutable snapshot still reads its original 24-bit frames exactly.
+	const auto frames = f.readArchivedFrames(storage, staged.slot, staged.identity, staged.frames);
+	for (const auto& frame : frames) {
+		CHECK_EQUAL(256, frame.l);
+		CHECK_EQUAL(256, frame.r);
+	}
+	const auto current = f.currentRevisions();
+	CHECK(Status::Ok == persistence.commitPendingAfterDocumentVerified(current));
+	CHECK_EQUAL(int(SaveState::Unsaved), int(persistence.saveState()));
+	CHECK_EQUAL(savedRevision, persistence.committedAudioRevision(0));
+	CHECK_EQUAL(1, persistence.committedManifest().phraseCount);
+	CHECK_EQUAL(staged.identity, persistence.committedManifest().phrases[0].identity);
+}
+
+// Replacing the Song while a confirmed history operation is applying cancels the
+// accepted job before any late publication; the live phrase is untouched.
+TEST(LoopBindings, LoadCancelsApplyingHistoryBeforeNewSongPublication) {
+	Fixture f;
+	f.start();
+	f.record(0);
+	CHECK(Status::Ok == f.model->dispatch({CommandType::Press, 0}));
+	f.render(8); // One changed overdub pass.
+	HistoryTarget target{};
+	CHECK_EQUAL(int(Status::Ok), int(f.model->historyTarget(0, false, target)));
+	RestoreId id{};
+	CHECK_EQUAL(int(Status::Ok), int(f.model->requestHistoryNavigation(target, id)));
+	CHECK_FALSE(f.model->engine().state(0).capture);
+	CHECK_EQUAL(int(HistoryNavigationState::Applying), int(f.model->historyNavigationResult().state));
+	const auto revision = f.model->contentRevision(0);
+	const auto frames = f.model->engine().state(0).phraseFrames;
+
+	// The load confirms discarding the current volatile audio; the accepted job
+	// must be cancelled before the new Song can publish anything.
+	const auto confirmed = f.currentRevisions();
+	const auto mask = f.model->captureActivityMask();
+	const auto replacement = f.model->requestSongReplacement(true, confirmed, mask);
+	CHECK_EQUAL(int(HistoryNavigationState::Failed), int(f.model->historyNavigationResult().state));
+	CHECK_EQUAL(int(Status::Cancelled), int(f.model->historyNavigationResult().status));
+	for (unsigned i = 0; i < 16; ++i)
+		f.model->serviceHistoryNavigation(128);
+	CHECK_EQUAL(revision, f.model->contentRevision(0));
+	CHECK_EQUAL(frames, f.model->engine().state(0).phraseFrames);
+	CHECK(f.model->engine().state(0).hasPhrase);
+	CHECK(replacement == Status::Busy || replacement == Status::Ok);
+
+	// Teardown drains bounded retirement and never publishes the canceled removal.
+	for (unsigned i = 0; i < 1000 && !f.model->safeToRelease(); ++i) {
+		f.model->serviceRetirement();
+		f.model->serviceArchive(4096);
+	}
+	CHECK(f.model->safeToRelease());
+	CHECK_EQUAL(revision, f.model->contentRevision(0));
+	CHECK_EQUAL(frames, f.model->engine().state(0).phraseFrames);
 }

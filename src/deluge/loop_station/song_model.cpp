@@ -768,6 +768,11 @@ Status SongModel::commitRestore(RestoreId id) {
 		transpose_.reset(slot);
 		markAudioSaved(slot, audio_.contentRevision(slot));
 		history_.resetSlot(slot);
+		// A loaded checkpoint is the base recording of one fresh volatile history
+		// chain: after the successful rebind, register exactly one undoable initial
+		// boundary so it can be undone to empty and redone as a whole recording.
+		// Nothing is registered when any earlier step failed.
+		history_.recordInitial(slot, current);
 		if (pool_.length(previous))
 			pool_.retire(previous);
 		restoreOwner_ = {};
