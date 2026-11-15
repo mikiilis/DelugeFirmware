@@ -88,6 +88,13 @@ RGB scaledColour(RGB colour, uint8_t level) {
 	        static_cast<uint8_t>((static_cast<uint16_t>(colour.b) * level + 127) / 255)};
 }
 
+// Shared exclusive modes own input. Documented non-exclusive flags (quantize, stutter,
+// horizontal scroll, auditioning, held horizontal encoder) may coexist with loop
+// performance and navigation, so they must not suppress these retained controls.
+bool sharedExclusiveModeActive() {
+	return (currentUIMode & EXCLUSIVE_UI_MODES_MASK) != 0;
+}
+
 bool startPending(PendingAction action) {
 	return action == PendingAction::Initial || action == PendingAction::Start;
 }
@@ -221,7 +228,7 @@ ActionResult LoopStationView::padAction(int32_t x, int32_t y, int32_t velocity) 
 		return ActionResult::DEALT_WITH;
 	// Shared exclusive modes own the input. Consume new presses, but still pass
 	// releases through so a gesture accepted before the mode changed can finish.
-	if (velocity > 0 && currentUIMode != UI_MODE_NONE)
+	if (velocity > 0 && sharedExclusiveModeActive())
 		return ActionResult::DEALT_WITH;
 	if (x >= kDisplayWidth) {
 		if (velocity > 0 && y == kSidebarControlY) {
@@ -269,11 +276,11 @@ ActionResult LoopStationView::buttonAction(deluge::hid::Button b, bool on, bool 
 	if (inCardRoutine)
 		return ActionResult::REMIND_ME_OUTSIDE_CARD_ROUTINE;
 
-	const bool loopIdle = currentUIMode == UI_MODE_NONE;
+	const bool loopOwnsInput = !sharedExclusiveModeActive();
 	auto* m = model();
 
-	// Retained loop shortcuts own both edges only while no shared mode is active.
-	if (loopIdle) {
+	// Retained loop shortcuts own both edges while no shared exclusive mode is active.
+	if (loopOwnsInput) {
 		if (b == CROSS_SCREEN_EDIT) {
 			if (on && !Buttons::isShiftButtonPressed())
 				attemptExit();
@@ -450,7 +457,7 @@ void LoopStationView::renderOLED(deluge::hid::display::oled_canvas::Canvas& canv
 	canvas.drawStringAlignRight(line, 30, kTextSpacingX, kTextSizeYUpdated);
 }
 void LoopStationView::selectEncoderAction(int8_t offset) {
-	if (currentUIMode != UI_MODE_NONE)
+	if (sharedExclusiveModeActive())
 		return;
 	if (auto* m = model()) {
 		int selected = m->engine().selected();

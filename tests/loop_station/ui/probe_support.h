@@ -128,6 +128,8 @@ extern ProbeSessionView sessionView;
 #define UI_MODE_RECORD_COUNT_IN 45
 #define UI_MODE_HOLDING_SAVE_BUTTON 51
 #define UI_MODE_HOLDING_LOAD_BUTTON 52
+#define EXCLUSIVE_UI_MODES_MASK ((uint32_t)255)
+#define UI_MODE_STUTTERING ((uint32_t)1 << 28)
 extern uint32_t currentUIMode;
 struct ProbeSharedCall {
 	deluge::hid::Button button;

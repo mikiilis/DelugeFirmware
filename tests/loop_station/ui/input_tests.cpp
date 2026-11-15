@@ -596,6 +596,86 @@ TEST(LoopUi, SharedModesDoNotTriggerLoopActions) {
 	}
 }
 
+TEST(LoopUi, StutterAlonePreservesLoopPerformanceAndNavigation) {
+	Fixture f;
+	f.recordPhrase();
+	CHECK_TRUE(f.model->engine().state(0).playing);
+	currentUIMode = UI_MODE_STUTTERING;
+
+	// Sidebar Stop All / Start All remain loop controls under a non-exclusive flag.
+	f.view.padAction(17, 7, 100);
+	CHECK_FALSE(f.model->engine().state(0).playing);
+	f.view.padAction(16, 7, 100);
+	CHECK_TRUE(f.model->engine().state(0).playing);
+	f.view.padAction(17, 7, 100);
+	CHECK_FALSE(f.model->engine().state(0).playing);
+
+	// Border preparation and selection are still accepted.
+	const auto allocations = f.host.allocationAttempts;
+	f.view.padAction(4, 7, 100);
+	CHECK_EQUAL(1, f.model->engine().selected());
+	CHECK_EQUAL(allocations + 1, f.host.allocationAttempts);
+	f.view.selectEncoderAction(-1);
+	CHECK_EQUAL(0, f.model->engine().selected());
+
+	// BACK remains a loop shortcut rather than falling into shared handling.
+	::view.reset();
+	CHECK(f.view.buttonAction(BACK, true, false) == ActionResult::DEALT_WITH);
+	CHECK_EQUAL(0, ::view.calls.size());
+	CHECK_FALSE(f.view.pendingRestore_.valid());
+
+	// A new centre press is accepted and its release starts the stopped phrase.
+	f.view.padAction(1, 6, 100);
+	CHECK_FALSE(f.model->engine().state(0).playing);
+	f.view.padAction(1, 6, 0);
+	CHECK_TRUE(f.model->engine().state(0).playing);
+
+	// Clip View and exit retain their loop handlers.
+	CHECK(f.view.buttonAction(CLIP_VIEW, true, false) == ActionResult::DEALT_WITH);
+	POINTERS_EQUAL(f.model->clip(0), sessionView.viewedClip);
+	CHECK(f.view.buttonAction(CROSS_SCREEN_EDIT, true, false) == ActionResult::DEALT_WITH);
+	POINTERS_EQUAL(&sessionView, getCurrentUI());
+	CHECK_EQUAL(0, ::view.calls.size());
+	currentUIMode = UI_MODE_NONE;
+}
+
+TEST(LoopUi, StutterWithSharedHoldStillBlocksLoopActions) {
+	constexpr uint32_t holds[] = {UI_MODE_HOLDING_SAVE_BUTTON, UI_MODE_MIDI_LEARN};
+	for (uint32_t hold : holds) {
+		Fixture f;
+		f.recordPhrase();
+		f.view.padAction(17, 7, 100);
+		CHECK_FALSE(f.model->engine().state(0).playing);
+		const auto allocations = f.host.allocationAttempts;
+		const auto selected = f.model->engine().selected();
+		currentUIMode = UI_MODE_STUTTERING | hold;
+
+		CHECK(f.view.padAction(1, 6, 100) == ActionResult::DEALT_WITH);
+		CHECK_FALSE(f.model->engine().state(0).capture);
+		CHECK_FALSE(f.model->engine().state(0).playing);
+		CHECK_EQUAL(allocations, f.host.allocationAttempts);
+		f.view.padAction(16, 7, 100);
+		CHECK_FALSE(f.model->engine().state(0).playing);
+		f.view.selectEncoderAction(1);
+		CHECK_EQUAL(selected, f.model->engine().selected());
+
+		::view.reset();
+		::view.result = ActionResult::NOT_DEALT_WITH;
+		CHECK(f.view.buttonAction(BACK, true, false) == ActionResult::NOT_DEALT_WITH);
+		CHECK_EQUAL(1, ::view.calls.size());
+		CHECK(BACK == ::view.calls.front().button);
+		CHECK_FALSE(f.view.pendingRestore_.valid());
+
+		POINTERS_EQUAL(&f.view, getCurrentUI());
+		::view.reset();
+		::view.result = ActionResult::NOT_DEALT_WITH;
+		CHECK(f.view.buttonAction(CROSS_SCREEN_EDIT, true, false) == ActionResult::NOT_DEALT_WITH);
+		POINTERS_EQUAL(&f.view, getCurrentUI());
+		CHECK_EQUAL(1, ::view.calls.size());
+		currentUIMode = UI_MODE_NONE;
+	}
+}
+
 TEST(LoopUi, AcceptedCentreReleaseCompletesDuringSharedHold) {
 	Fixture f;
 	f.recordPhrase();
