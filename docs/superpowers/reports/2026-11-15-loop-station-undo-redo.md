@@ -99,10 +99,11 @@ Observed nonfatal UBSan-tree warnings: ETL's invalid git-derived version during 
 (`verification/ubsan-configure.log`), `-Wenum-compare` at `src/fatfs/ff.c:5432`, and
 `-Wasm-operand-widths` at `src/deluge/util/functions.h:392,398` during the build.
 
-## Final consolidated fix wave (product HEAD a9452ab6)
+## Final consolidated fix wave (product HEAD 1d8d96fe)
 
 The final review findings from `final-review.md` and the scoped re-review findings N1–N6 were implemented in
-this same wave. Final product state is `a9452ab6` on `feature/loop-station-implementation`; the reviewed-wave base is
+this same wave. Current product state is `1d8d96fe` (the N2/N5 correction); the prior consolidated
+verification below was captured at `a9452ab6`. The reviewed-wave base is
 `2517e57c688fe8c976dbbf422d45902af4730e74`. Evidence/scratch-removal commits after the product fix follow
 without product/test changes. The committed
 evidence below is the final suite; the named RED/GREEN counts quoted in earlier sections and in the
@@ -126,13 +127,13 @@ fix-wave checkpoint are historical slice evidence, not substitutes for these fin
 | M6 | `66c197fa` | Evidence-only corrections (`LoopAudio`, initial Task 2 ownership, 444/464 totals) | This report |
 | M7 | `66c197fa` | Identity-current confirmation separately rechecks eligibility and replaces stale instruction with the honest status | `LoopSettingsDisplay.EligibilityLossReplacesCurrentConfirmationWithHonestReason` |
 | N1 | `a9452ab6` | Temporary PagePool record exhaustion is reclaimed in bounded foreground for an empty target; only structural size impossibility fails immediately | `LoopCaptureAdmission.temporaryRecordExhaustionReclaimsOptionalHistory` |
-| N2 | `a9452ab6` | Admission builds bounded manual page headroom; foreground service maintains it without stopping the capture or working in the audio callback | `LoopCaptureAdmission.manualCaptureMaintainsHeadroomAcrossMultiplePages` |
+| N2 | `1d8d96fe` | Participant-aware manual admission/headroom through real dispatch; fast path defers reclaimable shortfall; adapter-level continuation and concurrent grants | `LoopCaptureAdmission.manualCaptureMaintainsHeadroomAcrossMultiplePages`, `concurrentManualCapturesAllProgressWithParticipantHeadroom` |
 | N3 | `a9452ab6` | Deferred Initial is excluded from audio deadline selection so another track's exact future boundary is preserved | `LoopCaptureAdmission.deferredAdmissionDoesNotMaskAnotherSlotFutureDeadline` |
 | N4 | `a9452ab6` | Save-between-Undo-and-Redo proves nonuniform stereo archive data, revision separation, and eventual pin/page reclamation | `LoopBindings.SaveStartedBetweenUndoAndRedoPublishesAfterRetirement` |
-| N5 | `a9452ab6` | Extracted FirmwareOwner restore-mask methods prove two-slot handoff/failure/cancellation; real model test adds one-boundary Undo and edit cancellation | `LoopStationForegroundServiceProbe`; `LoopBindings.AcceptedCheckpointRestoreSurvivesViewExitButNotTeardown` |
+| N5 | `1d8d96fe` | Extracted FirmwareOwner restore-mask methods now drive real SongModel checkpoint reads, exit/return, exact audio, one-boundary Undo, edit and teardown cancellation | `LoopBindings.FirmwareOwnerCheckpointMaskSurvivesRealReadExitAndEdit`; `LoopStationForegroundServiceProbe` |
 | N6 | `a9452ab6` | Two released BACK edges accept a real request, then foreground NoMemory is correlated on both displays without false completion | `LoopSettingsDisplay.AcceptedForegroundFailureCorrelatesOnBothDisplays` |
 
-Final verification at product HEAD `a9452ab6`:
+Pre-correction final verification at product HEAD `a9452ab6`:
 
 ```bash
 # Bundled toolchain PATH was used throughout.
@@ -175,6 +176,23 @@ DBT_NO_SYNC=1 ./dbt build Debug
 - Re-review RED for N1–N3 (temporary revert of only the record/headroom/deadline changes) produced 3 failures
   in 219 checks; the fixes were restored. N4–N6 are coverage refinements over the already-correct I6/I8
   behavior. Final re-review after this round remains pending.
+
+### Scoped recheck correction (N2/N5, product `1d8d96fe`)
+
+- N2 RED with only the fast-path headroom guard removed: 2 failures, 533 tests, 2 ran, 53 checks, 33 ms.
+  The real dispatch/adapter tests failed because the manual take started on one free page and the
+  participant-aware concurrent case did not grant all three captures.
+- N2 GREEN: `LoopStationTests` focused N2/protected tests passed; `LoopStationTests` full 533/533,
+  3,910,930 checks. The fast path now defers when optional history can fund
+  `participants + 1 + kManualCaptureHeadroomPages`, and foreground service maintains the shared
+  participant-aware target without callback reclamation.
+- N5: the extracted `FirmwareOwner` mask now drives a real `SongModel` checkpoint read registered through
+  `FatFsArchiveStorage`; the test exits/returns, completes the real restore, checks exact audio, one Undo
+  to empty/no second boundary, and real edit plus teardown cancellation. `LoopStationForegroundServiceProbe`
+  keeps the useful extracted mask handoff/cancellation coverage.
+- Focused CTest after `1d8d96fe`: `LoopStationTests`, `LoopStationForegroundServiceProbe` and all four
+  allocation guards → 6/6 passed, 5.96 s; `git diff --check` clean. Full host/UBSan/Release/Debug
+  reverification remains scheduled after this correction.
 
 ## Named TDD evidence, fix rounds and bounds (from this plan's task reports)
 
