@@ -86,7 +86,8 @@ private:
 		// reclamation runs; the audio-path service() must not execute or reclaim it.
 		bool admissionDeferred = false;
 	};
-	Status execute(SlotId slot, PendingAction action, SampleClock now, const ClockMap& clock);
+	Status execute(SlotId slot, PendingAction action, SampleClock now, const ClockMap& clock,
+	               bool foregroundAdmission = false);
 	void queue(SlotId slot, PendingAction action, Deadline deadline);
 	Status complete(SlotId slot, bool play, bool dub);
 	Status fail(SlotId slot, Status status);

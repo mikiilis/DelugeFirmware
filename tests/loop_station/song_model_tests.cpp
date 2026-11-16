@@ -5,6 +5,7 @@
 #include "mocks/audio_clip.h"
 #include "mocks/storage.h"
 #include "navigation/checkpoint_owner_probe_support.h"
+#include "ui/probe_support.h"
 #include <cstdlib>
 #include <cstring>
 #include <functional>
@@ -297,7 +298,7 @@ TEST(LoopBindings, lazyIndependentOutputsAndClearKeepsIdentityAndFx) {
 	f.model->dispatch({CommandType::TransportStop});
 	for (SlotId i = 0; i < 8; ++i)
 		f.model->dispatch({CommandType::Press, i});
-	f.host.time += 2 * kSampleRate;
+	f.host.time += 2 * loop_station::kSampleRate;
 	for (SlotId i = 0; i < 8; ++i) {
 		auto* c = f.model->clip(i);
 		f.model->dispatch({CommandType::Release, i});
@@ -514,7 +515,7 @@ TEST(LoopBindings, copyDoesNotDispatchDueActionsOrMutateDestinationLiveState) {
 	settings.tracks[0].source = Source::Right;
 	f.model->dispatch(Command::configure(settings));
 	f.model->dispatch({CommandType::Press, 1});
-	f.host.time += kSampleRate;
+	f.host.time += loop_station::kSampleRate;
 	CHECK(Status::Ok == f.model->copySettings(0, 1));
 	CHECK(f.model->engine().state(1).pending);
 	CHECK(!f.model->engine().state(1).capture);
@@ -1011,7 +1012,7 @@ TEST(LoopBindings, clearThenNewTakeAndOverdubUndoOnlyTouchesTheNewPhrase) {
 	CHECK(Status::Ok == f.model->commitRestore(oldUndo));
 	f.model->dispatch({CommandType::TransportStop});
 	CHECK(Status::Ok == f.model->dispatch({CommandType::Press, 0}));
-	f.host.time += 2 * kSampleRate;
+	f.host.time += 2 * loop_station::kSampleRate;
 	CHECK(Status::Ok == f.model->dispatch({CommandType::Release, 0}));
 	CHECK_FALSE(f.model->engine().state(0).hasPhrase);
 	for (unsigned i = 0; i < 10; ++i)
@@ -1429,7 +1430,7 @@ TEST(LoopBindings, ClearCancelsAcceptedNavigation) {
 	// Arm a hold on the now-stopped phrase, then release to Clear.
 	CHECK(Status::Ok == f.model->dispatch({CommandType::Press, 0}));
 	CHECK_EQUAL(int(HistoryNavigationState::Applying), int(f.model->historyNavigationResult().state));
-	f.host.time += 2 * kSampleRate;
+	f.host.time += 2 * loop_station::kSampleRate;
 	CHECK(Status::Ok == f.model->dispatch({CommandType::Release, 0}));
 	CHECK_EQUAL(int(HistoryNavigationState::Failed), int(f.model->historyNavigationResult().state));
 	for (unsigned i = 0; i < 8; ++i)
@@ -1852,15 +1853,21 @@ TEST(LoopBindings, FirmwareOwnerCheckpointMaskSurvivesRealReadExitAndEdit) {
 		CHECK(source.model->archive().take(0, checkpoint));
 	}
 
+	Manifest built{};
+	built.generation = 1;
+	built.phraseCount = 1;
+	built.phrases[0].slot = checkpoint.slot;
+	built.phrases[0].identity = checkpoint.identity;
+	built.phrases[0].frames = checkpoint.frames;
+	built.phrases[0].path = checkpoint.path;
+	// Feed the manifest through the serialized document path, as a real load does.
+	SettingsDocument document{};
+	CHECK(Status::Ok == Persistence::encode(defaultSettings(), built, document));
+	Settings decodedSettings{};
 	Manifest manifest{};
-	manifest.generation = 1;
-	manifest.phraseCount = 1;
-	manifest.phrases[0].slot = checkpoint.slot;
-	manifest.phrases[0].identity = checkpoint.identity;
-	manifest.phrases[0].frames = checkpoint.frames;
-	manifest.phrases[0].path = checkpoint.path;
+	CHECK(Status::Ok == Persistence::decode(document, decodedSettings, manifest));
 	PersistenceState persistence;
-	CHECK(Status::Ok == persistence.installLoaded(defaultSettings(), manifest));
+	CHECK(Status::Ok == persistence.installLoaded(decodedSettings, manifest));
 	CHECK(Status::Ok == persistence.prepareLoadAdmission(MemoryProfile::Preferred));
 	CHECK(persistence.loadAdmission().admitted[0]);
 
@@ -1870,18 +1877,35 @@ TEST(LoopBindings, FirmwareOwnerCheckpointMaskSurvivesRealReadExitAndEdit) {
 	loaded.start();
 	CHECK(Status::Ok
 	      == readerStorage.registerPublishedFile(checkpoint.slot, checkpoint.identity, checkpoint.path.data()));
+
+	// Actual root-view entry, then a real exit and return around the accepted read.
+	ProbeDisplay screen;
+	Song song;
+	song.model = loaded.model.get();
+	currentSong = &song;
+	display = &screen;
+	currentUIMode = UI_MODE_NONE;
+	probeCurrentUI = probeRootUI = nullptr;
+	LoopStationView view;
+	CHECK_TRUE(openUI(&view));
+	CHECK_EQUAL(&view, getRootUI());
+
 	CheckpointOwnerProbe owner(*loaded.model);
 	owner.beginCheckpointRestores(persistence);
 	CHECK_EQUAL(1, owner.restoreMask);
 	CHECK(owner.activeRestore.valid());
 	CHECK_EQUAL(0, owner.activeRestoreSlot);
 
-	// Partial real checkpoint read, then a harmless root exit and return. The
-	// accepted owner restore must remain active while model foreground work runs.
+	// Partial real checkpoint read, then leave the root view and return through the
+	// real view entry path. The accepted owner restore must remain active.
 	loaded.model->serviceArchive(50);
 	CHECK(loaded.model->checkpointRestorePending(0));
-	CHECK(Status::Ok == loaded.model->requestViewExit());
+	view.attemptExit();
+	CHECK_EQUAL(&sessionView, getRootUI());
 	CHECK(owner.activeRestore.valid());
+	changeRootUI(&view);
+	CHECK_EQUAL(&view, getRootUI());
+	CHECK(loaded.model->checkpointRestorePending(0));
 	for (unsigned i = 0; i < 200 && owner.activeRestore.valid(); ++i) {
 		loaded.model->serviceArchive(4096);
 		owner.serviceCheckpointRestore();
@@ -1926,6 +1950,10 @@ TEST(LoopBindings, FirmwareOwnerCheckpointMaskSurvivesRealReadExitAndEdit) {
 	owner.serviceCheckpointRestore();
 	CHECK_EQUAL(0, owner.restoreMask);
 	CHECK_FALSE(owner.activeRestore.valid());
+	currentSong = nullptr;
+	display = nullptr;
+	probeCurrentUI = probeRootUI = nullptr;
+	currentUIMode = UI_MODE_NONE;
 }
 
 // Undoing the only layer to empty and saving must omit the old audio checkpoint

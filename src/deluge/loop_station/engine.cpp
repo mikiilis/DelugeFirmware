@@ -158,7 +158,8 @@ Status Engine::complete(SlotId slot, bool play, bool dub) {
 	}
 	return Status::Ok;
 }
-Status Engine::execute(SlotId slot, PendingAction action, SampleClock now, const ClockMap& clock) {
+Status Engine::execute(SlotId slot, PendingAction action, SampleClock now, const ClockMap& clock,
+                       bool foregroundAdmission) {
 	auto& s = slots_[slot];
 	switch (action) {
 	case PendingAction::Initial: {
@@ -169,8 +170,11 @@ Status Engine::execute(SlotId slot, PendingAction action, SampleClock now, const
 		// history owns the pages, retain the accepted press and let the foreground
 		// owner reclaim and retry through serviceCaptureAdmission(). A manual take
 		// also waits for the participant-aware cushion instead of consuming the only
-		// page and capacity-completing at the next render boundary.
-		const bool manualHeadroomShort = frames == 0 && audio_.manualAdmissionNeedsReclamation();
+		// page and capacity-completing at the next render boundary. The constant-time
+		// shortfall test never inspects history; the foreground retry decides whether
+		// optional history can fund the cushion and admits even when it cannot.
+		const bool manualHeadroomShort =
+		    frames == 0 && !foregroundAdmission && audio_.manualAdmissionNeedsReclamation();
 		if (manualHeadroomShort || !audio_.canBeginInitialCapture(slot, frames)) {
 			if (!audio_.canEverAdmitInitialCapture(frames))
 				return fail(slot, Status::NoMemory); // Genuinely impossible, not reclaimable.
@@ -268,7 +272,7 @@ void Engine::serviceCaptureAdmission(SampleClock now, const ClockMap& clock) {
 		}
 		// Foreground only: this may reclaim optional history; never the audio path.
 		cancelPending(id);
-		execute(id, PendingAction::Initial, now, clock);
+		execute(id, PendingAction::Initial, now, clock, true);
 	}
 }
 void Engine::serviceCaptureHeadroom() {

@@ -5,6 +5,7 @@
 #include "snapshot.h"
 
 #include <algorithm>
+#include <bit>
 #include <limits>
 
 namespace loop_station {
@@ -18,7 +19,7 @@ int32_t addSaturated(int32_t backing, int32_t input) {
 
 Status ResidentAudio::prepareInitialCapture(SlotId slot, FrameIndex frames) {
 	if (history_) {
-		const auto participants = static_cast<uint32_t>(manualParticipants());
+		const auto participants = static_cast<uint32_t>(std::popcount(manualParticipants()));
 		const auto target = frames == 0 ? participants + 1 + kManualCaptureHeadroomPages : kManualCaptureHeadroomPages;
 		return history_->reclaimForCapture(slot, frames, target);
 	}
@@ -30,14 +31,17 @@ Status ResidentAudio::prepareInitialCapture(SlotId slot, FrameIndex frames) {
 bool ResidentAudio::manualAdmissionNeedsReclamation() const {
 	if (!history_)
 		return false;
-	const auto target = static_cast<uint32_t>(manualParticipants()) + 1 + kManualCaptureHeadroomPages;
-	return pool_.freePages() < target && history_->hasReclaimableOptionalHistory();
+	// Constant-time shortfall test: any manual take without the participant-aware
+	// cushion is deferred to foreground, which decides whether optional history
+	// can fund it. The audio callback must never examine history roots.
+	const auto target = static_cast<uint32_t>(std::popcount(manualParticipants())) + 1 + kManualCaptureHeadroomPages;
+	return pool_.freePages() < target;
 }
 
 void ResidentAudio::serviceManualCaptureHeadroom() {
 	if (!history_)
 		return;
-	const auto participants = static_cast<uint32_t>(manualParticipants());
+	const auto participants = static_cast<uint32_t>(std::popcount(manualParticipants()));
 	if (participants)
 		(void)history_->ensureCaptureHeadroom(participants + kManualCaptureHeadroomPages);
 }
@@ -61,6 +65,7 @@ Status ResidentAudio::beginInitial(SlotId slot, FrameIndex durationLimit) {
 	state.durationLimit = durationLimit;
 	state.initial = true;
 	state.capture = true;
+	refreshManualParticipant(slot);
 	return Status::Ok;
 }
 
@@ -70,6 +75,7 @@ Status ResidentAudio::completeInitial(SlotId slot, CompletionReason reason, Stat
 	if (sealed == Status::Ok)
 		sealed = rollback_.bind(slot, state.handle);
 	state.initial = false;
+	refreshManualParticipant(slot);
 	state.initialResult = sealed == Status::Ok;
 	state.capture = false;
 	state.position = 0;
@@ -322,11 +328,17 @@ void ResidentAudio::render(SlotId slot, std::span<const Frame> dryInput, std::sp
 }
 
 uint8_t ResidentAudio::manualParticipants() const {
-	uint8_t participants = 0;
-	for (SlotId slot = 0; slot < kTrackCount; ++slot)
-		if (slots_[slot].initial && !slots_[slot].durationLimit)
-			participants |= 1u << slot;
-	return participants;
+	return manualParticipants_;
+}
+
+void ResidentAudio::refreshManualParticipant(SlotId slot) {
+	if (!validSlot(slot))
+		return;
+	const auto bit = static_cast<uint8_t>(1u << slot);
+	if (slots_[slot].initial && !slots_[slot].durationLimit)
+		manualParticipants_ |= bit;
+	else
+		manualParticipants_ &= static_cast<uint8_t>(~bit);
 }
 
 std::optional<FrameIndex> ResidentAudio::initialCapacity(SlotId slot) const {

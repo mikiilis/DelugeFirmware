@@ -81,6 +81,9 @@ bool History::reclaimOldestBoundary() {
 }
 
 bool History::hasReclaimableBoundary() const {
+#if defined(LOOP_STATION_TEST_MODE)
+	++reclaimabilityChecks_;
+#endif
 	for (SlotId owner = 0; owner < kTrackCount; ++owner) {
 		const auto root = slots_[owner].head;
 		if (root == none || root >= kMaxSessions)

@@ -28,8 +28,9 @@ public:
 	// Bounded foreground admission for a new initial take. Delegates to the
 	// installed History observer; without history it cannot be resource-starved.
 	Status prepareInitialCapture(SlotId slot, FrameIndex frames);
-	// A new manual participant must wait for foreground reclamation when the
-	// participant-aware cushion cannot yet be funded by optional history.
+	// Constant-time shortfall test for a new manual participant. When true, the
+	// accepted take waits for the foreground owner to decide whether optional
+	// history can fund the participant-aware cushion; the audio path never scans.
 	bool manualAdmissionNeedsReclamation() const;
 	// Constant-time, allocation-free admission preflight used on every path.
 	bool canBeginInitialCapture(SlotId slot, FrameIndex frames) const { return pool_.canBeginCapture(slot, frames); }
@@ -98,9 +99,11 @@ private:
 	GestureRollback& rollback_;
 	History* history_ = nullptr;
 	SnapshotStore* snapshots_ = nullptr;
+	void refreshManualParticipant(SlotId slot);
 	Slot slots_[kTrackCount]{};
 	std::array<Generation, kTrackCount> contentRevisions_{};
 	std::array<bool, kTrackCount> captureWritten_{};
+	uint8_t manualParticipants_ = 0;
 };
 
 } // namespace loop_station

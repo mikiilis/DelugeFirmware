@@ -1226,6 +1226,144 @@ TEST(LoopCaptureAdmission, concurrentManualCapturesAllProgressWithParticipantHea
 		CHECK_EQUAL(1 * CaptureAdmissionFixture::perPage, f.audio.recordedInitialFrames(slot));
 	}
 }
+// N2: manualParticipants() is a sparse bitmask, not a count. A lone high-slot
+// participant must not inflate the admission target and discard unrelated
+// Undo/Redo history.
+TEST(LoopCaptureAdmission, sparseHighSlotParticipantDoesNotInflateAdmissionTarget) {
+	CaptureAdmissionFixture f;
+	f.setup(9, 16);
+	f.makeRetainedInitial(1, 2 * CaptureAdmissionFixture::perPage);
+	f.makeRetainedInitial(2, 2 * CaptureAdmissionFixture::perPage);
+	CHECK_EQUAL(5, f.pool.freePages());
+	// One already-running manual take in slot 7 sets only bit 7 (numeric 128).
+	f.press(7, 100);
+	CHECK(f.engine.state(7).capture);
+	CHECK_EQUAL(0x80, int(f.audio.manualParticipants()));
+	CHECK(f.history.canRedo(1));
+	CHECK(f.history.canRedo(2));
+	// The new press fits the real target (1 participant + new take + cushion = 4)
+	// and must start at this exact sample instead of waiting on a 131-page target.
+	f.press(0, 100);
+	CHECK(f.engine.state(0).capture);
+	CHECK_FALSE(f.engine.state(0).pending);
+	CHECK_EQUAL(int(Status::Ok), int(f.engine.state(0).error));
+	CHECK(f.history.canRedo(1));
+	CHECK(f.history.canRedo(2));
+}
+// N2: the ongoing foreground cushion must count participants rather than treat
+// the sparse bitmask as a page target, preserving unrelated optional history.
+TEST(LoopCaptureAdmission, sparseHighSlotHeadroomDoesNotEvictOptionalHistory) {
+	CaptureAdmissionFixture f;
+	f.setup(9, 16);
+	f.makeRetainedInitial(1, 2 * CaptureAdmissionFixture::perPage);
+	f.makeRetainedInitial(2, 2 * CaptureAdmissionFixture::perPage);
+	f.press(7, 100);
+	CHECK(f.engine.state(7).capture);
+	CHECK_EQUAL(0x80, int(f.audio.manualParticipants()));
+	CHECK_EQUAL(5, f.pool.freePages());
+	// Correct target is 1 participant + 2 cushion pages; five pages are already
+	// available, so repeated foreground servicing must not retire anything.
+	for (unsigned i = 0; i < 4; ++i)
+		f.engine.serviceCaptureHeadroom();
+	CHECK(f.history.canRedo(1));
+	CHECK(f.history.canRedo(2));
+	CHECK_EQUAL(5, f.pool.freePages());
+}
+// N2: a genuine shortfall still reclaims only the boundary it needs, then the
+// accepted capture makes multi-page progress with the high-slot participant.
+TEST(LoopCaptureAdmission, sparseHighSlotAdmissionReclaimsOnlyRequiredBoundary) {
+	CaptureAdmissionFixture f;
+	f.setup(8, 16);
+	f.makeRetainedInitial(1, 2 * CaptureAdmissionFixture::perPage);
+	f.makeRetainedInitial(2, 2 * CaptureAdmissionFixture::perPage);
+	f.press(7, 100);
+	CHECK(f.engine.state(7).capture);
+	CHECK_EQUAL(4, f.pool.freePages());
+	std::array<Frame, CaptureAdmissionFixture::perPage> input, output;
+	input.fill({2, -2});
+	CHECK(Status::Ok == f.pool.beginRenderRound(f.audio.manualParticipants()));
+	f.audio.render(7, input, output);
+	CHECK_EQUAL(3, f.pool.freePages());
+	f.press(0, 100);
+	CHECK(f.engine.state(0).pending);
+	CHECK_FALSE(f.engine.state(0).capture);
+	for (unsigned i = 0; i < 8 && !f.engine.state(0).capture; ++i)
+		f.engine.serviceCaptureAdmission(100, f.clock);
+	CHECK(f.engine.state(0).capture);
+	CHECK(f.engine.state(7).capture);
+	// Exactly one optional boundary was needed; the other remains Redoable.
+	CHECK(f.history.canRedo(2));
+	CHECK(f.pool.freePages() >= 2 + kManualCaptureHeadroomPages);
+	for (unsigned window = 0; window < 4; ++window) {
+		size_t count = 128;
+		f.adapter.finalizeWindow(100, count, f.clock);
+		for (SlotId slot : {SlotId{0}, SlotId{7}})
+			f.adapter.renderDry(slot, std::span(input).first(count), std::span(output).first(count));
+	}
+	CHECK(f.engine.state(0).capture);
+	CHECK(f.engine.state(7).capture);
+	CHECK_EQUAL(CaptureAdmissionFixture::perPage, f.audio.recordedInitialFrames(0));
+	// Slot 7 already consumed its first page before the press so the shortfall
+	// was real; it records a second page while slot 0 crosses its first boundary.
+	CHECK_EQUAL(2 * CaptureAdmissionFixture::perPage, f.audio.recordedInitialFrames(7));
+	CHECK(f.history.canRedo(2));
+}
+// N2: concurrent manual participants need a cushion for foreground latency, not
+// just one page per participant. With evictable history, every participant keeps
+// progressing across more than one page boundary.
+TEST(LoopCaptureAdmission, sparseHighSlotMultiCaptureKeepsParticipantHeadroom) {
+	CaptureAdmissionFixture f;
+	f.setup(16, 16);
+	f.makeRetainedInitial(1, 10 * CaptureAdmissionFixture::perPage);
+	CHECK_EQUAL(6, f.pool.freePages());
+	for (SlotId slot : {SlotId{7}, SlotId{0}, SlotId{1}}) {
+		f.press(slot, 100);
+		CHECK(f.engine.state(slot).capture);
+	}
+	CHECK_EQUAL(0x83, int(f.audio.manualParticipants()));
+	CHECK(f.pool.freePages() >= 3 + kManualCaptureHeadroomPages);
+	std::array<Frame, 128> input, output;
+	input.fill({3, -3});
+	for (unsigned window = 0; window < 8; ++window) {
+		f.engine.serviceCaptureHeadroom();
+		size_t count = input.size();
+		f.adapter.finalizeWindow(100, count, f.clock);
+		for (SlotId slot : {SlotId{7}, SlotId{0}, SlotId{1}})
+			f.adapter.renderDry(slot, std::span(input).first(count), std::span(output).first(count));
+	}
+	for (SlotId slot : {SlotId{7}, SlotId{0}, SlotId{1}}) {
+		CHECK(f.engine.state(slot).capture);
+		CHECK_EQUAL(2 * CaptureAdmissionFixture::perPage, f.audio.recordedInitialFrames(slot));
+	}
+}
+// New breakage: a quantized Initial executed by AudioAdapter::finalizeWindow
+// through Engine::service must decide using constant-time cached participant and
+// reclaimability state, never scanning slot roots from the audio callback.
+TEST(LoopCaptureAdmission, audioCallbackDueInitialDoesNotScanAdmissionState) {
+	CaptureAdmissionFixture f;
+	f.setup(4, 16);
+	f.makeRetainedInitial(3, 3 * CaptureAdmissionFixture::perPage);
+	CHECK_EQUAL(1, f.pool.freePages());
+	auto settings = f.engine.settings();
+	settings.startAction = {ActionMode::Synced, Interval::Quarter};
+	CHECK(Status::Ok == f.engine.dispatch(Command::configure(settings), 100, f.clock));
+	f.press(0, 100);
+	CHECK(f.engine.state(0).pending);
+	CHECK_FALSE(f.engine.state(0).capture);
+	const auto due = f.engine.nextActionSample(f.clock);
+	CHECK(due.has_value());
+	CHECK(*due > 100);
+	const auto reclaimabilityChecks = f.history.reclaimabilityChecks();
+	size_t count = 128;
+	f.adapter.finalizeWindow(*due, count, f.clock);
+	CHECK_EQUAL(reclaimabilityChecks, f.history.reclaimabilityChecks());
+	CHECK(f.engine.state(0).pending); // Accepted intent survives the callback.
+	CHECK_FALSE(f.engine.state(0).capture);
+	CHECK(f.history.canRedo(3));
+	for (unsigned i = 0; i < 8 && !f.engine.state(0).capture; ++i)
+		f.engine.serviceCaptureAdmission(*due, f.clock);
+	CHECK(f.engine.state(0).capture);
+}
 // N3: a deferred Initial must not hide another slot's future quantized Start in
 // the audio adapter's exact sample-boundary selection.
 TEST(LoopCaptureAdmission, deferredAdmissionDoesNotMaskAnotherSlotFutureDeadline) {

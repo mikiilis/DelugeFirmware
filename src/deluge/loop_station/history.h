@@ -35,7 +35,6 @@ public:
 	// reclaims optional history while progress is possible; protected exhaustion
 	// is left to the existing capacity-completion path rather than stopping early.
 	Status ensureCaptureHeadroom(uint32_t minimumFreePages);
-	bool hasReclaimableOptionalHistory() const { return hasReclaimableBoundary(); }
 	bool canUndo(SlotId slot) const;
 	bool canRedo(SlotId slot) const;
 	Status requestRestore(SlotId slot, bool redo, RestoreId& id);
@@ -53,6 +52,11 @@ public:
 	unsigned retainedSessions() const;
 	const detail::BeforeImages::Work& work() const { return pages_.work(); }
 	uint64_t pressure() const { return pressure_; }
+#if defined(LOOP_STATION_TEST_MODE)
+	// Read-only audit hook proving the audio-callback admission policy never
+	// consults optional-history reclaimability.
+	uint32_t reclaimabilityChecks() const { return reclaimabilityChecks_; }
+#endif
 
 private:
 	static constexpr unsigned none = kMaxSessions;
@@ -114,5 +118,8 @@ private:
 	RestoreJob restore_{};
 	bool builderActive_ = false;
 	Generation restoreSequence_ = 0;
+#if defined(LOOP_STATION_TEST_MODE)
+	mutable uint32_t reclaimabilityChecks_ = 0;
+#endif
 };
 } // namespace loop_station

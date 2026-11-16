@@ -46,6 +46,8 @@ bool openUI(ProbeUI* ui) {
 void changeRootUI(ProbeUI* ui) {
 	probeCurrentUI = ui;
 	probeRootUI = ui;
+	// Production changeRootUI runs the destination view's real entry path.
+	ui->opened();
 }
 ProbeUI* getCurrentUI() {
 	return probeCurrentUI;
