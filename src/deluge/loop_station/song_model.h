@@ -101,6 +101,8 @@ public:
 	bool checkpointRestorePending(SlotId slot) const {
 		return restoreOwner_.request && restoreOwner_.checkpoint && restoreOwner_.slot == slot;
 	}
+	// Read-only bounded-retirement observation for foreground evidence/tests.
+	bool audioRetirementPending() const { return history_.retirementPending() || pool_.retirementPending(); }
 	bool explicitlyUnbound(SlotId slot) const { return validSlot(slot) && explicitlyUnbound_[slot]; }
 	bool ready() const { return ready_ && !releasing_; }
 	bool replacing(SlotId slot) const;

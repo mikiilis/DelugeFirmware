@@ -169,7 +169,7 @@ Status Engine::execute(SlotId slot, PendingAction action, SampleClock now, const
 		// history owns the pages, retain the accepted press and let the foreground
 		// owner reclaim and retry through serviceCaptureAdmission().
 		if (!audio_.canBeginInitialCapture(slot, frames)) {
-			if (!audio_.canPossiblyAdmitInitialCapture(slot, frames))
+			if (!audio_.canEverAdmitInitialCapture(frames))
 				return fail(slot, Status::NoMemory); // Genuinely impossible, not reclaimable.
 			s.admissionDeferred = true;
 			queue(slot, PendingAction::Initial, Deadline{true, now, {}});
@@ -177,7 +177,7 @@ Status Engine::execute(SlotId slot, PendingAction action, SampleClock now, const
 		}
 		const auto status = audio_.beginInitial(slot, frames);
 		if (status == Status::NoMemory) {
-			if (!audio_.canPossiblyAdmitInitialCapture(slot, frames))
+			if (!audio_.canEverAdmitInitialCapture(frames))
 				return fail(slot, status);
 			s.admissionDeferred = true;
 			queue(slot, PendingAction::Initial, Deadline{true, now, {}});
@@ -268,6 +268,9 @@ void Engine::serviceCaptureAdmission(SampleClock now, const ClockMap& clock) {
 		execute(id, PendingAction::Initial, now, clock);
 	}
 }
+void Engine::serviceCaptureHeadroom() {
+	audio_.serviceManualCaptureHeadroom();
+}
 void Engine::service(SampleClock now, const ClockMap& clock) {
 	rollback_.advance(now);
 	// Bounded global work; clearing never releases a phrase with rollback readers.
@@ -319,7 +322,7 @@ void Engine::service(SampleClock now, const ClockMap& clock) {
 std::optional<SampleClock> Engine::nextActionSample(const ClockMap& clock) const {
 	std::optional<SampleClock> next;
 	for (const auto& s : slots_) {
-		if (s.state.pending) {
+		if (s.state.pending && !s.admissionDeferred) {
 			const auto at = s.deadline.sampleAt(clock);
 			if (!next || at < *next)
 				next = at;

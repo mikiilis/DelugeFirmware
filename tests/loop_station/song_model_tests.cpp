@@ -1797,6 +1797,31 @@ TEST(LoopBindings, AcceptedCheckpointRestoreSurvivesViewExitButNotTeardown) {
 	CHECK_EQUAL(checkpoint.frames, loaded.model->engine().state(0).phraseFrames);
 	CHECK(Status::Ok == loaded.model->dispatch({CommandType::StartAll}));
 	loaded.expectUniformBacking(0, checkpoint.frames, {256, 256});
+	// Exactly one loaded base boundary: one Undo empties the track, there is no
+	// second layer beneath it, and Redo republishes the same base.
+	CHECK_EQUAL(int(HistoryNavigationState::Complete), int(loaded.undo(0, false).state));
+	CHECK_FALSE(loaded.model->engine().state(0).hasPhrase);
+	CHECK_FALSE(loaded.model->canUndo(0));
+	CHECK(loaded.model->canRedo(0));
+	CHECK_EQUAL(int(HistoryNavigationState::Complete), int(loaded.undo(0, true).state));
+	CHECK(loaded.model->engine().state(0).hasPhrase);
+	CHECK_FALSE(loaded.model->canRedo(0));
+
+	// An actual new edit cancels an accepted checkpoint restore.
+	CHECK(Status::Ok == loaded.model->dispatch({CommandType::StartAll}));
+	RestoreId edit{};
+	CHECK(Status::Ok == loaded.model->requestCheckpointRestore(0, checkpoint.identity, edit));
+	loaded.model->serviceArchive(50);
+	CHECK(loaded.model->checkpointRestorePending(0));
+	CHECK(Status::Ok == loaded.model->dispatch({CommandType::Press, 0}));
+	for (unsigned i = 0; i < 100 && loaded.model->checkpointRestorePending(0); ++i) {
+		loaded.model->serviceArchive(4096);
+		loaded.model->serviceRetirement();
+	}
+	CHECK_FALSE(loaded.model->checkpointRestorePending(0));
+	CHECK_EQUAL(int(Status::Stale), int(loaded.driveRestore(edit, 512)));
+	loaded.host.time += GestureRollback::kProvisionalSamples;
+	CHECK(Status::Ok == loaded.model->dispatch({CommandType::Press, 0}));
 
 	// An actual teardown still cancels an accepted checkpoint restore.
 	RestoreId second{};
@@ -1990,17 +2015,19 @@ TEST(LoopBindings, SaveStartedBetweenUndoAndRedoPublishesAfterRetirement) {
 	auto settings = f.model->engine().settings();
 	settings.tracks[0].source = Source::Stereo; // Distinct left/right frames.
 	CHECK(Status::Ok == f.model->dispatch(Command::configure(settings)));
-	f.record(0, {256, -512});
+	std::vector<Frame> initial(8);
+	for (FrameIndex i = 0; i < initial.size(); ++i)
+		initial[i] = {int32_t(i * 37 + 11) * 256, -int32_t(i * 53 + 7) * 256};
+	f.recordExact(0, initial);
 	// One changed overdub boundary, then Undo it so the live replacement is I and
 	// the Redo branch retains I+A.
-	CHECK(Status::Ok == f.model->dispatch({CommandType::Press, 0}));
-	f.render(8, {256, -512});
-	f.host.time += GestureRollback::kProvisionalSamples;
-	CHECK(Status::Ok == f.model->dispatch({CommandType::Press, 0}));
+	std::vector<Frame> addition(8);
+	for (FrameIndex i = 0; i < addition.size(); ++i)
+		addition[i] = {int32_t(i * 19 + 3) * 256, -int32_t(i * 29 + 5) * 256};
+	f.overdubExact(0, addition);
 	CHECK_EQUAL(int(HistoryNavigationState::Complete), int(f.undo(0, false).state));
 	CHECK(f.model->engine().state(0).hasPhrase);
 	CHECK(f.model->canRedo(0));
-
 	PersistenceState persistence;
 	CHECK(Status::Ok == persistence.installLoaded(defaultSettings(), Manifest{}));
 	const auto savedRevision = f.model->contentRevision(0);
@@ -2021,9 +2048,10 @@ TEST(LoopBindings, SaveStartedBetweenUndoAndRedoPublishesAfterRetirement) {
 	CHECK_EQUAL(0, staged.slot);
 	CHECK_EQUAL(8, staged.frames);
 	const auto frames = f.readArchivedFrames(storage, staged.slot, staged.identity, staged.frames);
-	for (const auto& frame : frames) {
-		CHECK_EQUAL(256, frame.l);
-		CHECK_EQUAL(-512, frame.r);
+	CHECK_EQUAL(initial.size(), frames.size());
+	for (size_t i = 0; i < frames.size(); ++i) {
+		CHECK_EQUAL(initial[i].l, frames[i].l);
+		CHECK_EQUAL(initial[i].r, frames[i].r);
 	}
 	const auto current = f.currentRevisions();
 	CHECK(Status::Ok == persistence.commitPendingAfterDocumentVerified(current));
@@ -2031,11 +2059,14 @@ TEST(LoopBindings, SaveStartedBetweenUndoAndRedoPublishesAfterRetirement) {
 	CHECK_EQUAL(savedRevision, persistence.committedAudioRevision(0));
 	CHECK_EQUAL(1, persistence.committedManifest().phraseCount);
 	CHECK_EQUAL(staged.identity, persistence.committedManifest().phrases[0].identity);
-	// The retired source's pinned pages are eventually released.
+	// The retired source's snapshot pin and pages are eventually released.
 	for (unsigned i = 0; i < 200 && (f.model->archive().idle() == false || f.model->engine().state(0).capture); ++i)
 		f.model->serviceArchive(4096);
-	for (unsigned i = 0; i < 200; ++i)
+	for (unsigned i = 0; i < 200 && f.model->audioRetirementPending(); ++i)
 		f.model->serviceRetirement();
+	CHECK_FALSE(f.model->audioRetirementPending());
+	CHECK(f.model->archive().idle());
+	CHECK(f.model->contentRevision(0) != savedRevision);
 }
 
 // Replacing the Song while a confirmed history operation is applying cancels the

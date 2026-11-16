@@ -51,6 +51,9 @@ public:
 	// Foreground-only retry of a capture admission deferred because optional
 	// history owned its pages/descriptors. Never call from the audio callback.
 	void serviceCaptureAdmission(SampleClock now, const ClockMap& clock);
+	// Foreground-only page cushion for an already-admitted manual initial take.
+	// Never reclaims from the audio callback and never stops the capture itself.
+	void serviceCaptureHeadroom();
 	// Detach a deleted/unbound slot immediately; bounded rollback retirement may defer clear.
 	void removeSlot(SlotId slot, SampleClock now, const ClockMap& clock);
 	void phraseReplaced(SlotId slot, FrameIndex length, bool playing);

@@ -24,6 +24,16 @@ Status ResidentAudio::prepareInitialCapture(SlotId slot, FrameIndex frames) {
 	return pool_.canBeginCapture(slot, frames) ? Status::Ok : Status::NoMemory;
 }
 
+void ResidentAudio::serviceManualCaptureHeadroom() {
+	if (!history_)
+		return;
+	for (SlotId slot = 0; slot < kTrackCount; ++slot) {
+		const auto& state = slots_[slot];
+		if (state.initial && !state.durationLimit && state.capture)
+			(void)history_->ensureCaptureHeadroom(slot, kManualCaptureHeadroomPages);
+	}
+}
+
 Status ResidentAudio::beginInitial(SlotId slot, FrameIndex durationLimit) {
 	if (!validSlot(slot) || !rollback_.ready())
 		return Status::Invalid;

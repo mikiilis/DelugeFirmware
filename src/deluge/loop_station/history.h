@@ -31,6 +31,10 @@ public:
 	// protected-resource exhaustion. Never reclaims live phrases, rollback state,
 	// pinned snapshots, an active restore, or active capture sessions.
 	Status reclaimForCapture(SlotId slot, FrameIndex frames);
+	// Bounded foreground cushion for an already-admitted manual take. It only
+	// reclaims optional history while progress is possible; protected exhaustion
+	// is left to the existing capacity-completion path rather than stopping early.
+	Status ensureCaptureHeadroom(SlotId slot, uint32_t minimumFreePages);
 	bool canUndo(SlotId slot) const;
 	bool canRedo(SlotId slot) const;
 	Status requestRestore(SlotId slot, bool redo, RestoreId& id);

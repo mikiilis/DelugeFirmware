@@ -149,11 +149,15 @@ Status PagePool::beginPhrase(SlotId slot, FrameIndex reservedFrames) {
 	return Status::Ok;
 }
 
-bool PagePool::captureAdmissionPossible(SlotId slot, FrameIndex reservedFrames) const {
-	if (!capacity_ || !validSlot(slot))
+bool PagePool::captureSizePossible(FrameIndex reservedFrames) const {
+	if (!capacity_)
 		return false;
 	const auto needed = reservedFrames ? pagesFor(reservedFrames) : 1;
-	if (needed > mapStride_)
+	return needed <= mapStride_;
+}
+
+bool PagePool::hasCaptureRecord(SlotId slot) const {
+	if (!capacity_ || !validSlot(slot))
 		return false;
 	const unsigned record = activeRecord_[slot];
 	if (record < kRecordCount)
@@ -172,7 +176,7 @@ bool PagePool::captureAdmissionPossible(SlotId slot, FrameIndex reservedFrames) 
 }
 
 bool PagePool::canBeginCapture(SlotId slot, FrameIndex reservedFrames) const {
-	if (!captureAdmissionPossible(slot, reservedFrames))
+	if (!captureSizePossible(reservedFrames) || !hasCaptureRecord(slot))
 		return false;
 	const auto needed = reservedFrames ? pagesFor(reservedFrames) : 1;
 	return needed <= freeCount_;

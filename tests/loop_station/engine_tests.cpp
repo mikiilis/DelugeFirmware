@@ -1000,6 +1000,29 @@ struct CaptureAdmissionFixture {
 		history.mappingReplaced(slot);
 		return handle;
 	}
+	void overdubLayer(SlotId slot, Frame value = {3, -3}) {
+		CHECK(Status::Ok == audio.setCaptureGate(slot, true));
+		Frame output{};
+		audio.render(slot, {&value, 1}, {&output, 1});
+		CHECK(Status::Ok == audio.setCaptureGate(slot, false));
+	}
+	void undoOrdinary(SlotId slot) {
+		RestoreId id{};
+		CHECK(Status::Ok == history.requestRestore(slot, false, id));
+		Status reserved = Status::Busy;
+		for (unsigned attempt = 0; attempt < 64 && reserved == Status::Busy; ++attempt)
+			reserved = history.reserveRestore(id, 8);
+		CHECK_EQUAL(int(Status::Ok), int(reserved));
+		Status serviced = Status::Busy;
+		while (serviced == Status::Busy)
+			serviced = history.serviceRestore(id, 8);
+		CHECK_EQUAL(int(Status::Ok), int(serviced));
+		CHECK(Status::Ok == history.commitRestore(id));
+		const auto current = pool.sealedHandle(slot);
+		CHECK(current.valid());
+		CHECK(Status::Ok == audio.replace(slot, current));
+		history.mappingReplaced(slot);
+	}
 	void press(SlotId slot, SampleClock now) {
 		CHECK(Status::Ok == engine.dispatch({CommandType::Press, slot}, now, clock));
 	}
@@ -1099,4 +1122,109 @@ TEST(LoopCaptureAdmission, disabledHistoryReportsHonestExhaustion) {
 	CHECK_FALSE(state.capture);
 	CHECK_FALSE(state.pending);
 	CHECK_EQUAL(int(Status::NoMemory), int(state.error));
+}
+
+// N1: when all 24 PagePool records are occupied partly by optional retained
+// history, an empty target must defer and reclaim a record in the foreground
+// instead of being classified as structurally impossible.
+TEST(LoopCaptureAdmission, temporaryRecordExhaustionReclaimsOptionalHistory) {
+	CaptureAdmissionFixture f;
+	f.setup(32, 64);
+	f.makeRetainedInitial(0, CaptureAdmissionFixture::perPage);
+	for (SlotId slot = 1; slot < kTrackCount; ++slot)
+		f.makePhrase(slot, CaptureAdmissionFixture::perPage);
+	for (SlotId slot = 1; slot < 6; ++slot) {
+		for (unsigned layer = 0; layer < 3; ++layer)
+			f.overdubLayer(slot);
+		for (unsigned undo = 0; undo < 3; ++undo)
+			f.undoOrdinary(slot);
+	}
+	f.overdubLayer(6);
+	f.undoOrdinary(6);
+	CHECK_FALSE(f.pool.hasCaptureRecord(0));
+	CHECK_FALSE(f.pool.canBeginCapture(0, 0));
+	// The accepted press is preserved, not rejected before foreground reclamation.
+	CHECK(Status::Ok == f.engine.dispatch({CommandType::Press, 0}, 100, f.clock));
+	auto state = f.engine.state(0);
+	CHECK(state.pending);
+	CHECK(PendingAction::Initial == state.action);
+	CHECK_FALSE(state.capture);
+	CHECK_EQUAL(int(Status::Ok), int(state.error));
+	for (unsigned i = 0; i < 32 && !f.engine.state(0).capture; ++i)
+		f.engine.serviceCaptureAdmission(100, f.clock);
+	state = f.engine.state(0);
+	CHECK(state.capture);
+	CHECK_FALSE(state.pending);
+	CHECK_EQUAL(int(Status::Ok), int(state.error));
+}
+// N2: admission builds bounded page headroom for a manual take, and the
+// foreground cushion keeps an already-admitted capture running across pages.
+TEST(LoopCaptureAdmission, manualCaptureMaintainsHeadroomAcrossMultiplePages) {
+	CaptureAdmissionFixture f;
+	f.setup(5, 16);
+	f.makeRetainedInitial(1, 2 * CaptureAdmissionFixture::perPage);
+	f.makeRetainedInitial(2, 2 * CaptureAdmissionFixture::perPage);
+	CHECK_EQUAL(1, f.pool.freePages());
+	Status admitted = Status::Busy;
+	for (unsigned i = 0; i < 8 && admitted == Status::Busy; ++i)
+		admitted = f.history.reclaimForCapture(0, 0);
+	CHECK_EQUAL(int(Status::Ok), int(admitted));
+	CHECK(f.pool.freePages() >= kManualCaptureHeadroomPages);
+	CHECK(Status::Ok == f.audio.beginInitial(0, 0));
+	auto renderPage = [&] {
+		CHECK(Status::Ok == f.pool.beginRenderRound(f.audio.manualParticipants()));
+		std::vector<Frame> input(CaptureAdmissionFixture::perPage, Frame{1, -1});
+		std::vector<Frame> output(CaptureAdmissionFixture::perPage);
+		f.audio.render(0, input, output);
+	};
+	renderPage();
+	renderPage();
+	CHECK_EQUAL(2 * CaptureAdmissionFixture::perPage, f.audio.recordedInitialFrames(0));
+	CHECK(f.pool.freePages() < kManualCaptureHeadroomPages);
+	Status headroom = Status::Busy;
+	for (unsigned i = 0; i < 8 && headroom == Status::Busy; ++i)
+		headroom = f.history.ensureCaptureHeadroom(0, kManualCaptureHeadroomPages);
+	CHECK_EQUAL(int(Status::Ok), int(headroom));
+	CHECK(f.pool.freePages() >= kManualCaptureHeadroomPages);
+	renderPage();
+	CHECK_EQUAL(3 * CaptureAdmissionFixture::perPage, f.audio.recordedInitialFrames(0));
+	CHECK(Status::Ok == f.audio.setCaptureGate(0, false));
+}
+// N3: a deferred Initial must not hide another slot's future quantized Start in
+// the audio adapter's exact sample-boundary selection.
+TEST(LoopCaptureAdmission, deferredAdmissionDoesNotMaskAnotherSlotFutureDeadline) {
+	CaptureAdmissionFixture f;
+	f.setup(200, 64);
+	f.makeRetainedInitial(1, 195 * CaptureAdmissionFixture::perPage);
+	CHECK_EQUAL(5, f.pool.freePages());
+	// A stopped phrase on slot 2 supplies the future quantized Start.
+	CHECK(Status::Ok == f.engine.dispatch({CommandType::Press, 2}, 100, f.clock));
+	CHECK(f.engine.state(2).capture);
+	CHECK(Status::Ok == f.pool.beginRenderRound(f.audio.manualParticipants()));
+	Frame input{1, -1}, output{};
+	f.audio.render(2, {&input, 1}, {&output, 1});
+	CHECK(Status::Ok == f.engine.dispatch({CommandType::Press, 2}, 100, f.clock));
+	CHECK(f.engine.state(2).playing);
+	CHECK(Status::Ok == f.engine.dispatch({CommandType::TransportStop}, 200, f.clock));
+	CHECK_FALSE(f.engine.state(2).playing);
+	auto synced = f.engine.settings();
+	synced.startAction = {ActionMode::Synced, Interval::Quarter};
+	CHECK(Status::Ok == f.engine.dispatch(Command::configure(synced), 200, f.clock));
+	CHECK(Status::Ok == f.engine.dispatch({CommandType::StartAll}, 200, f.clock));
+	const auto future = f.engine.nextActionSample(f.clock);
+	CHECK(future.has_value());
+	CHECK(*future > 200);
+	auto immediate = f.engine.settings();
+	immediate.startAction.mode = ActionMode::Immediate;
+	CHECK(Status::Ok == f.engine.dispatch(Command::configure(immediate), 200, f.clock));
+	Command duration{CommandType::SetDuration};
+	duration.slot = 0;
+	duration.durationBars = 1;
+	CHECK(Status::Ok == f.engine.dispatch(duration, 200, f.clock));
+	CHECK(Status::Ok == f.engine.dispatch({CommandType::Press, 0}, 200, f.clock));
+	const auto state = f.engine.state(0);
+	CHECK(state.pending);
+	CHECK(PendingAction::Initial == state.action);
+	CHECK_FALSE(state.capture);
+	CHECK_EQUAL(int(*future), int(*f.engine.nextActionSample(f.clock)));
 }

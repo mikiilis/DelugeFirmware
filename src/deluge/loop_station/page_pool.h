@@ -21,9 +21,10 @@ public:
 	// Constant-time preflight for a new capture. A manual (zero-frame) take still
 	// needs one grantable page so its first render is not an empty-capacity take.
 	bool canBeginCapture(SlotId slot, FrameIndex reservedFrames) const;
-	// Whether page reclamation could ever admit this capture: the slot record is
-	// reusable and the phrase fits the pool's per-record limit.
-	bool captureAdmissionPossible(SlotId slot, FrameIndex reservedFrames) const;
+	// A request is structurally possible only if its pages fit one record. A
+	// temporary record shortage is reclaimable when optional history owns records.
+	bool captureSizePossible(FrameIndex reservedFrames) const;
+	bool hasCaptureRecord(SlotId slot) const;
 	// Manual append requires participation in the current render round. accepted may
 	// be shorter than frames when this slot has claimed its page for the round.
 	Status append(SlotId slot, std::span<const Frame> frames, FrameIndex& accepted);

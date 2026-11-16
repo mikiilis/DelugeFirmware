@@ -938,8 +938,10 @@ void SongModel::serviceRetirement() {
 		pool_.serviceRetirement(16);
 		// Bounded foreground retry for accepted initial captures waiting on
 		// optional-history reclamation. Never serviced from the audio callback.
-		if (ready())
+		if (ready()) {
 			engine_.serviceCaptureAdmission(host_.now(), clock_);
+			engine_.serviceCaptureHeadroom();
+		}
 	}
 	if (restoreOwner_.request && restoreOwner_.canceled && !restoreServicing_) {
 		if (restoreOwner_.checkpoint) {

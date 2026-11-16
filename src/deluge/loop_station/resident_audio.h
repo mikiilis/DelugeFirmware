@@ -30,9 +30,11 @@ public:
 	Status prepareInitialCapture(SlotId slot, FrameIndex frames);
 	// Constant-time, allocation-free admission preflight used on every path.
 	bool canBeginInitialCapture(SlotId slot, FrameIndex frames) const { return pool_.canBeginCapture(slot, frames); }
-	bool canPossiblyAdmitInitialCapture(SlotId slot, FrameIndex frames) const {
-		return pool_.captureAdmissionPossible(slot, frames);
-	}
+	bool canEverAdmitInitialCapture(FrameIndex frames) const { return pool_.captureSizePossible(frames); }
+	// Bounded foreground headroom for an already-admitted manual initial take.
+	// This never stops the capture; protected exhaustion simply leaves it to the
+	// existing capacity completion path.
+	void serviceManualCaptureHeadroom();
 	Status finishInitial(SlotId slot, PhraseHandle& handle);
 	Status attach(SlotId slot, PhraseHandle handle);
 	// Replace a sealed phrase at a serialized boundary while preserving transport.

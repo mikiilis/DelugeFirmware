@@ -318,6 +318,45 @@ void saturateDetachedRecords(loop_ui_test::Fixture& f) {
 				return;
 	}
 }
+
+void startFixedTake(loop_ui_test::Fixture& f, SlotId slot, uint16_t bars) {
+	CHECK_EQUAL(int(Status::Ok), int(f.model->ensureBound(slot)));
+	Command duration{CommandType::SetDuration};
+	duration.slot = slot;
+	duration.durationBars = bars;
+	const auto configured = f.model->dispatch(duration);
+	CHECK_EQUAL(int(Status::Ok), int(configured));
+	const auto pressed = f.model->dispatch({CommandType::Press, slot});
+	CHECK_EQUAL(int(Status::Ok), int(pressed));
+	CHECK(f.model->engine().state(slot).capture);
+}
+
+// Leave one free page, acquire an accepted overdub Undo, then consume that last
+// page so the real foreground admission fails with NoMemory after acceptance.
+void fillForegroundFailurePressure(loop_ui_test::Fixture& f) {
+	startFixedTake(f, 1, 11); // 1,895 pages
+	startFixedTake(f, 2, 11); // 1,895 pages
+	startFixedTake(f, 3, 11); // 1,895 pages
+	startFixedTake(f, 4, 11); // 1,895 pages
+	startFixedTake(f, 5, 3);  // 517 pages
+	Command manual{CommandType::SetDuration};
+	manual.slot = 6;
+	manual.durationBars = 0;
+	const auto manualCommand = f.model->dispatch(manual);
+	CHECK_EQUAL(int(Status::Ok), int(manualCommand));
+	const auto bound = f.model->ensureBound(6);
+	CHECK_EQUAL(int(Status::Ok), int(bound));
+	const auto pressed = f.model->dispatch({CommandType::Press, 6});
+	CHECK_EQUAL(int(Status::Ok), int(pressed));
+	CHECK(f.model->engine().state(6).capture);
+	for (unsigned window = 0; window < 368; ++window)
+		f.renderTrack(6, 128); // 93 pages, leaving one free page.
+}
+
+void consumeLastFreePage(loop_ui_test::Fixture& f) {
+	for (unsigned window = 0; window < 4; ++window)
+		f.renderTrack(6, 128);
+}
 } // namespace
 
 TEST(LoopSettingsDisplay, ConfirmationSurvivesGraphicsRefreshOnOledAndSevenSegment) {
@@ -656,7 +695,8 @@ TEST(LoopSettingsDisplay, RealDetachedPressureReportsNoMemoryAndPreservesCapture
 		f.view.padAction(0, 7, 100);
 		CHECK_EQUAL(0, f.model->engine().selected());
 		saturateDetachedRecords(f);
-		CHECK_EQUAL(int(Status::Ok), int(f.model->dispatch({CommandType::Press, 0})));
+		const auto overdub = f.model->dispatch({CommandType::Press, 0});
+		CHECK_EQUAL(int(Status::Ok), int(overdub));
 		CHECK(f.model->engine().state(0).capture);
 		f.renderAudio(1);
 		HistoryTarget target{};
@@ -745,4 +785,71 @@ TEST(LoopSettingsDisplay, EligibilityLossReplacesCurrentConfirmationWithHonestRe
 	CHECK(f.view.buttonAction(BACK, false, false) == ActionResult::DEALT_WITH);
 	CHECK(LoopStationView::HistoryPromptState::Result == f.view.historyPromptState_);
 	CHECK_EQUAL(prior.id.generation, f.model->historyNavigationResult().id.generation);
+}
+
+// N6/M5: the two-released-BACK request is accepted, then the real foreground
+// owner hits NoMemory while reserving reconstruction pages. Both displays must
+// correlate that terminal failure without false completion text.
+TEST(LoopSettingsDisplay, AcceptedForegroundFailureCorrelatesOnBothDisplays) {
+	// Seven-segment path.
+	{
+		loop_ui_test::Fixture f;
+		f.screen.oled = false;
+		f.screen.setText("LOOP");
+		f.recordPhrase();
+		const auto overdub = f.model->dispatch({CommandType::Press, 0});
+		CHECK_EQUAL(int(Status::Ok), int(overdub));
+		CHECK(f.model->engine().state(0).capture);
+		f.renderAudio(1);
+		fillForegroundFailurePressure(f);
+		f.view.padAction(0, 7, 100);
+		CHECK(f.view.buttonAction(BACK, true, false) == ActionResult::DEALT_WITH);
+		CHECK(f.view.buttonAction(BACK, false, false) == ActionResult::DEALT_WITH);
+		CHECK(f.view.buttonAction(BACK, true, false) == ActionResult::DEALT_WITH);
+		CHECK(f.view.buttonAction(BACK, false, false) == ActionResult::DEALT_WITH);
+		CHECK(LoopStationView::HistoryPromptState::Applying == f.view.historyPromptState_);
+		const auto id = f.view.historyId_;
+		consumeLastFreePage(f);
+		const auto result = driveHistory(f, id);
+		CHECK_EQUAL(int(HistoryNavigationState::Failed), int(result.state));
+		CHECK_EQUAL(int(Status::NoMemory), int(result.status));
+		f.view.graphicsRoutine();
+		CHECK(LoopStationView::HistoryPromptState::Result == f.view.historyPromptState_);
+		CHECK_EQUAL(int(Status::NoMemory), int(f.view.historyStatus_));
+		CHECK_FALSE(f.screen.scrollingTexts.empty());
+		if (!f.screen.scrollingTexts.empty())
+			STRCMP_EQUAL("Track 1 NO MEMORY", f.screen.scrollingTexts.back().c_str());
+		CHECK_FALSE(f.model->engine().state(0).capture);
+		CHECK(f.model->engine().state(0).playing);
+		CHECK(f.model->engine().state(0).hasPhrase);
+	}
+	// OLED path.
+	{
+		loop_ui_test::Fixture f;
+		f.recordPhrase();
+		const auto overdub = f.model->dispatch({CommandType::Press, 0});
+		CHECK_EQUAL(int(Status::Ok), int(overdub));
+		f.renderAudio(1);
+		fillForegroundFailurePressure(f);
+		f.view.padAction(0, 7, 100);
+		CHECK(f.view.buttonAction(BACK, true, false) == ActionResult::DEALT_WITH);
+		CHECK(f.view.buttonAction(BACK, false, false) == ActionResult::DEALT_WITH);
+		CHECK(f.view.buttonAction(BACK, true, false) == ActionResult::DEALT_WITH);
+		CHECK(f.view.buttonAction(BACK, false, false) == ActionResult::DEALT_WITH);
+		CHECK(LoopStationView::HistoryPromptState::Applying == f.view.historyPromptState_);
+		const auto id = f.view.historyId_;
+		consumeLastFreePage(f);
+		const auto result = driveHistory(f, id);
+		CHECK_EQUAL(int(HistoryNavigationState::Failed), int(result.state));
+		CHECK_EQUAL(int(Status::NoMemory), int(result.status));
+		f.view.graphicsRoutine();
+		CHECK(LoopStationView::HistoryPromptState::Result == f.view.historyPromptState_);
+		CHECK_EQUAL(int(Status::NoMemory), int(f.view.historyStatus_));
+		renderLoopOled(f);
+		CHECK(hasText(OLED::main, "TRACK 1"));
+		CHECK(hasText(OLED::main, "NO MEMORY"));
+		CHECK_FALSE(hasText(OLED::main, "UNDONE"));
+		CHECK_FALSE(f.model->engine().state(0).capture);
+		CHECK(f.model->engine().state(0).playing);
+	}
 }

@@ -98,53 +98,85 @@ Status History::reclaimForCapture(SlotId slot, FrameIndex frames) {
 	if (!pages_.ready()) {
 		// History is disabled and owns nothing: only the fixed pool can admit.
 		const uint32_t needed = frames ? pagesForCapture(frames) : 1;
-		return pool_.freePages() >= needed ? Status::Ok : Status::NoMemory;
+		return pool_.freePages() >= needed && pool_.hasCaptureRecord(slot) ? Status::Ok : Status::NoMemory;
 	}
 	// Never evict history out from under an accepted restore; it is bounded
 	// foreground work and capture admission can simply wait for it.
 	if (restore_.active)
 		return Status::Busy;
 	// Manual initial takes reserve no pages at open, but they still need one
-	// grantable page or the first render would complete on empty capacity.
+	// grantable page or the first render would complete on empty capacity. When
+	// optional history can supply more, admission also builds a small cushion so
+	// the next page boundary does not strand an already-admitted take.
 	const uint32_t needed = frames ? pagesForCapture(frames) : 1;
+	const uint32_t desired = frames ? needed : std::max(needed, kManualCaptureHeadroomPages);
 	// Descriptor exhaustion is final once the identity sequence itself is spent;
 	// capture still proceeds untracked rather than being refused for optional history.
 	const bool descriptorsPossible = sequence_ != std::numeric_limits<Generation>::max();
-	const auto ready = [&] {
-		return pool_.freePages() >= needed && (!descriptorsPossible || canAdmitInitialBoundary());
-	};
-	if (ready())
+	const auto coreReady = [&] { return pool_.freePages() >= needed && pool_.hasCaptureRecord(slot); };
+	const auto descriptorReady = [&] { return !descriptorsPossible || canAdmitInitialBoundary(); };
+	const auto fullReady = [&] { return coreReady() && descriptorReady() && pool_.freePages() >= desired; };
+	if (fullReady())
 		return Status::Ok;
 	// Service already-queued reclamation first, with a fixed bound, before
 	// touching another boundary. This keeps each foreground quantum bounded and
-	// gives weak descriptors/pages time to become visible.
+	// gives weak descriptors/pages/records time to become visible.
 	auto processed = serviceRetirement(kAdmissionRetirementBudget);
 	processed += pool_.serviceRetirement(kAdmissionRetirementBudget);
-	if (ready())
+	if (fullReady())
 		return Status::Ok;
-	if (pool_.freePages() < needed) {
-		if (!hasReclaimableBoundary()) {
-			// Pinned snapshots and already-queued work are protected. Only report
-			// Busy while this bounded slice actually made progress.
+	if (!coreReady()) {
+		if (!hasReclaimableBoundary())
 			return processed != 0 ? Status::Busy : Status::NoMemory;
-		}
 		// Retire exactly one oldest optional boundary, then let the foreground
-		// task service its pages/descriptor over subsequent bounded quanta.
+		// task service its pages/record/descriptor over subsequent bounded quanta.
 		reclaimOldestBoundary();
 		serviceRetirement(kAdmissionRetirementBudget);
 		pool_.serviceRetirement(kAdmissionRetirementBudget);
-		return ready() ? Status::Ok : Status::Busy;
+		return fullReady() ? Status::Ok : Status::Busy;
 	}
-	// Pages are sufficient. A missing descriptor only limits optional Undo/Redo
-	// tracking, so reclaim one optional boundary but never refuse capture if none
-	// can be evicted.
-	if (descriptorsPossible && !canAdmitInitialBoundary() && hasReclaimableBoundary()) {
+	if (!descriptorReady()) {
+		// A missing descriptor only limits optional Undo/Redo tracking, so reclaim
+		// one optional boundary but never refuse capture if none can be evicted.
+		if (hasReclaimableBoundary()) {
+			reclaimOldestBoundary();
+			serviceRetirement(kAdmissionRetirementBudget);
+			pool_.serviceRetirement(kAdmissionRetirementBudget);
+			return canAdmitInitialBoundary() ? Status::Ok : Status::Busy;
+		}
+		return Status::Ok;
+	}
+	// Record, pages and descriptor are usable; only the proactive manual cushion is
+	// short. Build it when optional history can be evicted, otherwise admit with
+	// the pages that are genuinely available.
+	if (hasReclaimableBoundary()) {
 		reclaimOldestBoundary();
 		serviceRetirement(kAdmissionRetirementBudget);
 		pool_.serviceRetirement(kAdmissionRetirementBudget);
-		return canAdmitInitialBoundary() ? Status::Ok : Status::Busy;
+		return fullReady() ? Status::Ok : Status::Busy;
 	}
 	return Status::Ok;
+}
+
+Status History::ensureCaptureHeadroom(SlotId slot, uint32_t minimumFreePages) {
+	if (!validSlot(slot) || minimumFreePages == 0)
+		return Status::Ok;
+	// Optional history owns nothing to reclaim, and no work is needed when the
+	// cushion already exists.
+	if (!pages_.ready() || pool_.freePages() >= minimumFreePages)
+		return Status::Ok;
+	if (restore_.active)
+		return Status::Busy;
+	serviceRetirement(kAdmissionRetirementBudget);
+	pool_.serviceRetirement(kAdmissionRetirementBudget);
+	if (pool_.freePages() >= minimumFreePages)
+		return Status::Ok;
+	if (!hasReclaimableBoundary())
+		return Status::Ok; // Protected exhaustion: let the capture's own capacity path decide.
+	reclaimOldestBoundary();
+	serviceRetirement(kAdmissionRetirementBudget);
+	pool_.serviceRetirement(kAdmissionRetirementBudget);
+	return pool_.freePages() >= minimumFreePages ? Status::Ok : Status::Busy;
 }
 void History::reclaimBoundary(unsigned root) {
 	if (root == none || root >= kMaxSessions || !sessions_[root].identity)

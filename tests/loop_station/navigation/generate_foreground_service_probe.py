@@ -36,9 +36,26 @@ def main() -> None:
     ).replace(
         "Song::serviceLoopStationArchive(", "ProbeSong::serviceLoopStationArchive(", 1
     )
+    firmware = args.firmware.read_text()
+    owner = "\n".join(
+        section(firmware, begin, end).replace(
+            begin.lstrip(), "void ProbeOwner::" + begin.lstrip()[len("void ") :], 1
+        )
+        for begin, end in (
+            ("\tvoid beginCheckpointRestores(", "\tvoid startNextRestore("),
+            ("\tvoid startNextRestore(", "\tvoid serviceCheckpointRestore("),
+            ("\tvoid serviceCheckpointRestore(", "\tvoid* allocatePinnedLowSpeed("),
+        )
+    )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(
-        f'#include "{args.support.as_posix()}"\n' + body + "\n" + args.tests.read_text()
+        f'#include "{args.support.as_posix()}"\n'
+        + "using namespace loop_station;\n"
+        + body
+        + "\n"
+        + owner
+        + "\n"
+        + args.tests.read_text()
     )
 
 
