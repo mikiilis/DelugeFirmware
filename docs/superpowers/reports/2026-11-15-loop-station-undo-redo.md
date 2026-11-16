@@ -190,9 +190,18 @@ DBT_NO_SYNC=1 ./dbt build Debug
   `FatFsArchiveStorage`; the test exits/returns, completes the real restore, checks exact audio, one Undo
   to empty/no second boundary, and real edit plus teardown cancellation. `LoopStationForegroundServiceProbe`
   keeps the useful extracted mask handoff/cancellation coverage.
-- Focused CTest after `1d8d96fe`: `LoopStationTests`, `LoopStationForegroundServiceProbe` and all four
-  allocation guards → 6/6 passed, 5.96 s; `git diff --check` clean. Full host/UBSan/Release/Debug
-  reverification remains scheduled after this correction.
+- Full final verification after `1d8d96fe`: complete host build PASS; all CTest **27/27**, 12.37 s;
+  `LoopStationTests` **533/533, 3,910,930 checks**, 4.81 s; allocation guards and OLED/SevenSegment/
+  foreground/encoder/target-stack/physical-button/modal-handoff/save-load probes all passed.
+- `selection_preview_test.py`: **7/7**; `git diff --check` (working tree and index) clean.
+- Existing offline UBSan build: **6/6 pass**, 11.23 s; instrumented `LoopStationTests` **533/533,
+  3,910,930 checks**, no sanitizer report (page/audio guards remain uninstrumented as documented).
+- Release final BIN `build/Release/deluge-v1_3_0-dev+2026_11_14-43f7427a.bin`, 1,947,248 bytes, sha256
+  `61d31372657cf6a2f44afb97df611719652821b9c627d577e7636b2d69af708e`, embedded version
+  `1.3.0-dev-16b6ebee-dirty`; ELF text/data/BSS 1,876,388 / 70,832 / 402,708. Not flashed.
+- Debug current build compiled its changed objects and reached the known baseline link failure
+  (`_close`, `_fstat`, `_isatty`, `_lseek`, `_read`, `_sbrk`, `_write`); the earlier full 330-step
+  Debug compile remains historical evidence, and no Debug artifact exists. No linker/toolchain change.
 
 ## Named TDD evidence, fix rounds and bounds (from this plan's task reports)
 
@@ -237,7 +246,7 @@ regenerated for this documentation task.
   `LoopSnapshots RetiredPinnedSourceIsNotAPublicationCandidate`.
 
 Historical Task 1–6 aggregate before the consolidated final wave: `LoopStationTests` 499/499,
-3,907,835 checks; registered CTest 27/27. The current final totals are 531/531, 3,910,753 checks and
+3,907,835 checks; registered CTest 27/27. The current final totals are 533/533, 3,910,930 checks and
 27/27 CTest in the consolidated section above.
 
 Concrete ownership/allocation bounds (from source, unchanged by this feature):
