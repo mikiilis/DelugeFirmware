@@ -25,6 +25,14 @@ public:
 		snapshots_ = snapshots;
 	}
 	Status beginInitial(SlotId slot, FrameIndex durationLimit);
+	// Bounded foreground admission for a new initial take. Delegates to the
+	// installed History observer; without history it cannot be resource-starved.
+	Status prepareInitialCapture(SlotId slot, FrameIndex frames);
+	// Constant-time, allocation-free admission preflight used on every path.
+	bool canBeginInitialCapture(SlotId slot, FrameIndex frames) const { return pool_.canBeginCapture(slot, frames); }
+	bool canPossiblyAdmitInitialCapture(SlotId slot, FrameIndex frames) const {
+		return pool_.captureAdmissionPossible(slot, frames);
+	}
 	Status finishInitial(SlotId slot, PhraseHandle& handle);
 	Status attach(SlotId slot, PhraseHandle handle);
 	// Replace a sealed phrase at a serialized boundary while preserving transport.

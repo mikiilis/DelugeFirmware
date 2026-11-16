@@ -395,3 +395,139 @@ TEST(LoopHistory, NonemptyCurrentRedoCannotSkipAnEvictedInteriorBoundary) {
 		serviceRetirement(16);
 	CHECK_FALSE(history.retirementPending());
 }
+// I4: optional retained history must not starve a new capture. The same slot's
+// retained initial is evictable, and a manual take gets a real page grant rather
+// than opening a zero-page recording that capacity-completes immediately.
+TEST(LoopHistory, captureAdmissionReclaimsSameSlotRetainedInitial) {
+	constexpr FrameIndex perPage = kPageBytes / sizeof(Frame);
+	CHECK(Status::Ok == history.initialize(arena));
+	const auto retained = phrase(0, 16 * perPage);
+	CHECK_EQUAL(0, pool.freePages());
+	restoreStep(0, false); // Undo the only initial boundary, retaining it for Redo.
+	CHECK_EQUAL(0, pool.freePages());
+	CHECK_EQUAL(1, history.retainedSessions());
+	Status admitted = Status::Busy;
+	for (unsigned i = 0; i < 8 && admitted == Status::Busy; ++i)
+		admitted = history.reclaimForCapture(0, 0);
+	CHECK_EQUAL(int(Status::Ok), int(admitted));
+	CHECK(pool.freePages() >= 1);
+	CHECK(Status::Ok == audio.beginInitial(0, 0));
+	CHECK(Status::Ok == pool.beginRenderRound(audio.manualParticipants()));
+	const auto capacity = audio.initialCapacity(0);
+	CHECK(capacity.has_value());
+	CHECK_EQUAL(int(perPage), int(*capacity)); // A real page was admitted.
+	const Frame input{9, -9};
+	Frame output{};
+	audio.render(0, {&input, 1}, {&output, 1});
+	CHECK_EQUAL(1, audio.recordedInitialFrames(0));
+	CHECK(Status::Ok == audio.setCaptureGate(0, false));
+	(void)retained;
+}
+// I4: cross-slot retained history is reclaimed, while another slot's live phrase
+// (never part of a retained optional version) is untouched.
+TEST(LoopHistory, captureAdmissionReclaimsCrossSlotInitialWithoutTouchingLivePhrase) {
+	constexpr FrameIndex perPage = kPageBytes / sizeof(Frame);
+	CHECK(Status::Ok == history.initialize(arena));
+	phrase(0, 8 * perPage);
+	restoreStep(0, false); // Retain slot 0's initial for Redo.
+	const auto live = phrase(1, 8 * perPage);
+	CHECK_EQUAL(0, pool.freePages());
+	Status admitted = Status::Busy;
+	for (unsigned i = 0; i < 8 && admitted == Status::Busy; ++i)
+		admitted = history.reclaimForCapture(2, 0);
+	CHECK_EQUAL(int(Status::Ok), int(admitted));
+	CHECK(pool.freePages() >= 1);
+	CHECK_EQUAL(8 * perPage, pool.length(live));
+	CHECK_EQUAL(1, pool.frame(live, 0)->l);
+	CHECK_EQUAL(-1, pool.frame(live, 0)->r);
+	CHECK(audio.playing(1));
+	CHECK(Status::Ok == audio.beginInitial(2, 0));
+}
+// I4: a retained overdub after-version is evictable for another slot's capture,
+// but the currently published phrase remains exact and playing.
+TEST(LoopHistory, captureAdmissionReclaimsRetainedOverdubAndProtectsCurrentAudio) {
+	constexpr FrameIndex perPage = kPageBytes / sizeof(Frame);
+	CHECK(Status::Ok == history.initialize(arena));
+	phrase(0, 6 * perPage);
+	dub(0, 1);
+	CHECK(Status::Ok == audio.setCaptureGate(0, false));
+	restoreStep(0, false); // Undo the overdub: previous version is retained, current restored.
+	const auto live = pool.sealedHandle(0);
+	CHECK(live.valid());
+	CHECK_EQUAL(6 * perPage, pool.length(live));
+	CHECK_EQUAL(1, pool.frame(live, 0)->l);
+	CHECK(audio.playing(0));
+	phrase(1, 4 * perPage); // Fill the remaining live pages with a protected live phrase.
+	CHECK_EQUAL(0, pool.freePages());
+	Status admitted = Status::Busy;
+	unsigned attempts = 0;
+	while (admitted == Status::Busy && attempts < 16) {
+		admitted = history.reclaimForCapture(2, 5 * perPage);
+		++attempts;
+	}
+	CHECK_EQUAL(int(Status::Ok), int(admitted));
+	CHECK(attempts >= 2); // More than one bounded foreground quantum.
+	CHECK(pool.freePages() >= 5);
+	// Current audio (and the other slot's live phrase) stayed owned and exact.
+	CHECK_EQUAL(6 * perPage, pool.length(live));
+	CHECK_EQUAL(1, pool.frame(live, 0)->l);
+	CHECK_EQUAL(-1, pool.frame(live, 0)->r);
+	CHECK(audio.playing(0));
+	CHECK_EQUAL(4 * perPage, pool.length(pool.sealedHandle(1)));
+	CHECK(audio.playing(1));
+	CHECK(Status::Ok == audio.beginInitial(2, 5 * perPage));
+}
+// I4: optional retained descriptors are reclaimed before a new initial take, so
+// admission is not refused merely because reachable history owns the table.
+TEST(LoopHistory, captureAdmissionReclaimsRetainedDescriptor) {
+	constexpr FrameIndex perPage = kPageBytes / sizeof(Frame);
+	std::vector<std::byte> larger(64 * kPageBytes);
+	CHECK(Status::Ok == history.initialize(larger));
+	phrase(0, perPage);
+	for (unsigned i = 0; i < 63; ++i) {
+		CHECK(Status::Ok == audio.setCaptureGate(0, true));
+		const Frame input{3, -3};
+		Frame output{};
+		audio.render(0, {&input, 1}, {&output, 1});
+		CHECK(Status::Ok == audio.setCaptureGate(0, false));
+	}
+	CHECK_EQUAL(64, history.retainedSessions());
+	CHECK_FALSE(history.canAdmitInitialBoundary());
+	Status admitted = Status::Busy;
+	for (unsigned i = 0; i < 8 && admitted == Status::Busy; ++i)
+		admitted = history.reclaimForCapture(1, 0);
+	CHECK_EQUAL(int(Status::Ok), int(admitted));
+	CHECK(history.canAdmitInitialBoundary());
+	CHECK_EQUAL(63, history.retainedSessions());
+	CHECK(Status::Ok == audio.beginInitial(1, 0));
+}
+// I4: a pinned snapshot keeps its version readable; capture admission reports
+// protected exhaustion instead of reclaiming it, then succeeds after unpin.
+TEST(LoopHistory, captureAdmissionPreservesPinnedSnapshotUntilReleased) {
+	constexpr FrameIndex perPage = kPageBytes / sizeof(Frame);
+	CHECK(Status::Ok == history.initialize(arena));
+	std::vector<std::byte> snapshotBytes(4 * kPageBytes);
+	CHECK(Status::Ok == snapshots.initialize(snapshotBytes));
+	const auto handle = phrase(0, 16 * perPage);
+	SnapshotId id;
+	CHECK(Status::Ok == snapshots.request(0, handle.generation, id));
+	CHECK(Status::Ok == snapshots.preserve(0));
+	restoreStep(0, false); // Retain the pinned initial version for Redo.
+	CHECK_EQUAL(0, pool.freePages());
+	Status admitted = Status::Busy;
+	for (unsigned i = 0; i < 8 && admitted == Status::Busy; ++i)
+		admitted = history.reclaimForCapture(0, 0);
+	CHECK_EQUAL(int(Status::NoMemory), int(admitted)); // Pinned pages are protected.
+	CHECK_EQUAL(16 * perPage, pool.length(handle));
+	std::array<Frame, 4> staging{};
+	CHECK(Status::Ok == snapshots.read(id, 0, staging));
+	CHECK_EQUAL(1, staging[0].l);
+	CHECK_EQUAL(-1, staging[0].r);
+	CHECK_EQUAL(-4, staging[3].r);
+	snapshots.release(id);
+	for (unsigned i = 0; i < 8 && admitted != Status::Ok; ++i)
+		admitted = history.reclaimForCapture(0, 0);
+	CHECK_EQUAL(int(Status::Ok), int(admitted));
+	CHECK(pool.freePages() >= 1);
+	CHECK(Status::Ok == audio.beginInitial(0, 0));
+}

@@ -24,6 +24,13 @@ public:
 	bool activeSessionChanged(SlotId slot) const;
 	bool activeSessionComplete(SlotId slot) const;
 	bool canAdmitInitialBoundary() const;
+	// Bounded foreground admission for a new capture that optional history may be
+	// starving. `frames == 0` is a manual initial take and needs at least one
+	// grantable page. Ok: proceed; Busy: reclamation is queued/in progress and the
+	// caller must preserve the accepted intent and retry; NoMemory: genuine
+	// protected-resource exhaustion. Never reclaims live phrases, rollback state,
+	// pinned snapshots, an active restore, or active capture sessions.
+	Status reclaimForCapture(SlotId slot, FrameIndex frames);
 	bool canUndo(SlotId slot) const;
 	bool canRedo(SlotId slot) const;
 	Status requestRestore(SlotId slot, bool redo, RestoreId& id);
@@ -57,10 +64,12 @@ private:
 	void losePages(unsigned session);
 	void enqueueRetirement(unsigned root);
 	// Shared bounded reclaim policy for descriptor/page pressure: retire exactly
-	// one boundary. `reclaimOldestBoundary` is the admission-path selection;
-	// `reclaimBoundary` applies the policy to a chosen boundary root.
-	void reclaimOldestBoundary();
+	// one boundary. `reclaimOldestBoundary` is the admission-path selection and
+	// reports whether it found an evictable boundary; `reclaimBoundary` applies the
+	// policy to a chosen boundary root.
+	bool reclaimOldestBoundary();
 	void reclaimBoundary(unsigned root);
+	bool hasReclaimableBoundary() const;
 	// Retire a boundary together with every dependent successor so a later Redo
 	// cannot skip the removed step. Used for interior boundaries.
 	void fenceForward(unsigned root);

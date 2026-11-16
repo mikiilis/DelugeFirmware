@@ -48,6 +48,9 @@ public:
 	void cancelHeldGestures();
 	// Serialized sample-boundary owner: call before selecting each render window.
 	void service(SampleClock now, const ClockMap& clock);
+	// Foreground-only retry of a capture admission deferred because optional
+	// history owned its pages/descriptors. Never call from the audio callback.
+	void serviceCaptureAdmission(SampleClock now, const ClockMap& clock);
 	// Detach a deleted/unbound slot immediately; bounded rollback retirement may defer clear.
 	void removeSlot(SlotId slot, SampleClock now, const ClockMap& clock);
 	void phraseReplaced(SlotId slot, FrameIndex length, bool playing);
@@ -76,6 +79,9 @@ private:
 		Deadline deadline{}, duration{};
 		SampleClock pressTime = 0, tapTime = 0, initialStart = 0;
 		bool durationActive = false, held = false, tap = false;
+		// The accepted Initial intent is retained while bounded foreground
+		// reclamation runs; the audio-path service() must not execute or reclaim it.
+		bool admissionDeferred = false;
 	};
 	Status execute(SlotId slot, PendingAction action, SampleClock now, const ClockMap& clock);
 	void queue(SlotId slot, PendingAction action, Deadline deadline);

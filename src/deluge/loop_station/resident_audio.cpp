@@ -16,6 +16,14 @@ int32_t addSaturated(int32_t backing, int32_t input) {
 }
 } // namespace
 
+Status ResidentAudio::prepareInitialCapture(SlotId slot, FrameIndex frames) {
+	if (history_)
+		return history_->reclaimForCapture(slot, frames);
+	// Without optional history there is nothing to reclaim: only the fixed pool
+	// can admit, so report protected exhaustion instead of deferring forever.
+	return pool_.canBeginCapture(slot, frames) ? Status::Ok : Status::NoMemory;
+}
+
 Status ResidentAudio::beginInitial(SlotId slot, FrameIndex durationLimit) {
 	if (!validSlot(slot) || !rollback_.ready())
 		return Status::Invalid;

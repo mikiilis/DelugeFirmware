@@ -149,6 +149,35 @@ Status PagePool::beginPhrase(SlotId slot, FrameIndex reservedFrames) {
 	return Status::Ok;
 }
 
+bool PagePool::captureAdmissionPossible(SlotId slot, FrameIndex reservedFrames) const {
+	if (!capacity_ || !validSlot(slot))
+		return false;
+	const auto needed = reservedFrames ? pagesFor(reservedFrames) : 1;
+	if (needed > mapStride_)
+		return false;
+	const unsigned record = activeRecord_[slot];
+	if (record < kRecordCount)
+		return !(slots_[record].active || slots_[record].sealed || slots_[record].retiring);
+	for (unsigned candidate = 0; candidate < kRecordCount; ++candidate) {
+		if (slots_[candidate].active || slots_[candidate].sealed || slots_[candidate].retiring
+		    || slots_[candidate].pages || slots_[candidate].owner != kInvalidSlot)
+			continue;
+		bool referenced = false;
+		for (SlotId owner = 0; owner < kTrackCount; ++owner)
+			referenced |= activeRecord_[owner] == candidate;
+		if (!referenced)
+			return true;
+	}
+	return false;
+}
+
+bool PagePool::canBeginCapture(SlotId slot, FrameIndex reservedFrames) const {
+	if (!captureAdmissionPossible(slot, reservedFrames))
+		return false;
+	const auto needed = reservedFrames ? pagesFor(reservedFrames) : 1;
+	return needed <= freeCount_;
+}
+
 FrameIndex PagePool::appendCapacity(SlotId slot) const {
 	if (!validSlot(slot) || activeRecord_[slot] >= kRecordCount || !slots_[activeRecord_[slot]].active)
 		return 0;

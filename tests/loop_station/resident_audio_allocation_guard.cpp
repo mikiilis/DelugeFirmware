@@ -72,6 +72,10 @@ int main() {
 			return 12;
 		if (audio.detachForHistory(slot) != Status::Ok)
 			return 12;
+		// Return the retained pages so the later manual take can be admitted with
+		// a real page (I4: a manual take never opens as a zero-page capture).
+		if (pool.release(retained) != Status::Ok)
+			return 12;
 	}
 	Engine engine(audio, rollback);
 	Transpose transpose;

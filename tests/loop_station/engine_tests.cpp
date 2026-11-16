@@ -1,6 +1,7 @@
 #include "CppUTest/TestHarness.h"
 #include "deluge/loop_station/engine.h"
 #include "deluge/loop_station/epochs.h"
+#include "deluge/loop_station/history.h"
 #include <array>
 #include <vector>
 using namespace loop_station;
@@ -947,4 +948,155 @@ TEST(LoopEngine, historyEpochTracksSessionsNotSamples) {
 	CHECK(stopped != closed);
 	engine.phraseReplaced(0, 5, true);
 	CHECK(engine.historyEpoch(0) != stopped);
+}
+
+namespace {
+struct CaptureAdmissionFixture {
+	static constexpr FrameIndex perPage = kPageBytes / sizeof(Frame);
+	std::vector<std::byte> backing, scratch, historyStorage;
+	PagePool pool;
+	GestureRollback rollback{pool};
+	History history{pool, rollback};
+	ResidentAudio audio{pool, rollback};
+	Engine engine{audio, rollback};
+	ClockMap clock;
+	void setup(unsigned pages, unsigned historyPages) {
+		backing.resize(pages * kPageBytes);
+		scratch.resize(GestureRollback::requiredBytes());
+		historyStorage.resize(historyPages * kPageBytes);
+		CHECK(Status::Ok == pool.initialize(backing));
+		CHECK(Status::Ok == rollback.initialize(scratch));
+		CHECK(Status::Ok == history.initialize(historyStorage));
+		audio.setWriteObservers(&history, nullptr);
+		auto settings = defaultSettings();
+		settings.startAction.mode = settings.stopAction.mode = ActionMode::Immediate;
+		CHECK(Status::Ok == engine.dispatch(Command::configure(settings), 0, clock));
+	}
+	PhraseHandle makePhrase(SlotId slot, FrameIndex frames) {
+		std::vector<Frame> input(frames), output(frames);
+		for (FrameIndex i = 0; i < frames; ++i)
+			input[i] = {int32_t(i + 1), -int32_t(i + 1)};
+		CHECK(Status::Ok == audio.beginInitial(slot, frames));
+		audio.render(slot, input, output);
+		PhraseHandle handle;
+		CHECK(Status::Ok == audio.finishInitial(slot, handle));
+		CHECK(Status::Ok == audio.start(slot, false));
+		return handle;
+	}
+	PhraseHandle makeRetainedInitial(SlotId slot, FrameIndex frames) {
+		const auto handle = makePhrase(slot, frames);
+		RestoreId id{};
+		CHECK(Status::Ok == history.requestRestore(slot, false, id));
+		Status reserved = Status::Busy;
+		for (unsigned attempt = 0; attempt < 64 && reserved == Status::Busy; ++attempt)
+			reserved = history.reserveRestore(id, 8);
+		CHECK_EQUAL(int(Status::Ok), int(reserved));
+		Status serviced = Status::Busy;
+		while (serviced == Status::Busy)
+			serviced = history.serviceRestore(id, 8);
+		CHECK_EQUAL(int(Status::Ok), int(serviced));
+		CHECK(Status::Ok == history.commitRestore(id));
+		CHECK(Status::Ok == audio.detachForHistory(slot));
+		history.mappingReplaced(slot);
+		return handle;
+	}
+	void press(SlotId slot, SampleClock now) {
+		CHECK(Status::Ok == engine.dispatch({CommandType::Press, slot}, now, clock));
+	}
+};
+} // namespace
+
+TEST_GROUP(LoopCaptureAdmission){};
+
+// I4: a fixed-duration take must retain accepted pad intent across bounded
+// foreground reclamation instead of failing immediately or needing a new press.
+TEST(LoopCaptureAdmission, fixedDurationInitialWaitsForBoundedForegroundReclamation) {
+	CaptureAdmissionFixture f;
+	f.setup(200, 64);
+	f.makeRetainedInitial(1, 180 * CaptureAdmissionFixture::perPage);
+	CHECK_EQUAL(20, f.pool.freePages());
+	Command duration{CommandType::SetDuration};
+	duration.slot = 0;
+	duration.durationBars = 1;
+	CHECK(Status::Ok == f.engine.dispatch(duration, 0, f.clock));
+	const auto needed = f.clock.samplesForBars(1);
+	CHECK(needed > 20 * CaptureAdmissionFixture::perPage);
+	f.press(0, 100);
+	auto state = f.engine.state(0);
+	CHECK(state.pending);
+	CHECK(PendingAction::Initial == state.action);
+	CHECK_FALSE(state.capture);
+	CHECK_FALSE(state.hasPhrase);
+	CHECK_EQUAL(int(Status::Ok), int(state.error)); // Accepted, not refused.
+	unsigned quanta = 0;
+	while (!f.engine.state(0).capture && quanta < 32) {
+		f.engine.serviceCaptureAdmission(100, f.clock);
+		++quanta;
+	}
+	CHECK(quanta > 1); // Reclamation genuinely spanned bounded foreground quanta.
+	state = f.engine.state(0);
+	CHECK(state.capture);
+	CHECK_FALSE(state.pending);
+	CHECK_FALSE(state.playing);
+	CHECK_FALSE(state.hasPhrase); // Nothing published before admission completes.
+	CHECK_EQUAL(int(Status::Ok), int(state.error));
+}
+// I4: a manual take must not open a zero-page capture that capacity-completes
+// immediately while optional history owns every live page.
+TEST(LoopCaptureAdmission, manualInitialAdmitsARealPageInsteadOfZeroPageCompletion) {
+	CaptureAdmissionFixture f;
+	f.setup(4, 8);
+	f.makeRetainedInitial(1, 4 * CaptureAdmissionFixture::perPage);
+	CHECK_EQUAL(0, f.pool.freePages());
+	f.press(0, 100);
+	auto state = f.engine.state(0);
+	CHECK_EQUAL(int(Status::Ok), int(state.error)); // Accepted, never refused for optional history.
+	for (unsigned i = 0; i < 8 && !f.engine.state(0).capture; ++i)
+		f.engine.serviceCaptureAdmission(100, f.clock);
+	state = f.engine.state(0);
+	CHECK(state.capture);
+	CHECK_FALSE(state.playing);
+	CHECK_FALSE(state.hasPhrase);
+	CHECK(Status::Ok == f.pool.beginRenderRound(f.audio.manualParticipants()));
+	const auto capacity = f.audio.initialCapacity(0);
+	CHECK(capacity.has_value());
+	CHECK_EQUAL(int(CaptureAdmissionFixture::perPage), int(*capacity));
+	const Frame input{9, -9};
+	Frame output{};
+	f.audio.render(0, {&input, 1}, {&output, 1});
+	CHECK_EQUAL(1, f.audio.recordedInitialFrames(0));
+	CHECK(f.engine.state(0).capture); // No capacity completion from the admitted page.
+}
+// I4: if no optional history can free the pages, protected exhaustion remains an
+// honest failure and the live phrase is preserved.
+TEST(LoopCaptureAdmission, protectedExhaustionFailsHonestlyAndPreservesLivePhrase) {
+	CaptureAdmissionFixture f;
+	f.setup(4, 8);
+	const auto live = f.makePhrase(1, 4 * CaptureAdmissionFixture::perPage);
+	CHECK_EQUAL(0, f.pool.freePages());
+	f.press(0, 100);
+	for (unsigned i = 0; i < 8 && f.engine.state(0).error == Status::Ok; ++i)
+		f.engine.serviceCaptureAdmission(100, f.clock);
+	const auto state = f.engine.state(0);
+	CHECK_FALSE(state.capture);
+	CHECK_FALSE(state.pending);
+	CHECK_EQUAL(int(Status::NoMemory), int(state.error));
+	CHECK_EQUAL(4 * CaptureAdmissionFixture::perPage, f.pool.length(live));
+	CHECK_EQUAL(1, f.pool.frame(live, 0)->l);
+	CHECK(f.audio.playing(1));
+}
+// I4: disabled history owns nothing, so admission must not defer forever waiting
+// for a reclamation source that does not exist.
+TEST(LoopCaptureAdmission, disabledHistoryReportsHonestExhaustion) {
+	CaptureAdmissionFixture f;
+	f.setup(2, 0);
+	f.makePhrase(1, 2 * CaptureAdmissionFixture::perPage);
+	CHECK_EQUAL(0, f.pool.freePages());
+	f.press(0, 100);
+	for (unsigned i = 0; i < 4 && f.engine.state(0).error == Status::Ok; ++i)
+		f.engine.serviceCaptureAdmission(100, f.clock);
+	const auto state = f.engine.state(0);
+	CHECK_FALSE(state.capture);
+	CHECK_FALSE(state.pending);
+	CHECK_EQUAL(int(Status::NoMemory), int(state.error));
 }

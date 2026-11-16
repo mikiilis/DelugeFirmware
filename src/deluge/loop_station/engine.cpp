@@ -94,6 +94,7 @@ void Engine::cancelPending(SlotId slot) {
 		audio_.setOneShotCompletion(slot, settings_.tracks[slot].playback == PlaybackMode::OneShot);
 	slots_[slot].state.pending = false;
 	slots_[slot].state.action = PendingAction::None;
+	slots_[slot].admissionDeferred = false;
 }
 void Engine::close(SlotId slot, bool cancel) {
 	if (slots_[slot].state.playing && slots_[slot].state.capture)
@@ -107,6 +108,7 @@ void Engine::close(SlotId slot, bool cancel) {
 }
 Status Engine::fail(SlotId slot, Status status) {
 	auto& s = slots_[slot];
+	s.admissionDeferred = false;
 	close(slot, false);
 	if (s.state.capture && !s.state.playing)
 		complete(slot, true, false);
@@ -161,7 +163,26 @@ Status Engine::execute(SlotId slot, PendingAction action, SampleClock now, const
 	switch (action) {
 	case PendingAction::Initial: {
 		const auto bars = settings_.tracks[slot].recordDurationBars;
-		const auto status = audio_.beginInitial(slot, bars ? clock.samplesForBars(bars) : 0);
+		const auto frames = bars ? clock.samplesForBars(bars) : 0;
+		s.admissionDeferred = false;
+		// Never reclaim here: service() also runs in the audio callback. If optional
+		// history owns the pages, retain the accepted press and let the foreground
+		// owner reclaim and retry through serviceCaptureAdmission().
+		if (!audio_.canBeginInitialCapture(slot, frames)) {
+			if (!audio_.canPossiblyAdmitInitialCapture(slot, frames))
+				return fail(slot, Status::NoMemory); // Genuinely impossible, not reclaimable.
+			s.admissionDeferred = true;
+			queue(slot, PendingAction::Initial, Deadline{true, now, {}});
+			return Status::Ok;
+		}
+		const auto status = audio_.beginInitial(slot, frames);
+		if (status == Status::NoMemory) {
+			if (!audio_.canPossiblyAdmitInitialCapture(slot, frames))
+				return fail(slot, status);
+			s.admissionDeferred = true;
+			queue(slot, PendingAction::Initial, Deadline{true, now, {}});
+			return Status::Ok;
+		}
 		if (status != Status::Ok)
 			return fail(slot, status);
 		setCapture(slot, true);
@@ -223,6 +244,30 @@ void Engine::removeSlot(SlotId slot, SampleClock now, const ClockMap& clock) {
 	queue(slot, PendingAction::Clear, {true, now, {}});
 	service(now, clock);
 }
+void Engine::serviceCaptureAdmission(SampleClock now, const ClockMap& clock) {
+	for (SlotId id = 0; id < kTrackCount; ++id) {
+		auto& s = slots_[id];
+		if (!s.admissionDeferred)
+			continue;
+		if (!s.state.pending || s.state.action != PendingAction::Initial) {
+			s.admissionDeferred = false;
+			continue;
+		}
+		const auto bars = settings_.tracks[id].recordDurationBars;
+		const auto frames = bars ? clock.samplesForBars(bars) : 0;
+		const auto admitted = audio_.prepareInitialCapture(id, frames);
+		if (admitted == Status::Busy)
+			continue; // Bounded reclamation remains queued; keep the accepted press.
+		if (admitted != Status::Ok) {
+			s.admissionDeferred = false;
+			fail(id, admitted);
+			continue;
+		}
+		// Foreground only: this may reclaim optional history; never the audio path.
+		cancelPending(id);
+		execute(id, PendingAction::Initial, now, clock);
+	}
+}
 void Engine::service(SampleClock now, const ClockMap& clock) {
 	rollback_.advance(now);
 	// Bounded global work; clearing never releases a phrase with rollback readers.
@@ -252,7 +297,7 @@ void Engine::service(SampleClock now, const ClockMap& clock) {
 			else if (event.status != Status::Ok)
 				s.state.error = event.status;
 		}
-		const bool userDue = s.state.pending && s.deadline.sampleAt(clock) <= now;
+		const bool userDue = s.state.pending && !s.admissionDeferred && s.deadline.sampleAt(clock) <= now;
 		const bool durationDue = s.durationActive && s.duration.sampleAt(clock) <= now;
 		if (durationDue && (!userDue || s.duration.sampleAt(clock) <= s.deadline.sampleAt(clock))) {
 			// An explicit lifecycle policy remains authoritative if capacity/duration wins.

@@ -2,6 +2,13 @@
 #include <algorithm>
 #include <limits>
 namespace loop_station {
+namespace {
+constexpr uint32_t kAdmissionRetirementBudget = 16;
+constexpr uint32_t kFramesPerPage = kPageBytes / sizeof(Frame);
+uint32_t pagesForCapture(FrameIndex frames) {
+	return static_cast<uint32_t>((static_cast<uint64_t>(frames) + kFramesPerPage - 1) / kFramesPerPage);
+}
+} // namespace
 Status History::initialize(std::span<std::byte> storage) {
 	return pages_.initialize(storage);
 }
@@ -55,7 +62,7 @@ void History::enqueueRetirement(unsigned root) {
 			return;
 		}
 }
-void History::reclaimOldestBoundary() {
+bool History::reclaimOldestBoundary() {
 	unsigned oldest = none;
 	for (SlotId owner = 0; owner < kTrackCount; ++owner) {
 		const auto root = slots_[owner].head;
@@ -67,7 +74,77 @@ void History::reclaimOldestBoundary() {
 		if (oldest == none || candidate.identity < sessions_[oldest].identity)
 			oldest = root;
 	}
+	if (oldest == none)
+		return false;
 	reclaimBoundary(oldest);
+	return true;
+}
+
+bool History::hasReclaimableBoundary() const {
+	for (SlotId owner = 0; owner < kTrackCount; ++owner) {
+		const auto root = slots_[owner].head;
+		if (root == none || root >= kMaxSessions)
+			continue;
+		const auto& candidate = sessions_[root];
+		if (candidate.identity && !candidate.active && !candidate.retiring)
+			return true;
+	}
+	return false;
+}
+
+Status History::reclaimForCapture(SlotId slot, FrameIndex frames) {
+	if (!validSlot(slot))
+		return Status::Invalid;
+	if (!pages_.ready()) {
+		// History is disabled and owns nothing: only the fixed pool can admit.
+		const uint32_t needed = frames ? pagesForCapture(frames) : 1;
+		return pool_.freePages() >= needed ? Status::Ok : Status::NoMemory;
+	}
+	// Never evict history out from under an accepted restore; it is bounded
+	// foreground work and capture admission can simply wait for it.
+	if (restore_.active)
+		return Status::Busy;
+	// Manual initial takes reserve no pages at open, but they still need one
+	// grantable page or the first render would complete on empty capacity.
+	const uint32_t needed = frames ? pagesForCapture(frames) : 1;
+	// Descriptor exhaustion is final once the identity sequence itself is spent;
+	// capture still proceeds untracked rather than being refused for optional history.
+	const bool descriptorsPossible = sequence_ != std::numeric_limits<Generation>::max();
+	const auto ready = [&] {
+		return pool_.freePages() >= needed && (!descriptorsPossible || canAdmitInitialBoundary());
+	};
+	if (ready())
+		return Status::Ok;
+	// Service already-queued reclamation first, with a fixed bound, before
+	// touching another boundary. This keeps each foreground quantum bounded and
+	// gives weak descriptors/pages time to become visible.
+	auto processed = serviceRetirement(kAdmissionRetirementBudget);
+	processed += pool_.serviceRetirement(kAdmissionRetirementBudget);
+	if (ready())
+		return Status::Ok;
+	if (pool_.freePages() < needed) {
+		if (!hasReclaimableBoundary()) {
+			// Pinned snapshots and already-queued work are protected. Only report
+			// Busy while this bounded slice actually made progress.
+			return processed != 0 ? Status::Busy : Status::NoMemory;
+		}
+		// Retire exactly one oldest optional boundary, then let the foreground
+		// task service its pages/descriptor over subsequent bounded quanta.
+		reclaimOldestBoundary();
+		serviceRetirement(kAdmissionRetirementBudget);
+		pool_.serviceRetirement(kAdmissionRetirementBudget);
+		return ready() ? Status::Ok : Status::Busy;
+	}
+	// Pages are sufficient. A missing descriptor only limits optional Undo/Redo
+	// tracking, so reclaim one optional boundary but never refuse capture if none
+	// can be evicted.
+	if (descriptorsPossible && !canAdmitInitialBoundary() && hasReclaimableBoundary()) {
+		reclaimOldestBoundary();
+		serviceRetirement(kAdmissionRetirementBudget);
+		pool_.serviceRetirement(kAdmissionRetirementBudget);
+		return canAdmitInitialBoundary() ? Status::Ok : Status::Busy;
+	}
+	return Status::Ok;
 }
 void History::reclaimBoundary(unsigned root) {
 	if (root == none || root >= kMaxSessions || !sessions_[root].identity)
