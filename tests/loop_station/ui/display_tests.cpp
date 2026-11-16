@@ -295,6 +295,7 @@ TEST(LoopSettingsDisplay, ConfirmationSurvivesGraphicsRefreshOnOledAndSevenSegme
 	{
 		loop_ui_test::Fixture f;
 		f.screen.oled = false;
+		f.screen.setText("LOOP"); // the resting text opened() installs on a real 7SEG
 		f.recordPhrase();
 		f.view.padAction(0, 7, 100);
 		CHECK(f.view.buttonAction(BACK, true, false) == ActionResult::DEALT_WITH);
@@ -485,4 +486,124 @@ TEST(LoopSettingsDisplay, ReturnFromMenuCannotReviveOldConfirmation) {
 	CHECK_EQUAL(2, f.screen.scrollingTexts.size());
 	CHECK_EQUAL(int(HistoryNavigationState::Idle), int(f.model->historyNavigationResult().state));
 	CHECK_TRUE(f.model->engine().state(0).hasPhrase);
+}
+
+TEST(LoopSettingsDisplay, FailedSevenSegmentPromptInstallCannotConfirmAndRetriesAfterRecovery) {
+	loop_ui_test::Fixture f;
+	f.screen.oled = false;
+	f.screen.setText("LOOP"); // the resting text opened() installs on a real 7SEG
+	f.recordPhrase();
+	f.view.padAction(0, 7, 100);
+	f.screen.failScrollingAllocation = true;
+	CHECK(f.view.buttonAction(BACK, true, false) == ActionResult::DEALT_WITH);
+	CHECK(f.view.buttonAction(BACK, false, false) == ActionResult::DEALT_WITH);
+	CHECK(LoopStationView::HistoryPromptState::Confirm == f.view.historyPromptState_);
+	CHECK_FALSE(f.view.historyFeedbackOwned_);
+	CHECK_FALSE(f.screen.overlayVisible());
+	// Failed feedback must not authorize the second released BACK.
+	CHECK(f.view.buttonAction(BACK, true, false) == ActionResult::DEALT_WITH);
+	CHECK(f.view.buttonAction(BACK, false, false) == ActionResult::DEALT_WITH);
+	CHECK(LoopStationView::HistoryPromptState::Confirm == f.view.historyPromptState_);
+	CHECK_EQUAL(int(HistoryNavigationState::Idle), int(f.model->historyNavigationResult().state));
+	CHECK(f.model->engine().state(0).hasPhrase);
+
+	f.screen.failScrollingAllocation = false;
+	f.view.graphicsRoutine();
+	CHECK(f.view.historyFeedbackOwned_);
+	CHECK(f.screen.overlayVisible());
+	POINTERS_EQUAL(f.screen.currentScrollingLayer, f.view.historyFeedbackLayer_);
+	const auto installs = f.screen.scrollingTexts.size();
+	f.view.graphicsRoutine();
+	CHECK_EQUAL(installs, f.screen.scrollingTexts.size()); // Refresh does not restart scrolling.
+	CHECK(f.view.buttonAction(BACK, true, false) == ActionResult::DEALT_WITH);
+	CHECK(f.view.buttonAction(BACK, false, false) == ActionResult::DEALT_WITH);
+	CHECK(LoopStationView::HistoryPromptState::Applying == f.view.historyPromptState_);
+}
+
+TEST(LoopSettingsDisplay, AllocatorYieldDuringInstallDoesNotAdoptStaleFeedback) {
+	loop_ui_test::Fixture f;
+	f.screen.oled = false;
+	f.screen.setText("LOOP"); // the resting text opened() installs on a real 7SEG
+	f.recordPhrase();
+	f.view.padAction(0, 7, 100);
+	bool first = true;
+	f.screen.onScrollingAllocation = [&] {
+		if (first) {
+			first = false;
+			// The production allocator may yield and re-enter while installing.
+			f.view.cancelHistoryConfirmation();
+		}
+	};
+	CHECK(f.view.buttonAction(BACK, true, false) == ActionResult::DEALT_WITH);
+	// The prompt died mid-allocation; the freshly installed layer must not be
+	// adopted as visible stale feedback.
+	CHECK(LoopStationView::HistoryPromptState::None == f.view.historyPromptState_);
+	CHECK_FALSE(f.view.historyFeedbackOwned_);
+	CHECK(f.view.historyFeedbackLayer_ == nullptr);
+	CHECK_FALSE(f.screen.overlayVisible());
+	CHECK_EQUAL(0u, f.screen.overlayStack.size());
+	STRCMP_EQUAL("LOOP", f.screen.text.c_str());
+}
+
+TEST(LoopSettingsDisplay, DestructivePressRequiresVisibleFeedback) {
+	loop_ui_test::Fixture f;
+	f.screen.oled = false;
+	f.recordPhrase();
+	f.view.padAction(0, 7, 100);
+	CHECK(f.view.buttonAction(BACK, true, false) == ActionResult::DEALT_WITH);
+	CHECK(f.view.buttonAction(BACK, false, false) == ActionResult::DEALT_WITH);
+	CHECK(f.screen.overlayVisible());
+	// Installed but hidden behind another display owner: never submit.
+	f.screen.popupActive = true;
+	CHECK(f.view.buttonAction(BACK, true, false) == ActionResult::DEALT_WITH);
+	CHECK(f.view.buttonAction(BACK, false, false) == ActionResult::DEALT_WITH);
+	CHECK(LoopStationView::HistoryPromptState::Confirm == f.view.historyPromptState_);
+	CHECK_EQUAL(int(HistoryNavigationState::Idle), int(f.model->historyNavigationResult().state));
+	CHECK(f.model->engine().state(0).hasPhrase);
+	f.screen.popupActive = false;
+	CHECK(f.view.buttonAction(BACK, true, false) == ActionResult::DEALT_WITH);
+	CHECK(f.view.buttonAction(BACK, false, false) == ActionResult::DEALT_WITH);
+	CHECK(LoopStationView::HistoryPromptState::Applying == f.view.historyPromptState_);
+}
+
+TEST(LoopSettingsDisplay, PromptCleanupRemovesOnlyOwnedOverlay) {
+	loop_ui_test::Fixture f;
+	f.screen.oled = false;
+	f.screen.setText("LOOP"); // the resting text opened() installs on a real 7SEG
+	f.recordPhrase();
+	f.view.padAction(0, 7, 100);
+	f.view.buttonAction(BACK, true, false);
+	f.view.buttonAction(BACK, false, false);
+	CHECK(f.screen.overlayVisible());
+	void* unrelated = f.screen.installScrollingOverlay("MENU");
+	CHECK(unrelated != nullptr);
+	POINTERS_EQUAL(unrelated, f.screen.currentScrollingLayer);
+	// A failing allocator must not block allocation-free owned-layer cleanup, and
+	// the newer unrelated layer must stay on top.
+	f.screen.failScrollingAllocation = true;
+	f.view.cancelHistoryConfirmation();
+	CHECK_FALSE(f.view.historyFeedbackOwned_);
+	CHECK_EQUAL(1u, f.screen.removeAttempts);
+	POINTERS_EQUAL(unrelated, f.screen.currentScrollingLayer);
+	CHECK(f.screen.overlayVisible());
+	STRCMP_EQUAL("LOOP", f.screen.text.c_str());
+	f.screen.failScrollingAllocation = false;
+}
+
+TEST(LoopSettingsDisplay, HistoryPromptOverlayCleanupPreservesBaseAndPopupOwner) {
+	loop_ui_test::Fixture f;
+	f.screen.oled = false;
+	f.screen.setText("LOOP"); // the resting text opened() installs on a real 7SEG
+	f.recordPhrase();
+	f.view.padAction(0, 7, 100);
+	f.view.buttonAction(BACK, true, false);
+	f.view.buttonAction(BACK, false, false);
+	CHECK(f.screen.overlayVisible());
+	const auto base = f.screen.text;
+	f.screen.popupActive = true;
+	f.view.cancelHistoryConfirmation();
+	CHECK_FALSE(f.screen.overlayVisible());
+	CHECK(f.screen.popupActive);
+	STRCMP_EQUAL(base.c_str(), f.screen.text.c_str());
+	CHECK_FALSE(f.view.historyFeedbackOwned_);
 }

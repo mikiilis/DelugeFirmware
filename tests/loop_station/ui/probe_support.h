@@ -14,8 +14,10 @@
 #include <array>
 #include <cstddef>
 #include <cstdio>
+#include <functional>
 #include <initializer_list>
 #include <map>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -120,15 +122,63 @@ struct ProbeDisplay {
 		notificationName = name;
 		notificationValue = value;
 	}
-	void setText(const char* value) { text = value; }
-	void displayPopup(const char* value) { popups.emplace_back(value); }
-	// The production seven-segment path uses a persistent scrolling layer for the
-	// confirmation feedback; record each push so the view's lifecycle is visible.
-	std::vector<std::string> scrollingTexts;
-	void* setScrollingText(const char* value, int32_t = 0, int32_t = 600, int = -1, uint8_t = 255) {
-		scrollingTexts.emplace_back(value);
-		return nullptr;
+	// The production seven-segment path replaces the whole layer stack with the
+	// resting text; an owned confirmation overlay must therefore be gone.
+	void setText(const char* value) {
+		text = value;
+		overlayStack.clear();
+		currentScrollingLayer = nullptr;
+		hasBaseLayer = true;
 	}
+	void displayPopup(const char* value) { popups.emplace_back(value); }
+	bool failScrollingAllocation = false, popupActive = false, hasBaseLayer = true;
+	void* currentScrollingLayer = nullptr; // top owned overlay, null when only the base remains
+	unsigned removeAttempts = 0;
+	std::vector<std::string> scrollingTexts;
+	std::vector<std::unique_ptr<int>> layerTokens;
+	std::vector<void*> overlayStack;
+	// Runs while the production allocator could yield/re-enter, before the install
+	// result exists. The view must not adopt a layer for a prompt that changed here.
+	std::function<void()> onScrollingAllocation;
+	void* installScrollingOverlay(const char* value, int32_t = 0, int32_t = 600, int = -1, uint8_t = 255) {
+		if (onScrollingAllocation)
+			onScrollingAllocation();
+		if (failScrollingAllocation || !hasBaseLayer)
+			return nullptr;
+		layerTokens.push_back(std::make_unique<int>(static_cast<int>(layerTokens.size() + 1)));
+		void* layer = layerTokens.back().get();
+		overlayStack.push_back(layer);
+		currentScrollingLayer = layer;
+		scrollingTexts.emplace_back(value);
+		return layer;
+	}
+	// Legacy callers replace the stack; retained so old display callers still work.
+	void* setScrollingText(const char* value, int32_t = 0, int32_t = 600, int = -1, uint8_t = 255) {
+		if (onScrollingAllocation)
+			onScrollingAllocation();
+		if (failScrollingAllocation)
+			return nullptr;
+		overlayStack.clear();
+		hasBaseLayer = false;
+		layerTokens.push_back(std::make_unique<int>(static_cast<int>(layerTokens.size() + 1)));
+		currentScrollingLayer = layerTokens.back().get();
+		overlayStack.push_back(currentScrollingLayer);
+		scrollingTexts.emplace_back(value);
+		return currentScrollingLayer;
+	}
+	bool isLayerCurrentlyOnTop(void* layer) const { return !popupActive && layer && layer == currentScrollingLayer; }
+	bool removeLayer(void* layer) {
+		++removeAttempts;
+		auto found = std::find(overlayStack.begin(), overlayStack.end(), layer);
+		// The resting base layer is never removed; only an exact owned overlay is.
+		if (found == overlayStack.end() || !hasBaseLayer)
+			return false;
+		overlayStack.erase(found);
+		currentScrollingLayer = overlayStack.empty() ? nullptr : overlayStack.back();
+		return true;
+	}
+	bool overlayVisible() const { return currentScrollingLayer && !popupActive; }
+	bool hasPopup() const { return popupActive; }
 };
 extern ProbeDisplay* display;
 namespace Buttons {
@@ -323,6 +373,9 @@ public:
 	void handleHistoryPress(bool);
 	void observeHistoryResult();
 	void refreshHistoryFeedback();
+	bool formatHistoryFeedback(char*, size_t);
+	bool installHistoryFeedback(char const*);
+	bool historyFeedbackVisible();
 	// Fixed-size confirmation state, saved target, BACK-down tracking and the
 	// observed model RestoreId. Exposed to the probe's real canvas/input tests.
 	HistoryPromptState historyPromptState_ = HistoryPromptState::None;
@@ -332,6 +385,7 @@ public:
 	bool historyBackDown_ = false;
 	char historyFeedbackText_[64] = {};
 	bool historyFeedbackOwned_ = false;
+	void* historyFeedbackLayer_ = nullptr;
 	bool pendingExit_ = false;
 	bool modTargetIsClip_ = false;
 	void finishStutterBeforeTargetChange();

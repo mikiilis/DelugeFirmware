@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <functional>
 #include <new>
 #include <string_view>
 #include <vector>
@@ -88,7 +89,17 @@ public:
 		static GeneralMemoryAllocator instance;
 		return instance;
 	}
-	void* allocLowSpeed(size_t size) { return std::malloc(size); }
+	void* allocLowSpeed(size_t size) {
+		if (onAllocate)
+			onAllocate();
+		if (failAllocations || failNextAllocation) {
+			failNextAllocation = false;
+			return nullptr;
+		}
+		return std::malloc(size);
+	}
+	bool failAllocations = false, failNextAllocation = false;
+	std::function<void()> onAllocate;
 };
 inline void delugeDealloc(void* pointer) {
 	std::free(pointer);
@@ -125,10 +136,17 @@ public:
 	                   int32_t scrollPos = 0) const;
 	NumericLayerScrollingText* setScrollingText(char const* newText, int32_t startAtTextPos = 0,
 	                                            int32_t initialDelay = 600, int count = -1, uint8_t fixedDot = 255);
+	NumericLayerScrollingText* installScrollingOverlay(char const* newText, int32_t startAtTextPos = 0,
+	                                                   int32_t initialDelay = 600, int count = -1,
+	                                                   uint8_t fixedDot = 255);
+	NumericLayerScrollingText* setScrollingTextInternal(char const* newText, int32_t startAtTextPos,
+	                                                    int32_t initialDelay, int count, uint8_t fixedDot,
+	                                                    bool asOverlay);
 	int32_t getEncodedPosFromLeft(int32_t textPos, char const* text, bool* andAHalf);
 	void setTopLayer(NumericLayer* newTopLayer);
 	void deleteAllLayers();
 	void removeTopLayer();
+	bool removeLayer(NumericLayer* expected);
 	void replaceBottomLayer(NumericLayer* newLayer);
 	void transitionToNewLayer(NumericLayer* newLayer);
 	void setTextWithMultipleDots(std::string_view newText, std::vector<uint8_t> dotPositions, bool alignRight,

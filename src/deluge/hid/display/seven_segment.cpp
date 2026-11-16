@@ -160,6 +160,31 @@ void SevenSegment::removeTopLayer() {
 	}
 }
 
+bool SevenSegment::removeLayer(NumericLayer* expected) {
+	if (!expected) {
+		return false;
+	}
+	// Compare pointers only until the layer is proven live: a stale owner pointer
+	// must never be dereferenced, and a newer unrelated layer must stay intact.
+	NumericLayer** link = &topLayer;
+	while (*link && *link != expected) {
+		link = &(*link)->next;
+	}
+	if (!*link || !expected->next) {
+		return false; // not installed, or the last resting layer
+	}
+	const bool wasTop = (*link == topLayer);
+	*link = expected->next;
+	expected->~NumericLayer();
+	delugeDealloc(expected);
+	if (wasTop && !popupActive) {
+		uiTimerManager.unsetTimer(TimerName::DISPLAY);
+		topLayer->isNowOnTop();
+		render();
+	}
+	return true;
+}
+
 void SevenSegment::setTextWithMultipleDots(std::string_view newText, std::vector<uint8_t> dotPositions, bool alignRight,
                                            bool doBlink, uint8_t* newBlinkMask, bool blinkImmediately) {
 	innerSetText(newText, alignRight, dotPositions, doBlink, newBlinkMask, blinkImmediately);
@@ -224,6 +249,22 @@ void SevenSegment::innerSetText(std::string_view newText, bool alignRight, std::
 
 NumericLayerScrollingText* SevenSegment::setScrollingText(char const* newText, int32_t startAtTextPos,
                                                           int32_t initialDelay, int count, uint8_t fixedDot) {
+	return setScrollingTextInternal(newText, startAtTextPos, initialDelay, count, fixedDot, false);
+}
+
+NumericLayerScrollingText* SevenSegment::installScrollingOverlay(char const* newText, int32_t startAtTextPos,
+                                                                 int32_t initialDelay, int count, uint8_t fixedDot) {
+	return setScrollingTextInternal(newText, startAtTextPos, initialDelay, count, fixedDot, true);
+}
+
+NumericLayerScrollingText* SevenSegment::setScrollingTextInternal(char const* newText, int32_t startAtTextPos,
+                                                                  int32_t initialDelay, int count, uint8_t fixedDot,
+                                                                  bool asOverlay) {
+	// An overlay must sit above the resting layer so that removing it can restore
+	// that layer without any further allocation.
+	if (asOverlay && !topLayer) {
+		return nullptr;
+	}
 	// Paul: Render time could be lower putting this into internal
 	void* layerSpace = GeneralMemoryAllocator::get().allocLowSpeed(sizeof(NumericLayerScrollingText));
 	if (!layerSpace) {
@@ -243,11 +284,11 @@ NumericLayerScrollingText* SevenSegment::setScrollingText(char const* newText, i
 	newLayer->initialDelay = initialDelay;
 	newLayer->scrollsCount = count;
 
-	if (count < 0) {
-		transitionToNewLayer(newLayer);
+	if (asOverlay || count >= 0) {
+		setTopLayer(newLayer);
 	}
 	else {
-		setTopLayer(newLayer);
+		transitionToNewLayer(newLayer);
 	}
 
 	return newLayer;

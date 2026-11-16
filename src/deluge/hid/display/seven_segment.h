@@ -52,8 +52,12 @@ public:
 
 	void timerRoutine() override;
 	void removeTopLayer();
+	bool removeLayer(NumericLayer* expected) override;
 	NumericLayerScrollingText* setScrollingText(char const* newText, int32_t startAtPos = 0, int32_t initialDelay = 600,
 	                                            int count = -1, uint8_t fixedDot = 255) override;
+	NumericLayerScrollingText* installScrollingOverlay(char const* newText, int32_t startAtPos = 0,
+	                                                   int32_t initialDelay = 600, int count = -1,
+	                                                   uint8_t fixedDot = 255) override;
 	int32_t getEncodedPosFromLeft(int32_t textPos, char const* text, bool* andAHalf) override;
 	void render();
 	void displayLoadingAnimation(bool delayed = false, bool transparent = false);
@@ -103,6 +107,9 @@ private:
 	void replaceBottomLayer(NumericLayer* newLayer);
 	void setTopLayer(NumericLayer* newTopLayer);
 	void transitionToNewLayer(NumericLayer* newLayer);
+	NumericLayerScrollingText* setScrollingTextInternal(char const* newText, int32_t startAtTextPos,
+	                                                    int32_t initialDelay, int count, uint8_t fixedDot,
+	                                                    bool asOverlay);
 	void setTextVeryBasicA1(char const* text);
 	std::array<uint8_t, kNumericDisplayLength> lastDisplay_ = {0};
 	bool use_lowercase = false;

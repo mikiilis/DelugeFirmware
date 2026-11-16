@@ -78,6 +78,10 @@ public:
 	virtual void cancelPopup() = 0;
 	virtual void freezeWithError(char const* text) = 0;
 	virtual bool isLayerCurrentlyOnTop(NumericLayer* layer) = 0;
+	// Remove exactly this caller-owned numeric layer if it is still installed.
+	// Implementations must not allocate and must leave every other layer, popup
+	// and resting text untouched. Returns false when the layer is not present.
+	virtual bool removeLayer(NumericLayer* expected) { return false; }
 	virtual void displayError(Error error) = 0;
 
 	virtual void removeWorkingAnimation() = 0;
@@ -106,6 +110,16 @@ public:
 	virtual NumericLayerScrollingText* setScrollingText(char const* newText, int32_t startAtPos = 0,
 	                                                    int32_t initialDelay = 600, int count = -1,
 	                                                    uint8_t fixedDot = 255) {
+		return nullptr;
+	}
+	// Install a scrolling-text overlay above the existing numeric layer stack.
+	// Returns the installed layer, or null when the display cannot show an overlay
+	// (no resting layer, unsupported, or allocation failure). The caller owns the
+	// returned layer and must release it with removeLayer(); legacy setScrollingText
+	// callers keep their previous replace/transition behavior.
+	virtual NumericLayerScrollingText* installScrollingOverlay(char const* newText, int32_t startAtPos = 0,
+	                                                           int32_t initialDelay = 600, int count = -1,
+	                                                           uint8_t fixedDot = 255) {
 		return nullptr;
 	}
 

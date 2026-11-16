@@ -14,6 +14,7 @@
 #include "gui/views/view.h"
 #include "hid/buttons.h"
 #include "hid/display/display.h"
+#include "hid/display/numeric_layer/numeric_layer_scrolling_text.h"
 #include "hid/display/oled_canvas/canvas.h"
 #include "hid/led/indicator_leds.h"
 #include "model/clip/audio_clip.h"
@@ -307,14 +308,84 @@ void LoopStationView::cancelHistoryConfirmation() {
 }
 
 void LoopStationView::clearHistoryFeedback() {
-	if (!historyFeedbackOwned_)
+	if (!historyFeedbackOwned_) {
+		historyFeedbackLayer_ = nullptr;
+		historyFeedbackText_[0] = '\0';
 		return;
+	}
+	// Removing the exact owned overlay is allocation-free: a failing allocator can
+	// never strand canceled text, and newer layers, menus and popups are untouched.
+	// When another UI owns the display it has already replaced our layer stack, so
+	// forgetting ownership there cannot leave this view's text showing.
+	if (display && !display->haveOLED() && getCurrentUI() == this) {
+		display->removeLayer(historyFeedbackLayer_);
+	}
 	historyFeedbackOwned_ = false;
+	historyFeedbackLayer_ = nullptr;
 	historyFeedbackText_[0] = '\0';
-	// Restore this view's resting seven-segment text, removing only the layer this
-	// view owns. A popup (for example a menu or tempo edit) is left untouched.
-	if (display && !display->haveOLED() && getCurrentUI() == this)
-		display->setText("LOOP");
+}
+
+bool LoopStationView::formatHistoryFeedback(char* text, size_t size) {
+	using deluge::l10n::String;
+	switch (historyPromptState_) {
+	case HistoryPromptState::None:
+		return false;
+	case HistoryPromptState::Confirm: {
+		char action[32]{};
+		snprintf(action, sizeof(action),
+		         deluge::l10n::get(historyTarget_.redo ? String::STRING_FOR_LOOP_STATION_REDO_PROMPT
+		                                               : String::STRING_FOR_LOOP_STATION_UNDO_PROMPT),
+		         static_cast<unsigned>(historyTarget_.slot) + 1);
+		snprintf(text, size, "%s %s", action,
+		         deluge::l10n::get(historyTarget_.redo ? String::STRING_FOR_LOOP_STATION_REDO_CONFIRM
+		                                               : String::STRING_FOR_LOOP_STATION_UNDO_CONFIRM));
+		return true;
+	}
+	case HistoryPromptState::Applying: {
+		char track[16]{};
+		snprintf(track, sizeof(track), deluge::l10n::get(String::STRING_FOR_LOOP_STATION_TRACK_NUMBER),
+		         static_cast<unsigned>(historyTarget_.slot) + 1);
+		snprintf(text, size, "%s %s", track,
+		         deluge::l10n::get(historyTarget_.redo ? String::STRING_FOR_LOOP_STATION_REDOING
+		                                               : String::STRING_FOR_LOOP_STATION_UNDOING));
+		return true;
+	}
+	case HistoryPromptState::Result: {
+		if (!validSlot(historyTarget_.slot)) {
+			snprintf(text, size, "%s", deluge::l10n::get(String::STRING_FOR_LOOP_STATION_TRACK_UNAVAILABLE));
+			return true;
+		}
+		char track[16]{};
+		snprintf(track, sizeof(track), deluge::l10n::get(String::STRING_FOR_LOOP_STATION_TRACK_NUMBER),
+		         static_cast<unsigned>(historyTarget_.slot) + 1);
+		snprintf(text, size, "%s %s", track, historyTerminalText(historyStatus_, historyTarget_.redo));
+		return true;
+	}
+	}
+	return false;
+}
+
+bool LoopStationView::installHistoryFeedback(char const* text) {
+	auto* layer = display->installScrollingOverlay(text, 0, 600, -1);
+	if (!layer)
+		return false;
+	// The allocator may have yielded and re-entered during install. Never adopt a
+	// layer for a prompt that was canceled, replaced, or is no longer ours.
+	char current[64]{};
+	if (getCurrentUI() != this || !formatHistoryFeedback(current, sizeof(current)) || strcmp(current, text) != 0) {
+		display->removeLayer(layer);
+		return false;
+	}
+	historyFeedbackLayer_ = layer;
+	historyFeedbackOwned_ = true;
+	snprintf(historyFeedbackText_, sizeof(historyFeedbackText_), "%s", text);
+	return true;
+}
+
+bool LoopStationView::historyFeedbackVisible() {
+	if (!display || display->haveOLED())
+		return true; // the OLED renders the prompt from prompt state on every refresh
+	return historyFeedbackOwned_ && historyFeedbackLayer_ && display->isLayerCurrentlyOnTop(historyFeedbackLayer_);
 }
 
 void LoopStationView::handleHistoryPress(bool redo) {
@@ -327,6 +398,11 @@ void LoopStationView::handleHistoryPress(bool redo) {
 	if (historyPromptState_ == HistoryPromptState::Applying)
 		return;
 	if (historyPromptState_ == HistoryPromptState::Confirm && historyTarget_.redo == redo) {
+		// A destructive confirmation requires the feedback to be installed and
+		// actually visible. A failed or covered overlay leaves the prompt armed so a
+		// periodic refresh can retry; this press never submits blind.
+		if (!historyFeedbackVisible())
+			return;
 		// Matching second press: submit exactly once. The model revalidates the
 		// stable target under its serialized boundary and never queues.
 		RestoreId id{};
@@ -405,53 +481,27 @@ void LoopStationView::observeHistoryResult() {
 void LoopStationView::refreshHistoryFeedback() {
 	if (!display || display->haveOLED())
 		return; // OLED renders the persistent prompt from state on every refresh.
-	using deluge::l10n::String;
 	char text[64]{};
-	switch (historyPromptState_) {
-	case HistoryPromptState::None:
+	if (!formatHistoryFeedback(text, sizeof(text))) {
 		clearHistoryFeedback();
 		return;
-	case HistoryPromptState::Confirm: {
-		char action[32]{};
-		snprintf(action, sizeof(action),
-		         deluge::l10n::get(historyTarget_.redo ? String::STRING_FOR_LOOP_STATION_REDO_PROMPT
-		                                               : String::STRING_FOR_LOOP_STATION_UNDO_PROMPT),
-		         static_cast<unsigned>(historyTarget_.slot) + 1);
-		snprintf(text, sizeof(text), "%s %s", action,
-		         deluge::l10n::get(historyTarget_.redo ? String::STRING_FOR_LOOP_STATION_REDO_CONFIRM
-		                                               : String::STRING_FOR_LOOP_STATION_UNDO_CONFIRM));
-		break;
 	}
-	case HistoryPromptState::Applying: {
-		char track[16]{};
-		snprintf(track, sizeof(track), deluge::l10n::get(String::STRING_FOR_LOOP_STATION_TRACK_NUMBER),
-		         static_cast<unsigned>(historyTarget_.slot) + 1);
-		snprintf(text, sizeof(text), "%s %s", track,
-		         deluge::l10n::get(historyTarget_.redo ? String::STRING_FOR_LOOP_STATION_REDOING
-		                                               : String::STRING_FOR_LOOP_STATION_UNDOING));
-		break;
-	}
-	case HistoryPromptState::Result: {
-		if (!validSlot(historyTarget_.slot)) {
-			snprintf(text, sizeof(text), "%s", deluge::l10n::get(String::STRING_FOR_LOOP_STATION_TRACK_UNAVAILABLE));
-			break;
-		}
-		char track[16]{};
-		snprintf(track, sizeof(track), deluge::l10n::get(String::STRING_FOR_LOOP_STATION_TRACK_NUMBER),
-		         static_cast<unsigned>(historyTarget_.slot) + 1);
-		snprintf(text, sizeof(text), "%s %s", track, historyTerminalText(historyStatus_, historyTarget_.redo));
-		break;
-	}
-	}
-	// Only push a new scrolling layer when the content actually changes, so a
-	// periodic refresh never resets the scrolling position or blink timing.
-	if (historyFeedbackOwned_ && strcmp(historyFeedbackText_, text) == 0)
-		return;
 	if (getCurrentUI() != this)
 		return; // another UI owns the display
-	snprintf(historyFeedbackText_, sizeof(historyFeedbackText_), "%s", text);
-	historyFeedbackOwned_ = true;
-	display->setScrollingText(historyFeedbackText_, 0, 600, -1);
+	if (historyFeedbackOwned_) {
+		// Never reinstall identical content: that would restart scrolling/blink.
+		if (strcmp(historyFeedbackText_, text) == 0)
+			return;
+		// Content changed. Release the old owned overlay before installing the new
+		// one so a transient allocation failure cannot leave both on screen.
+		display->removeLayer(historyFeedbackLayer_);
+		historyFeedbackOwned_ = false;
+		historyFeedbackLayer_ = nullptr;
+		historyFeedbackText_[0] = '\0';
+	}
+	// Failure is transient: ownership stays unset and the next refresh retries
+	// once memory returns.
+	(void)installHistoryFeedback(text);
 }
 
 bool LoopStationView::prepareTrack(SlotId slot) {

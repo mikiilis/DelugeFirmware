@@ -6,6 +6,8 @@
 #include "gui/ui/root_ui.h"
 #include "hid/button.h"
 
+class NumericLayerScrollingText;
+
 class LoopStationView final : public RootUI {
 public:
 	bool opened() override;
@@ -37,10 +39,12 @@ private:
 	loop_station::RestoreId historyId_{};
 	loop_station::Status historyStatus_ = loop_station::Status::Ok;
 	bool historyBackDown_ = false;
-	// Owned seven-segment scrolling feedback. Updated only when its content
-	// changes and removed when the prompt is canceled or handed off.
+	// Owned seven-segment scrolling feedback. Ownership is recorded only after an
+	// overlay install succeeds; content changes reuse neither the old layer nor its
+	// scroll position.
 	char historyFeedbackText_[64] = {};
 	bool historyFeedbackOwned_ = false;
+	NumericLayerScrollingText* historyFeedbackLayer_ = nullptr;
 	bool pendingExit_ = false;
 	bool modTargetIsClip_ = false;
 	void cancelHistoryConfirmation();
@@ -48,6 +52,9 @@ private:
 	void handleHistoryPress(bool redo);
 	void observeHistoryResult();
 	void refreshHistoryFeedback();
+	bool formatHistoryFeedback(char* text, size_t size);
+	bool installHistoryFeedback(char const* text);
+	bool historyFeedbackVisible();
 	void updateLed();
 	void updateModTarget();
 	void finishStutterBeforeTargetChange();

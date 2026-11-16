@@ -115,6 +115,51 @@ void testSetTextRemovesOwnedScrollingLayer() {
 	encode("LOOP", expected);
 	CHECK(std::memcmp(frame, expected, kNumericDisplayLength) == 0);
 }
+
+void testOverlayInstallFailureAndCleanupSurviveAllocatorFailure() {
+	SevenSegment seg;
+	CHECK(seg.installScrollingOverlay(kUndo) == nullptr); // no resting layer to overlay
+	seg.setText("LOOP");
+	NumericLayer* base = seg.topLayer;
+	GeneralMemoryAllocator::get().failNextAllocation = true;
+	CHECK(seg.installScrollingOverlay(kUndo) == nullptr);
+	CHECK(seg.topLayer == base);
+	// Install failure is retryable once the allocator recovers.
+	NumericLayerScrollingText* layer = seg.installScrollingOverlay(kUndo);
+	CHECK(layer != nullptr);
+	CHECK(seg.topLayer == layer);
+	CHECK(layer->next == base);
+	// Cleanup is allocation-free and keeps the resting layer and popup owner.
+	seg.popupActive = true;
+	GeneralMemoryAllocator::get().failAllocations = true;
+	CHECK(seg.removeLayer(layer));
+	CHECK(seg.popupActive);
+	CHECK(seg.topLayer == base);
+	CHECK(dynamic_cast<NumericLayerBasicText*>(seg.topLayer) != nullptr);
+	CHECK_FALSE(seg.removeLayer(base)); // never remove the resting layer
+	GeneralMemoryAllocator::get().failAllocations = false;
+	seg.popupActive = false;
+}
+
+void testOverlayCleanupRemovesOnlyTheExactOwnedLayer() {
+	SevenSegment seg;
+	seg.setText("BASE");
+	NumericLayerBasicText* base = dynamic_cast<NumericLayerBasicText*>(seg.topLayer);
+	NumericLayerScrollingText* owned = seg.installScrollingOverlay(kUndo);
+	CHECK(owned != nullptr);
+	NumericLayerScrollingText* newer = seg.installScrollingOverlay(kRedo);
+	CHECK(newer != nullptr);
+	CHECK(seg.topLayer == newer);
+	// The view's exact older overlay is removed without disturbing the newer
+	// unrelated layer or the base beneath it.
+	CHECK(seg.removeLayer(owned));
+	CHECK(seg.topLayer == newer);
+	CHECK(newer->next == base);
+	CHECK_FALSE(seg.removeLayer(owned));
+	CHECK(seg.removeLayer(newer));
+	CHECK(seg.topLayer == base);
+	CHECK_FALSE(seg.removeLayer(nullptr));
+}
 } // namespace
 
 int main() {
@@ -124,6 +169,8 @@ int main() {
 	testRedoInstructionAlsoScrolls();
 	testOwningLayerIsReplacedNotAccumulated();
 	testSetTextRemovesOwnedScrollingLayer();
+	testOverlayInstallFailureAndCleanupSurviveAllocatorFailure();
+	testOverlayCleanupRemovesOnlyTheExactOwnedLayer();
 	if (failures) {
 		std::fprintf(stderr, "%d seven-segment checks failed\n", failures);
 		return EXIT_FAILURE;
