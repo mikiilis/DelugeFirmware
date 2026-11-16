@@ -96,13 +96,14 @@ Observed nonfatal UBSan-tree warnings: ETL's invalid git-derived version during 
 (`verification/ubsan-configure.log`), `-Wenum-compare` at `src/fatfs/ff.c:5432`, and
 `-Wasm-operand-widths` at `src/deluge/util/functions.h:392,398` during the build.
 
-## Final consolidated fix wave (HEAD 66c197fa)
+## Final consolidated fix wave (product HEAD 66c197fa)
 
 The final review findings from `final-review.md` were implemented in this same wave. Final product state is
 `66c197fa` on `feature/loop-station-implementation`; the reviewed-wave base is
-`2517e57c688fe8c976dbbf422d45902af4730e74`. The committed evidence below is the final suite; the named
-RED/GREEN counts quoted in earlier sections and in the fix-wave checkpoint are historical slice evidence,
-not substitutes for these final reruns.
+`2517e57c688fe8c976dbbf422d45902af4730e74`. Evidence commits `42358d8b` (this report) and `63610f42`
+(removal of the accidentally tracked scratch report) follow with no product/test changes. The committed
+evidence below is the final suite; the named RED/GREEN counts quoted in earlier sections and in the
+fix-wave checkpoint are historical slice evidence, not substitutes for these final reruns.
 
 | Finding | Commit | Production change | Regression evidence |
 |---|---|---|---|
