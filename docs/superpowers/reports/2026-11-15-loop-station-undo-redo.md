@@ -99,10 +99,10 @@ Observed nonfatal UBSan-tree warnings: ETL's invalid git-derived version during 
 (`verification/ubsan-configure.log`), `-Wenum-compare` at `src/fatfs/ff.c:5432`, and
 `-Wasm-operand-widths` at `src/deluge/util/functions.h:392,398` during the build.
 
-## Final consolidated fix wave (product HEAD 1d8d96fe)
+## Final consolidated fix wave (product HEAD fcb6a28e)
 
 The final review findings from `final-review.md` and the scoped re-review findings N1–N6 were implemented in
-this same wave. Current product state is `1d8d96fe` (the N2/N5 correction); the prior consolidated
+this same wave. Current product state is `fcb6a28e` (the final N2/N5 correction); the prior consolidated
 verification below was captured at `a9452ab6`. The reviewed-wave base is
 `2517e57c688fe8c976dbbf422d45902af4730e74`. Evidence/scratch-removal commits after the product fix follow
 without product/test changes. The committed
@@ -127,10 +127,10 @@ fix-wave checkpoint are historical slice evidence, not substitutes for these fin
 | M6 | `66c197fa` | Evidence-only corrections (`LoopAudio`, initial Task 2 ownership, 444/464 totals) | This report |
 | M7 | `66c197fa` | Identity-current confirmation separately rechecks eligibility and replaces stale instruction with the honest status | `LoopSettingsDisplay.EligibilityLossReplacesCurrentConfirmationWithHonestReason` |
 | N1 | `a9452ab6` | Temporary PagePool record exhaustion is reclaimed in bounded foreground for an empty target; only structural size impossibility fails immediately | `LoopCaptureAdmission.temporaryRecordExhaustionReclaimsOptionalHistory` |
-| N2 | `1d8d96fe` | Participant-aware manual admission/headroom through real dispatch; fast path defers reclaimable shortfall; adapter-level continuation and concurrent grants | `LoopCaptureAdmission.manualCaptureMaintainsHeadroomAcrossMultiplePages`, `concurrentManualCapturesAllProgressWithParticipantHeadroom` |
+| N2 | `fcb6a28e` | Participant-aware manual admission/headroom through real dispatch; sparse participant masks are counted with `std::popcount`; the audio callback uses cached participants and a constant-time shortfall check, deferring reclaimability to foreground | `LoopCaptureAdmission.manualCaptureMaintainsHeadroomAcrossMultiplePages`, `concurrentManualCapturesAllProgressWithParticipantHeadroom`, `sparseHighSlotParticipantDoesNotInflateAdmissionTarget`, `sparseHighSlotHeadroomDoesNotEvictOptionalHistory`, `sparseHighSlotAdmissionReclaimsOnlyRequiredBoundary`, `sparseHighSlotMultiCaptureKeepsParticipantHeadroom`, `audioCallbackDueInitialDoesNotScanAdmissionState` |
 | N3 | `a9452ab6` | Deferred Initial is excluded from audio deadline selection so another track's exact future boundary is preserved | `LoopCaptureAdmission.deferredAdmissionDoesNotMaskAnotherSlotFutureDeadline` |
 | N4 | `a9452ab6` | Save-between-Undo-and-Redo proves nonuniform stereo archive data, revision separation, and eventual pin/page reclamation | `LoopBindings.SaveStartedBetweenUndoAndRedoPublishesAfterRetirement` |
-| N5 | `1d8d96fe` | Extracted FirmwareOwner restore-mask methods now drive real SongModel checkpoint reads, exit/return, exact audio, one-boundary Undo, edit and teardown cancellation | `LoopBindings.FirmwareOwnerCheckpointMaskSurvivesRealReadExitAndEdit`; `LoopStationForegroundServiceProbe` |
+| N5 | `fcb6a28e` | Extracted FirmwareOwner restore-mask methods drive real SongModel checkpoint reads through the serialized manifest document path, actual root-view entry/exit/return, exact audio, one-boundary Undo, edit and teardown cancellation | `LoopBindings.FirmwareOwnerCheckpointMaskSurvivesRealReadExitAndEdit`; `LoopStationForegroundServiceProbe` |
 | N6 | `a9452ab6` | Two released BACK edges accept a real request, then foreground NoMemory is correlated on both displays without false completion | `LoopSettingsDisplay.AcceptedForegroundFailureCorrelatesOnBothDisplays` |
 
 Pre-correction final verification at product HEAD `a9452ab6`:
@@ -203,6 +203,48 @@ DBT_NO_SYNC=1 ./dbt build Debug
   (`_close`, `_fstat`, `_isatty`, `_lseek`, `_read`, `_sbrk`, `_write`); the earlier full 330-step
   Debug compile remains historical evidence, and no Debug artifact exists. No linker/toolchain change.
 
+### Final bitmask/callback/re-entry correction (product `fcb6a28e`)
+
+Terra high's last re-review left N2 Important (sparse participant mask used as a numeric count and new
+callback scans), a new Important mask/count defect, and N5 Minor coverage (no actual view return and no
+serialized manifest load). `fcb6a28e` corrects them without repeating the accepted I1–I8/M1–M7/N1/N3/N4/N6
+work.
+
+- N2 production: `ResidentAudio` caches the manual-participant bitmask and all three page-target
+  calculations use `std::popcount`; `Engine::execute` uses a constant-time shortfall test that never
+  inspects history. A shortfall is retained as accepted intent and retried in foreground
+  (`serviceCaptureAdmission` with an explicit foreground-admission retry), which decides whether optional
+  history can fund the participant-aware cushion and still admits when it cannot. The audio callback does
+  no history reclamation or history-root scan.
+- N5 test coverage: the owner/mask test now encodes and decodes a real `Manifest` through
+  `Persistence::encode`/`decode` before `installLoaded`, enters the actual `LoopStationView`, exits through
+  its production `attemptExit`, returns through the production root-entry path, and only then completes the
+  real checkpoint read, exact audio, one Undo-to-empty/no second boundary, edit cancellation and teardown
+  cancellation. The test probe's `changeRootUI` now mirrors production by invoking the destination
+  `opened()`.
+- N2 RED (before the fix): `LoopStationTests` ran 13 tests with **5 failures** (552 checks): high-slot
+  admission deferred to a 131-page target, headroom retired both optional boundaries, admission reclaimed
+  both boundaries, concurrent high-slot participants did not all progress, and the due-Initial callback
+  incremented both audit metrics (2 participant scans and a reclaimability check). N5 RED control removing
+  the actual root re-entry failed the root-view identity assertion (`expected <0x…> but was <0x…>`).
+- N2/N5 GREEN: focused `LoopCaptureAdmission` and `LoopBindings` suites passed; full `LoopStationTests`
+  **538/538, 3,911,123 checks**, 4.90 s.
+- Complete host build PASS; CTest **27/27**, 12.73 s. `selection_preview_test.py` **7/7**. `git diff --check`
+  (working tree and index) clean.
+- Existing offline UBSan tree (`build/tests-loop-ubsan`, Debug, no downloads): build PASS and full
+  **27/27**, 18.78 s; instrumented `LoopStationTests` **538/538, 3,911,123 checks**, no sanitizer report.
+  Page/audio guards remain built and run but not UBSan-instrumented, as documented above.
+- Release `DBT_NO_SYNC=1 ./dbt build Release` PASS: BIN
+  `build/Release/deluge-v1_3_0-dev+2026_11_14-43f7427a.bin`, **1,947,400 bytes**, sha256
+  `70d2e7aa9805378b72700ebc003a832380263527f45255c7b7d8e7367cde8b93`, embedded version
+  `1.3.0-dev-fcb6a28e-dirty`; ELF text/data/BSS **1,876,528 / 70,832 / 402,708**. Not flashed.
+- Debug `DBT_NO_SYNC=1 ./dbt build Debug`: all current build steps compiled, including every changed
+  loop-station and view object, then reproduced only the known baseline newlib link failure
+  (`_close`, `_fstat`, `_isatty`, `_lseek`, `_read`, `_sbrk`, `_write`). No Debug artifact; no
+  linker/toolchain change.
+- Hardware acceptance remains **NOT_RUN**. The controller's final GPT-6.1 Terra high scoped review has not
+  yet run; this correction makes no final-approval claim.
+
 ## Named TDD evidence, fix rounds and bounds (from this plan's task reports)
 
 Each task recorded a behavioral RED before implementation and a GREEN after; the names and line numbers
@@ -246,7 +288,7 @@ regenerated for this documentation task.
   `LoopSnapshots RetiredPinnedSourceIsNotAPublicationCandidate`.
 
 Historical Task 1–6 aggregate before the consolidated final wave: `LoopStationTests` 499/499,
-3,907,835 checks; registered CTest 27/27. The current final totals are 533/533, 3,910,930 checks and
+3,907,835 checks; registered CTest 27/27. The current final totals are 538/538, 3,911,123 checks and
 27/27 CTest in the consolidated section above.
 
 Concrete ownership/allocation bounds (from source, unchanged by this feature):
