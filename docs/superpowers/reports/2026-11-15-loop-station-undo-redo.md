@@ -106,17 +106,17 @@ regenerated for this documentation task.
   `LoopPages replaceIntoDetachedEmptyTrackPublishesOnlyCandidate` failed
   (`page_pool_tests.cpp:264,325`), and `LoopRestore recordAgainWhileOldVersionRetainedCannotAliasIt`
   failed (`restore_tests.cpp:442`).
-- Task 2 (434 tests): `LoopResident detachForHistoryRequiresSafeOwnershipAndRetainsPhrase` and the engine
-  composition tests failed. Fix round 1 renamed it to
-  `detachForHistoryRequiresCallerOwnedDetachAndRetainsPhrase` and added
-  `oldPadReleaseCannotClearOrRestartRemovedPhrase`.
-- Task 3 (441→443 tests): `LoopHistory InitialUndoToEmptyAndRedoRestoresExactStereoFrames`
+- Task 2 (434 tests): `LoopAudio detachForHistoryRequiresSafeOwnershipAndRetainsPhrase` and the engine
+  composition tests failed. The initial Task 2 change already included
+  `oldPadReleaseCannotClearOrRestartRemovedPhrase`; fix round 1 renamed the detach test to
+  `detachForHistoryRequiresCallerOwnedDetachAndRetainsPhrase`.
+- Task 3 (441→443, then 444 tests): `LoopHistory InitialUndoToEmptyAndRedoRestoresExactStereoFrames`
   (`history_tests.cpp:202`), `OneMultiwrapGateIsOneLayerOverMultipleWraps`,
   `UnchangedSessionCannotUndoPreviousLayer`, `NewRecordingAfterEmptyUndoInvalidatesOldForwardBranch`,
   `EvictedInitialBoundaryCannotReappearAfterDescriptorReuse` and
   `TwoOverdubsUndoAndRedoThroughInitialBoundary` failed before the change. Fix round 1 added
   `LoopRestore RedoCannotSkipAnInitialBoundaryEvictedByCrossSlotPressure` (`restore_tests.cpp:558`).
-- Task 4 (456→457, then 463 tests): the focused initial-take RED was `expected <0> but was <6>` at the
+- Task 4 (456→457, then 464 tests): the focused initial-take RED was `expected <0> but was <6>` at the
   first `CHECK_EQUAL(Ok, historyTarget(...))`, and the foreground probe failed with no navigation
   service. Fix round 1 added `AcceptedNavigationSurvivesRootViewExit`,
   `AcceptedNavigationSurvivesSelection`, `ObsoleteReleaseDoesNotCancelAcceptedNavigation`,

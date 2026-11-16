@@ -511,36 +511,48 @@ TEST(LoopAudio, detachForHistoryRequiresCallerOwnedDetachAndRetainsPhrase) {
 	const auto handle = phrase(backing);
 	CHECK(Status::Ok == rollback.begin(0, 0, audio.position(0), 2));
 	CHECK(Status::Ok == audio.start(0, false));
+	const auto liveGeneration = pool.sealedHandle(0).generation;
+	const auto initialRevision = audio.contentRevision(0);
+	const auto initialPosition = audio.position(0);
 	// Accidental use while the pool record is still live must not alter audio.
 	CHECK(Status::Busy == audio.detachForHistory(0));
 	CHECK(audio.playing(0));
-	CHECK_EQUAL(0, audio.position(0));
-	const auto revision = audio.contentRevision(0);
-	CHECK_EQUAL(revision, audio.contentRevision(0));
+	CHECK_EQUAL(initialPosition, audio.position(0));
+	CHECK_EQUAL(initialRevision, audio.contentRevision(0));
+	CHECK_EQUAL(liveGeneration, pool.sealedHandle(0).generation);
 	CHECK(Status::Ok == audio.setCaptureGate(0, true));
 	const Frame input[] = {{1, 1}, {2, 2}};
 	Frame output[2];
 	audio.render(0, input, output);
 	CHECK(Status::Ok == audio.setCaptureGate(0, false));
 	audio.stop(0);
+	const auto rejectedRevision = audio.contentRevision(0);
+	const auto rejectedPosition = audio.position(0);
+	const auto rejectedGeneration = pool.sealedHandle(0).generation;
 	CHECK(rollback.provisional(0));
 	CHECK(Status::Busy == audio.detachForHistory(0));
+	CHECK_EQUAL(rejectedRevision, audio.contentRevision(0));
+	CHECK_EQUAL(rejectedPosition, audio.position(0));
+	CHECK_EQUAL(rejectedGeneration, pool.sealedHandle(0).generation);
 	CHECK(Status::Ok == rollback.cancel(0));
 	CHECK(rollback.pending(0));
 	CHECK(Status::Busy == audio.detachForHistory(0));
+	CHECK_EQUAL(rejectedRevision, audio.contentRevision(0));
+	CHECK_EQUAL(rejectedPosition, audio.position(0));
 	rollback.service(16);
 	CHECK_FALSE(rollback.pending(0));
 	// Rollback is safe but the caller has not detached yet: still rejected.
 	CHECK(Status::Busy == audio.detachForHistory(0));
-	const auto beforeDetach = audio.contentRevision(0);
-	CHECK_EQUAL(beforeDetach, audio.contentRevision(0));
+	CHECK_EQUAL(rejectedRevision, audio.contentRevision(0));
+	CHECK_EQUAL(rejectedPosition, audio.position(0));
+	CHECK_EQUAL(rejectedGeneration, pool.sealedHandle(0).generation);
 	// Caller-owned ownership transfer, then the resident forget.
 	PhraseHandle retained;
 	CHECK(Status::Ok == pool.detach(0, retained));
 	CHECK_EQUAL(handle.generation, retained.generation);
 	const auto free = pool.freePages();
 	CHECK(Status::Ok == audio.detachForHistory(0));
-	CHECK_EQUAL(beforeDetach + 1, audio.contentRevision(0));
+	CHECK_EQUAL(rejectedRevision + 1, audio.contentRevision(0));
 	CHECK_FALSE(audio.playing(0));
 	CHECK_EQUAL(0, audio.position(0));
 	CHECK_EQUAL(free, pool.freePages());
@@ -549,6 +561,6 @@ TEST(LoopAudio, detachForHistoryRequiresCallerOwnedDetachAndRetainsPhrase) {
 	CHECK_EQUAL(10, pool.frame(retained, 0)->l);
 	// Empty is an idempotent no-op rather than a second ownership change.
 	CHECK(Status::Ok == audio.detachForHistory(0));
-	CHECK_EQUAL(beforeDetach + 1, audio.contentRevision(0));
+	CHECK_EQUAL(rejectedRevision + 1, audio.contentRevision(0));
 	CHECK(Status::Invalid == audio.detachForHistory(kInvalidSlot));
 }

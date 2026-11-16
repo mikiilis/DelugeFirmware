@@ -271,6 +271,53 @@ void renderLoopOled(loop_ui_test::Fixture& f) {
 	f.view.renderOLED(canvas);
 	checkCanvas();
 }
+
+// Record a short phrase on an arbitrary slot through the real model path.
+void recordSlot(loop_ui_test::Fixture& f, SlotId slot) {
+	CHECK_EQUAL(int(Status::Ok), int(f.model->ensureBound(slot)));
+	CHECK_EQUAL(int(Status::Ok), int(f.model->dispatch({CommandType::Press, slot})));
+	CHECK(f.model->engine().state(slot).capture);
+	f.renderAudio();
+	CHECK_EQUAL(int(Status::Ok), int(f.model->dispatch({CommandType::Press, slot})));
+	CHECK(f.model->engine().state(slot).hasPhrase);
+}
+
+void overdubLayer(loop_ui_test::Fixture& f, SlotId slot) {
+	// Leave any previous double-tap window behind before opening a fresh gate.
+	f.host.time += GestureRollback::kProvisionalSamples;
+	CHECK_EQUAL(int(Status::Ok), int(f.model->dispatch({CommandType::Press, slot})));
+	CHECK(f.model->engine().state(slot).capture);
+	f.renderAudio(1);
+	// Pass the double-tap cancellation window: this is a confirmed overdub close.
+	f.host.time += GestureRollback::kProvisionalSamples;
+	CHECK_EQUAL(int(Status::Ok), int(f.model->dispatch({CommandType::Press, slot})));
+	CHECK_FALSE(f.model->engine().state(slot).capture);
+}
+
+Status undoSlot(loop_ui_test::Fixture& f, SlotId slot) {
+	HistoryTarget target{};
+	const auto status = f.model->historyTarget(slot, false, target);
+	if (status != Status::Ok)
+		return status;
+	RestoreId id{};
+	const auto requested = f.model->requestHistoryNavigation(target, id);
+	if (requested != Status::Ok)
+		return requested;
+	return driveHistory(f, id).state == HistoryNavigationState::Complete ? Status::Ok : Status::SourceUnavailable;
+}
+
+// Use real retained versions on every other slot to exhaust the fixed detached
+// records. Stops at the first operation that can no longer be accepted.
+void saturateDetachedRecords(loop_ui_test::Fixture& f) {
+	for (SlotId slot = 1; slot < kTrackCount; ++slot) {
+		recordSlot(f, slot);
+		for (unsigned layer = 0; layer < 3; ++layer)
+			overdubLayer(f, slot);
+		for (unsigned undo = 0; undo < 4; ++undo)
+			if (undoSlot(f, slot) != Status::Ok)
+				return;
+	}
+}
 } // namespace
 
 TEST(LoopSettingsDisplay, ConfirmationSurvivesGraphicsRefreshOnOledAndSevenSegment) {
@@ -396,18 +443,6 @@ TEST(LoopSettingsDisplay, ApplyingAndTerminalResultReflectActualModelStatus) {
 		CHECK_FALSE(f.screen.scrollingTexts.empty());
 		if (!f.screen.scrollingTexts.empty())
 			STRCMP_EQUAL("Track 1 NO UNDO", f.screen.scrollingTexts.back().c_str());
-	}
-	// No memory is a distinct, honest failure message.
-	{
-		loop_ui_test::Fixture f;
-		f.view.padAction(0, 7, 100); // select/bind an eligible track
-		f.view.historyTarget_.slot = 0;
-		f.view.historyTarget_.redo = false;
-		f.view.historyStatus_ = Status::NoMemory;
-		f.view.historyPromptState_ = LoopStationView::HistoryPromptState::Result;
-		renderLoopOled(f);
-		CHECK(hasText(OLED::main, "TRACK 1"));
-		CHECK(hasText(OLED::main, "NO MEMORY"));
 	}
 }
 
@@ -606,4 +641,108 @@ TEST(LoopSettingsDisplay, HistoryPromptOverlayCleanupPreservesBaseAndPopupOwner)
 	CHECK(f.screen.popupActive);
 	STRCMP_EQUAL(base.c_str(), f.screen.text.c_str());
 	CHECK_FALSE(f.view.historyFeedbackOwned_);
+}
+
+// M5: a real model rejection under actual detached-record pressure must reach the
+// view through released BACK edges, not a test-assigned status. Capture stays open
+// and both display paths report the honest failure without a false completion.
+TEST(LoopSettingsDisplay, RealDetachedPressureReportsNoMemoryAndPreservesCapture) {
+	// Seven-segment path.
+	{
+		loop_ui_test::Fixture f;
+		f.screen.oled = false;
+		f.screen.setText("LOOP");
+		f.recordPhrase();
+		f.view.padAction(0, 7, 100);
+		CHECK_EQUAL(0, f.model->engine().selected());
+		saturateDetachedRecords(f);
+		CHECK_EQUAL(int(Status::Ok), int(f.model->dispatch({CommandType::Press, 0})));
+		CHECK(f.model->engine().state(0).capture);
+		f.renderAudio(1);
+		HistoryTarget target{};
+		CHECK_EQUAL(int(Status::NoMemory), int(f.model->historyTarget(0, false, target)));
+		const auto prior = f.model->historyNavigationResult();
+		CHECK(f.view.buttonAction(BACK, true, false) == ActionResult::DEALT_WITH);
+		CHECK(f.view.buttonAction(BACK, false, false) == ActionResult::DEALT_WITH);
+		CHECK(LoopStationView::HistoryPromptState::Result == f.view.historyPromptState_);
+		CHECK_EQUAL(int(Status::NoMemory), int(f.view.historyStatus_));
+		CHECK_FALSE(f.screen.scrollingTexts.empty());
+		if (!f.screen.scrollingTexts.empty())
+			STRCMP_EQUAL("Track 1 NO MEMORY", f.screen.scrollingTexts.back().c_str());
+		CHECK(f.model->engine().state(0).capture);
+		CHECK(f.model->engine().state(0).playing);
+		CHECK(f.model->engine().state(0).hasPhrase);
+		CHECK_EQUAL(prior.id.generation, f.model->historyNavigationResult().id.generation);
+	}
+	// OLED path.
+	{
+		loop_ui_test::Fixture f;
+		f.recordPhrase();
+		f.view.padAction(0, 7, 100);
+		CHECK_EQUAL(0, f.model->engine().selected());
+		saturateDetachedRecords(f);
+		CHECK_EQUAL(int(Status::Ok), int(f.model->dispatch({CommandType::Press, 0})));
+		f.renderAudio(1);
+		HistoryTarget target{};
+		CHECK_EQUAL(int(Status::NoMemory), int(f.model->historyTarget(0, false, target)));
+		const auto prior = f.model->historyNavigationResult();
+		CHECK(f.view.buttonAction(BACK, true, false) == ActionResult::DEALT_WITH);
+		CHECK(f.view.buttonAction(BACK, false, false) == ActionResult::DEALT_WITH);
+		renderLoopOled(f);
+		CHECK(hasText(OLED::main, "TRACK 1"));
+		CHECK(hasText(OLED::main, "NO MEMORY"));
+		CHECK_FALSE(hasText(OLED::main, "UNDONE"));
+		CHECK(f.model->engine().state(0).capture);
+		CHECK_EQUAL(prior.id.generation, f.model->historyNavigationResult().id.generation);
+	}
+}
+
+// M7: while confirmation identity remains current, eligibility is rechecked on
+// refresh. Incoming frames, SHIFT and a release keep it; real pressure replaces
+// the stale instruction with an honest reason and never submits the operation.
+TEST(LoopSettingsDisplay, EligibilityLossReplacesCurrentConfirmationWithHonestReason) {
+	loop_ui_test::Fixture f;
+	f.screen.oled = false;
+	f.screen.setText("LOOP");
+	f.recordPhrase();
+	CHECK_EQUAL(int(Status::Ok), int(f.model->dispatch({CommandType::Press, 0})));
+	CHECK(f.model->engine().state(0).capture);
+	f.renderAudio(1);
+	f.view.padAction(0, 7, 100);
+	CHECK_EQUAL(0, f.model->engine().selected());
+	CHECK(f.view.buttonAction(BACK, true, false) == ActionResult::DEALT_WITH);
+	CHECK(f.view.buttonAction(BACK, false, false) == ActionResult::DEALT_WITH);
+	CHECK(LoopStationView::HistoryPromptState::Confirm == f.view.historyPromptState_);
+	// Incoming capture frames are not an identity change.
+	f.renderAudio(2);
+	f.view.graphicsRoutine();
+	CHECK(LoopStationView::HistoryPromptState::Confirm == f.view.historyPromptState_);
+	// SHIFT and a release edge do not cancel the confirmation either.
+	::view.reset();
+	::view.result = ActionResult::NOT_DEALT_WITH;
+	CHECK(f.sharedShift(f.view, true) == ActionResult::NOT_DEALT_WITH);
+	CHECK(LoopStationView::HistoryPromptState::Confirm == f.view.historyPromptState_);
+	::view.result = ActionResult::NOT_DEALT_WITH;
+	CHECK(f.sharedShift(f.view, false) == ActionResult::NOT_DEALT_WITH);
+	CHECK(LoopStationView::HistoryPromptState::Confirm == f.view.historyPromptState_);
+	CHECK(f.view.buttonAction(BACK, false, false) == ActionResult::DEALT_WITH);
+	CHECK(LoopStationView::HistoryPromptState::Confirm == f.view.historyPromptState_);
+	// Real detached-resource pressure while the target identity stays current.
+	saturateDetachedRecords(f);
+	HistoryTarget target{};
+	CHECK_EQUAL(int(Status::NoMemory), int(f.model->historyTarget(0, false, target)));
+	const auto prior = f.model->historyNavigationResult();
+	f.view.graphicsRoutine();
+	CHECK(LoopStationView::HistoryPromptState::Result == f.view.historyPromptState_);
+	CHECK_EQUAL(int(Status::NoMemory), int(f.view.historyStatus_));
+	CHECK_FALSE(f.screen.scrollingTexts.empty());
+	if (!f.screen.scrollingTexts.empty())
+		STRCMP_EQUAL("Track 1 NO MEMORY", f.screen.scrollingTexts.back().c_str());
+	CHECK(f.model->engine().state(0).capture);
+	CHECK_EQUAL(prior.id.generation, f.model->historyNavigationResult().id.generation);
+	// A resulting BACK press arms a fresh target honestly; it cannot submit.
+	CHECK(f.view.buttonAction(BACK, true, false) == ActionResult::DEALT_WITH);
+	CHECK(f.view.buttonAction(BACK, false, false) == ActionResult::DEALT_WITH);
+	CHECK(LoopStationView::HistoryPromptState::Result == f.view.historyPromptState_);
+	CHECK_EQUAL(prior.id.generation, f.model->historyNavigationResult().id.generation);
 }

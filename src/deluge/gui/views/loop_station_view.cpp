@@ -457,6 +457,18 @@ void LoopStationView::observeHistoryResult() {
 		// the prompt with no audio change; added frames within one session do not.
 		if (!m->historyTargetCurrent(historyTarget_))
 			cancelHistoryConfirmation();
+		else {
+			// Identity is still current, but display eligibility can be lost to real
+			// resource pressure (for example other-slot detached headroom). Replace
+			// the stale instruction with an honest terminal reason instead of asking
+			// for a confirmation that can no longer succeed.
+			HistoryTarget eligible{};
+			const auto status = m->historyTarget(historyTarget_.slot, historyTarget_.redo, eligible);
+			if (status != Status::Ok) {
+				historyPromptState_ = HistoryPromptState::Result;
+				historyStatus_ = status;
+			}
+		}
 		return;
 	}
 	if (historyPromptState_ != HistoryPromptState::Applying)

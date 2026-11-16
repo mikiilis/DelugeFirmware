@@ -152,8 +152,9 @@ TEST(LoopPages, remainderGrantRotatesWhenSpaceReturnsInLaterRender) {
 	CHECK(Status::Ok == pool.beginRenderRound(0x03));
 	CHECK(Status::NoMemory == pool.append(1, input, accepted));
 	CHECK_EQUAL(0, accepted);
-	PhraseHandle empty;
+	PhraseHandle empty{0, 45678};
 	CHECK(Status::Invalid == pool.seal(2, empty));
+	CHECK_FALSE(empty.valid());
 	CHECK(Status::Ok == pool.beginRenderRound(0x03));
 	CHECK(Status::Busy == pool.append(0, input, accepted));
 	CHECK_EQUAL(0, accepted);
@@ -291,8 +292,11 @@ TEST(LoopPages, detachFailureLeavesActiveMappingIntact) {
 	PagePool pool;
 	CHECK(Status::Ok == pool.initialize(storage));
 	PhraseHandle retained{};
+	// A rejected detach must reset the caller's output, not leave a seeded handle.
+	retained = {0, 12345};
 	CHECK(Status::Invalid == pool.detach(kTrackCount, retained));
 	CHECK_FALSE(retained.valid());
+	retained = {0, 12345};
 	CHECK(Status::Invalid == pool.detach(1, retained));
 	CHECK_FALSE(retained.valid());
 	CHECK_EQUAL(4, pool.freePages());
@@ -301,6 +305,7 @@ TEST(LoopPages, detachFailureLeavesActiveMappingIntact) {
 	FrameIndex accepted = 0;
 	CHECK(Status::Ok == pool.append(0, input, accepted));
 	CHECK_EQUAL(2, accepted);
+	retained = {0, 12345};
 	CHECK(Status::Invalid == pool.detach(0, retained));
 	CHECK_FALSE(retained.valid());
 	CHECK_FALSE(pool.sealedHandle(0).valid());
@@ -338,10 +343,12 @@ TEST(LoopPages, replaceIntoDetachedEmptyTrackPublishesOnlyCandidate) {
 	CHECK_EQUAL(freeBefore - 1, pool.freePages());
 	PhraseHandle rejected{};
 	const PhraseHandle stale{0, retained.generation + 1000000};
+	rejected = {0, 23456};
 	CHECK(Status::Stale == pool.replace(stale, rejected));
 	CHECK_FALSE(rejected.valid());
 	const auto otherTrack = sealDetachedPhrase(pool, 1, candidateFrames);
 	const PhraseHandle foreign{0, otherTrack.generation};
+	rejected = {0, 23456};
 	CHECK(Status::Stale == pool.replace(foreign, rejected));
 	CHECK_FALSE(rejected.valid());
 	CHECK_EQUAL(candidate.generation, pool.sealedHandle(0).generation);
@@ -394,8 +401,8 @@ TEST(LoopPages, retiredRecordIsNotAPublicationCandidate) {
 	CHECK(Status::Ok == pool.pin(live));
 	CHECK(Status::Ok == pool.retire(live));
 
-	// Rejected as a publication candidate; no mapping change.
-	PhraseHandle previous{};
+	// Rejected as a publication candidate; no mapping change and the output reset.
+	PhraseHandle previous{0, 34567};
 	CHECK(Status::Stale == pool.replace(live, previous));
 	CHECK_FALSE(previous.valid());
 	CHECK_FALSE(pool.sealedHandle(0).valid());

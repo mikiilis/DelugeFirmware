@@ -130,6 +130,38 @@ struct Fixture {
 				model->adapter().renderDry(id, std::span(inputBuffer).first(count), std::span(output).first(count));
 		host.time += count;
 	}
+	// Render exact caller frames through the real adapter window (not uniform input).
+	void renderInput(SlotId id, std::span<const Frame> frames) {
+		std::array<Frame, 128> output{};
+		size_t offset = 0;
+		while (offset < frames.size()) {
+			size_t count = std::min<size_t>(frames.size() - offset, output.size());
+			model->adapter().finalizeWindow(host.time, count, model->clock());
+			CHECK(count > 0);
+			model->adapter().renderDry(id, frames.subspan(offset, count), std::span(output).first(count));
+			host.time += count;
+			offset += count;
+		}
+	}
+	void recordExact(SlotId id, std::span<const Frame> frames) {
+		CHECK(Status::Ok == model->ensureBound(id));
+		CHECK(Status::Ok == model->dispatch({CommandType::Press, id}));
+		CHECK(model->engine().state(id).capture);
+		renderInput(id, frames);
+		CHECK(Status::Ok == model->dispatch({CommandType::Press, id}));
+		CHECK_FALSE(model->engine().state(id).capture);
+		CHECK(model->engine().state(id).playing);
+	}
+	void overdubExact(SlotId id, std::span<const Frame> frames) {
+		CHECK(Status::Ok == model->dispatch({CommandType::Press, id}));
+		CHECK(model->engine().state(id).capture);
+		renderInput(id, frames);
+		// Move past the double-tap cancellation window so this is an ordinary
+		// confirmed overdub close, not a tap-cancel.
+		host.time += GestureRollback::kProvisionalSamples;
+		CHECK(Status::Ok == model->dispatch({CommandType::Press, id}));
+		CHECK_FALSE(model->engine().state(id).capture);
+	}
 	void record(SlotId id, Frame input = {100, -100}) {
 		model->serviceRetirement();
 		CHECK(Status::Ok == model->ensureBound(id));
@@ -215,6 +247,18 @@ struct Fixture {
 			const auto result = model->historyNavigationResult();
 			if (result.id.generation == id.generation && !result.pending())
 				return result;
+		}
+		return model->historyNavigationResult();
+	}
+	// Interleave real playback windows with foreground reconstruction so a commit
+	// must preserve a nonzero phase rather than restarting the phrase.
+	HistoryNavigationResult driveNavigationWithPlayback(RestoreId id, SlotId slot, size_t frames = 7) {
+		for (unsigned i = 0; i < 5000; ++i) {
+			model->serviceHistoryNavigation(128);
+			const auto result = model->historyNavigationResult();
+			if (result.id.generation == id.generation && !result.pending())
+				return result;
+			backingWindow(slot, frames);
 		}
 		return model->historyNavigationResult();
 	}
@@ -2122,5 +2166,112 @@ TEST(LoopBindings, InFlightSaveSnapshotSurvivesOverdubUndoAndRedo) {
 	for (const auto& frame : frames) {
 		CHECK_EQUAL(256, frame.l);
 		CHECK_EQUAL(-512, frame.r);
+	}
+}
+
+// M4: ordinary overdub Undo/Redo through the real model confirmed-navigation path
+// must preserve a nonzero playback phase and the exact nonuniform stereo samples,
+// including when foreground reconstruction is interleaved with playback.
+TEST(LoopBindings, ordinaryUndoRedoPreserveNonzeroPhaseAndExactStereo) {
+	Fixture f;
+	f.start();
+	auto settings = f.model->engine().settings();
+	settings.tracks[0].source = Source::Stereo;
+	CHECK_EQUAL(int(Status::Ok), int(f.model->dispatch(Command::configure(settings))));
+	constexpr FrameIndex length = 300;
+	std::vector<Frame> initial(length);
+	for (FrameIndex i = 0; i < length; ++i)
+		initial[i] = {int32_t(i * 3 + 1), -int32_t(i * 5 + 2)};
+	f.recordExact(0, initial);
+	const auto warm = f.backingWindow(0, 9);
+	for (FrameIndex i = 0; i < 9; ++i) {
+		CHECK_EQUAL(initial[i].l, warm[i].l);
+		CHECK_EQUAL(initial[i].r, warm[i].r);
+	}
+	const std::array<Frame, 5> dub = {{{7, -11}, {13, -17}, {19, -23}, {29, -31}, {37, -41}}};
+	f.overdubExact(0, dub);
+	std::vector<Frame> expectedAfter = initial;
+	for (FrameIndex k = 0; k < dub.size(); ++k) {
+		auto& frame = expectedAfter[(9 + k) % length];
+		frame = {frame.l + dub[k].l, frame.r + dub[k].r};
+	}
+	HistoryTarget target{};
+	CHECK_EQUAL(int(Status::Ok), int(f.model->historyTarget(0, false, target)));
+	RestoreId undoId{};
+	CHECK_EQUAL(int(Status::Ok), int(f.model->requestHistoryNavigation(target, undoId)));
+	CHECK_EQUAL(int(HistoryNavigationState::Complete), int(f.driveNavigationWithPlayback(undoId, 0).state));
+	CHECK(f.model->engine().state(0).playing);
+	auto phase = f.model->adapter().phase(0);
+	CHECK(phase != 0); // A reset to zero would be visible in the next window.
+	const auto afterUndo = f.backingWindow(0, 11);
+	for (FrameIndex i = 0; i < 11; ++i) {
+		CHECK_EQUAL(initial[(phase + i) % length].l, afterUndo[i].l);
+		CHECK_EQUAL(initial[(phase + i) % length].r, afterUndo[i].r);
+	}
+	HistoryTarget redo{};
+	CHECK_EQUAL(int(Status::Ok), int(f.model->historyTarget(0, true, redo)));
+	RestoreId redoId{};
+	CHECK_EQUAL(int(Status::Ok), int(f.model->requestHistoryNavigation(redo, redoId)));
+	CHECK_EQUAL(int(HistoryNavigationState::Complete), int(f.driveNavigationWithPlayback(redoId, 0).state));
+	CHECK(f.model->engine().state(0).playing);
+	phase = f.model->adapter().phase(0);
+	CHECK(phase != 0);
+	const auto afterRedo = f.backingWindow(0, 11);
+	for (FrameIndex i = 0; i < 11; ++i) {
+		CHECK_EQUAL(expectedAfter[(phase + i) % length].l, afterRedo[i].l);
+		CHECK_EQUAL(expectedAfter[(phase + i) % length].r, afterRedo[i].r);
+	}
+}
+// M4: ordinary Undo/Redo on a deliberately stopped phrase must stay stopped and
+// silent until an explicit Start, then resume the exact expected version.
+TEST(LoopBindings, ordinaryUndoRedoWhileStoppedStayStoppedUntilExplicitStart) {
+	Fixture f;
+	f.start();
+	auto settings = f.model->engine().settings();
+	settings.tracks[0].source = Source::Stereo;
+	CHECK_EQUAL(int(Status::Ok), int(f.model->dispatch(Command::configure(settings))));
+	constexpr FrameIndex length = 64;
+	std::vector<Frame> initial(length);
+	for (FrameIndex i = 0; i < length; ++i)
+		initial[i] = {int32_t(i * 7 + 3), -int32_t(i * 11 + 5)};
+	f.recordExact(0, initial);
+	f.backingWindow(0, 5);
+	const std::array<Frame, 7> dub = {{{11, -13}, {17, -19}, {23, -29}, {31, -37}, {41, -43}, {47, -53}, {59, -61}}};
+	f.overdubExact(0, dub);
+	std::vector<Frame> expectedAfter = initial;
+	for (FrameIndex k = 0; k < dub.size(); ++k) {
+		auto& frame = expectedAfter[(5 + k) % length];
+		frame = {frame.l + dub[k].l, frame.r + dub[k].r};
+	}
+	CHECK_EQUAL(int(Status::Ok), int(f.model->dispatch({CommandType::TransportStop})));
+	CHECK_FALSE(f.model->engine().state(0).playing);
+	HistoryTarget target{};
+	CHECK_EQUAL(int(Status::Ok), int(f.model->historyTarget(0, false, target)));
+	RestoreId undoId{};
+	CHECK_EQUAL(int(Status::Ok), int(f.model->requestHistoryNavigation(target, undoId)));
+	CHECK_EQUAL(int(HistoryNavigationState::Complete), int(f.driveNavigation(undoId).state));
+	CHECK_FALSE(f.model->engine().state(0).playing);
+	const auto silentUndo = f.backingWindow(0, 8);
+	for (const auto& frame : silentUndo) {
+		CHECK_EQUAL(0, frame.l);
+		CHECK_EQUAL(0, frame.r);
+	}
+	HistoryTarget redo{};
+	CHECK_EQUAL(int(Status::Ok), int(f.model->historyTarget(0, true, redo)));
+	RestoreId redoId{};
+	CHECK_EQUAL(int(Status::Ok), int(f.model->requestHistoryNavigation(redo, redoId)));
+	CHECK_EQUAL(int(HistoryNavigationState::Complete), int(f.driveNavigation(redoId).state));
+	CHECK_FALSE(f.model->engine().state(0).playing);
+	const auto silentRedo = f.backingWindow(0, 8);
+	for (const auto& frame : silentRedo) {
+		CHECK_EQUAL(0, frame.l);
+		CHECK_EQUAL(0, frame.r);
+	}
+	CHECK_EQUAL(int(Status::Ok), int(f.model->dispatch({CommandType::StartAll})));
+	CHECK(f.model->engine().state(0).playing);
+	const auto restarted = f.backingWindow(0, 8);
+	for (FrameIndex i = 0; i < 8; ++i) {
+		CHECK_EQUAL(expectedAfter[i].l, restarted[i].l);
+		CHECK_EQUAL(expectedAfter[i].r, restarted[i].r);
 	}
 }
