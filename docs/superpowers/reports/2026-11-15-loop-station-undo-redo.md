@@ -7,7 +7,8 @@ Documented and host-verified the approved selected-track layer undo/redo feature
 confirmed two-press shortcuts, layer/empty semantics, cancellation and fenced history, and save/load
 behaviour; the misleading one-press undo text is removed. No production or test code changed in this
 task; no schema or memory-profile change is introduced. The final whole-branch review had not been run
-when this report was written.
+when this report was written. The earlier Task 1–6 sections below are retained as historical provenance;
+the consolidated final-wave section later in this report supersedes their current-state counts and verdicts.
 
 ## Documentation changes
 
@@ -30,7 +31,7 @@ without becoming durable; a loaded checkpoint is one volatile base recording wit
 live snapshot taken before navigation stays readable through a bounded owned reference. Browser-demo
 limitations are unchanged.
 
-## Host verification (fresh)
+## Host verification (historical Task 1–6 evidence)
 
 Bundled toolchain PATH was used throughout; raw logs are in
 `.superpowers/sdd/2026-11-15-loop-station-undo-redo/verification/`.
@@ -46,7 +47,8 @@ git diff --check
 - Registered suites: **27/27 pass** (final `verification/ctest.log`: 11.70 s), including all allocation
   guards, production probes, `LoopStationTests`, `LoopStationDemoContract`, OLED suites and
   `LoopFatFsAllocationTests`. (An earlier run of the same suite logged 11.52 s.)
-- `LoopStationTests`: **499 tests, 499 ran, 3,907,835 checks, 0 ignored, 0 filtered**.
+- `LoopStationTests`: historical **499 tests, 499 ran, 3,907,835 checks, 0 ignored, 0 filtered**
+  (pre-final-wave; current count is in the consolidated final-wave section).
 - `selection_preview_test.py`: **7/7 pass**.
 - `git diff --check` (including staged): clean.
 
@@ -54,7 +56,7 @@ Observed nonfatal warnings were not hidden and not cleaned up: the Debug firmwar
 `-Wstack-usage` at `src/deluge/deluge.cpp:409` and the RWX LOAD-segment link warning; the Release build
 logs `-Wnull-dereference` at `src/deluge/gui/menu_item/cpu/voice_usage.h:90` and the same RWX warning.
 
-## Sanitizer verification (separate configuration)
+## Sanitizer verification (historical Task 1–6 configuration)
 
 The **final** sanitizer configuration was fully offline: every FetchContent package was pointed at an
 already-present `build/tests/_deps/*-src` source and `FETCHCONTENT_FULLY_DISCONNECTED=ON` was set.
@@ -89,8 +91,9 @@ recognized and lets CMake fetch the package. Build PASS; **6/6 tests pass** (9.6
 scope (`tests/loop_station/CMakeLists.txt`): `-fsanitize=undefined -fno-sanitize-recover=all` is applied
 to `LoopStationTests`, `LoopGestureAllocationGuard`, `LoopHistorySnapshotAllocationGuard` and
 `LoopFatFsAllocationTests` only; `LoopPageAllocationGuard` and `LoopAudioAllocationGuard` are built and run
-in the same tree but are **not** UBSan-instrumented. The instrumented `LoopStationTests` reports 499/499
-tests and 3,907,835 checks with no sanitizer report.
+in the same tree but are **not** UBSan-instrumented. The historical instrumented `LoopStationTests`
+reports 499/499 tests and 3,907,835 checks with no sanitizer report; the final-wave run reports 531/531
+and 3,910,753 checks in the section above.
 
 Observed nonfatal UBSan-tree warnings: ETL's invalid git-derived version during configure
 (`verification/ubsan-configure.log`), `-Wenum-compare` at `src/fatfs/ff.c:5432`, and
@@ -129,7 +132,7 @@ fix-wave checkpoint are historical slice evidence, not substitutes for these fin
 | N5 | `a9452ab6` | Extracted FirmwareOwner restore-mask methods prove two-slot handoff/failure/cancellation; real model test adds one-boundary Undo and edit cancellation | `LoopStationForegroundServiceProbe`; `LoopBindings.AcceptedCheckpointRestoreSurvivesViewExitButNotTeardown` |
 | N6 | `a9452ab6` | Two released BACK edges accept a real request, then foreground NoMemory is correlated on both displays without false completion | `LoopSettingsDisplay.AcceptedForegroundFailureCorrelatesOnBothDisplays` |
 
-Final verification at HEAD `66c197fa`:
+Final verification at product HEAD `a9452ab6`:
 
 ```bash
 # Bundled toolchain PATH was used throughout.
@@ -215,7 +218,9 @@ regenerated for this documentation task.
   `LoopPages retiredRecordIsNotAPublicationCandidate` and
   `LoopSnapshots RetiredPinnedSourceIsNotAPublicationCandidate`.
 
-Final aggregate after all rounds: `LoopStationTests` 499/499, 3,907,835 checks; registered CTest 27/27.
+Historical Task 1–6 aggregate before the consolidated final wave: `LoopStationTests` 499/499,
+3,907,835 checks; registered CTest 27/27. The current final totals are 531/531, 3,910,753 checks and
+27/27 CTest in the consolidated section above.
 
 Concrete ownership/allocation bounds (from source, unchanged by this feature):
 
@@ -231,9 +236,13 @@ Concrete ownership/allocation bounds (from source, unchanged by this feature):
 - The history-snapshot allocation guard drives 100,000 boundaries; the firmware foreground service budget
   is `serviceHistoryNavigation(128)` frames per tick.
 
-## Firmware build
+## Firmware build (historical Task 1–6 evidence)
 
-`DBT_NO_SYNC=1 ./dbt build Debug` compiled all 318 steps, including every new loop-station and
+This subsection preserves the earlier Task 1–6 firmware evidence. The current final-wave Release/Debug
+results (330 compile steps, current BIN/hash/version and the same known Debug link blocker) are recorded in
+the consolidated section above.
+
+`DBT_NO_SYNC=1 ./dbt build Debug` compiled all 318 historical steps, including every new loop-station and
 `loop_station_view.cpp` object, but the **final link failed** with undefined newlib syscall stubs
 (`_close`, `_fstat`, `_isatty`, `_lseek`, `_read`, `_sbrk`, `_write`). No Debug artifact exists.
 
@@ -244,12 +253,13 @@ libstdc++'s exception/terminate runtime, which many baseline objects already use
 links differ only by `-g` (and `-DNDEBUG` at compile), and the arm-none-eabi debug C library variant lacks
 the syscall/retarget objects. No linker configuration was modified.
 
-Supplementary `DBT_NO_SYNC=1 ./dbt build Release` links successfully, confirming the feature object set is
-link-clean under the project's working configuration:
+Historical supplementary `DBT_NO_SYNC=1 ./dbt build Release` linked successfully:
 
-- BIN `build/Release/deluge-v1_3_0-dev+2026_11_14-43f7427a.bin`, 1,944,940 bytes, sha256
+- Historical BIN `build/Release/deluge-v1_3_0-dev+2026_11_14-43f7427a.bin`, 1,944,940 bytes, sha256
   `a641159eb072ff9fb2bb028caa9045b4b625994610baeb72185a4f94f214a757`; embedded version
   `1.3.0-dev-d854facc-dirty`; ELF text 1,874,080, data 70,832, BSS 402,700. Not flashed.
+- Current final BIN/version/hash and the 330-step Debug compile result are in the consolidated final-wave
+  section above.
 
 ## Hardware acceptance — NOT_RUN
 
@@ -279,5 +289,5 @@ the Release link. The two confirmation paths are listed separately because they 
 
 ## Outstanding acceptance
 
-Physical Deluge verification remains **NOT_RUN**. The controller's final whole-branch review (Sol xhigh)
-has not yet run; deferred Minor items from Tasks 1–6 remain for that triage.
+Physical Deluge verification remains **NOT_RUN**. The controller's final scoped review is assigned to
+GPT-6.1 Terra high and has not yet run; no final-review-passed claim is made.
