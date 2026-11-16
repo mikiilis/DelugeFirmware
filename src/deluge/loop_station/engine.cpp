@@ -167,8 +167,11 @@ Status Engine::execute(SlotId slot, PendingAction action, SampleClock now, const
 		s.admissionDeferred = false;
 		// Never reclaim here: service() also runs in the audio callback. If optional
 		// history owns the pages, retain the accepted press and let the foreground
-		// owner reclaim and retry through serviceCaptureAdmission().
-		if (!audio_.canBeginInitialCapture(slot, frames)) {
+		// owner reclaim and retry through serviceCaptureAdmission(). A manual take
+		// also waits for the participant-aware cushion instead of consuming the only
+		// page and capacity-completing at the next render boundary.
+		const bool manualHeadroomShort = frames == 0 && audio_.manualAdmissionNeedsReclamation();
+		if (manualHeadroomShort || !audio_.canBeginInitialCapture(slot, frames)) {
 			if (!audio_.canEverAdmitInitialCapture(frames))
 				return fail(slot, Status::NoMemory); // Genuinely impossible, not reclaimable.
 			s.admissionDeferred = true;

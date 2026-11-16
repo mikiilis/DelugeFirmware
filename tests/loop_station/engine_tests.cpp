@@ -1,4 +1,5 @@
 #include "CppUTest/TestHarness.h"
+#include "deluge/loop_station/audio_adapter.h"
 #include "deluge/loop_station/engine.h"
 #include "deluge/loop_station/epochs.h"
 #include "deluge/loop_station/history.h"
@@ -22,6 +23,8 @@ TEST_GROUP(LoopEngine) {
 	GestureRollback rollback{pool};
 	ResidentAudio audio{pool, rollback};
 	Engine engine{audio, rollback};
+	Transpose transpose;
+	AudioAdapter adapter{engine, audio, pool, transpose};
 	ClockMap clock;
 	void setup() {
 		backing.resize(400 * kPageBytes);
@@ -959,6 +962,8 @@ struct CaptureAdmissionFixture {
 	History history{pool, rollback};
 	ResidentAudio audio{pool, rollback};
 	Engine engine{audio, rollback};
+	Transpose transpose;
+	AudioAdapter adapter{engine, audio, pool, transpose};
 	ClockMap clock;
 	void setup(unsigned pages, unsigned historyPages) {
 		backing.resize(pages * kPageBytes);
@@ -968,6 +973,8 @@ struct CaptureAdmissionFixture {
 		CHECK(Status::Ok == rollback.initialize(scratch));
 		CHECK(Status::Ok == history.initialize(historyStorage));
 		audio.setWriteObservers(&history, nullptr);
+		for (SlotId slot = 0; slot < kTrackCount; ++slot)
+			CHECK(Status::Ok == transpose.prepare(slot));
 		auto settings = defaultSettings();
 		settings.startAction.mode = settings.stopAction.mode = ActionMode::Immediate;
 		CHECK(Status::Ok == engine.dispatch(Command::configure(settings), 0, clock));
@@ -1144,7 +1151,8 @@ TEST(LoopCaptureAdmission, temporaryRecordExhaustionReclaimsOptionalHistory) {
 	CHECK_FALSE(f.pool.hasCaptureRecord(0));
 	CHECK_FALSE(f.pool.canBeginCapture(0, 0));
 	// The accepted press is preserved, not rejected before foreground reclamation.
-	CHECK(Status::Ok == f.engine.dispatch({CommandType::Press, 0}, 100, f.clock));
+	const auto pressStatus = f.engine.dispatch({CommandType::Press, 0}, 100, f.clock);
+	CHECK_EQUAL(int(Status::Ok), int(pressStatus));
 	auto state = f.engine.state(0);
 	CHECK(state.pending);
 	CHECK(PendingAction::Initial == state.action);
@@ -1157,38 +1165,66 @@ TEST(LoopCaptureAdmission, temporaryRecordExhaustionReclaimsOptionalHistory) {
 	CHECK_FALSE(state.pending);
 	CHECK_EQUAL(int(Status::Ok), int(state.error));
 }
-// N2: admission builds bounded page headroom for a manual take, and the
-// foreground cushion keeps an already-admitted capture running across pages.
+// N2: the real dispatch path defers a manual take until foreground history
+// reclamation funds a participant-aware cushion, then the adapter keeps it
+// running across multiple page boundaries.
 TEST(LoopCaptureAdmission, manualCaptureMaintainsHeadroomAcrossMultiplePages) {
 	CaptureAdmissionFixture f;
-	f.setup(5, 16);
+	f.setup(3, 16);
 	f.makeRetainedInitial(1, 2 * CaptureAdmissionFixture::perPage);
-	f.makeRetainedInitial(2, 2 * CaptureAdmissionFixture::perPage);
 	CHECK_EQUAL(1, f.pool.freePages());
-	Status admitted = Status::Busy;
-	for (unsigned i = 0; i < 8 && admitted == Status::Busy; ++i)
-		admitted = f.history.reclaimForCapture(0, 0);
-	CHECK_EQUAL(int(Status::Ok), int(admitted));
-	CHECK(f.pool.freePages() >= kManualCaptureHeadroomPages);
-	CHECK(Status::Ok == f.audio.beginInitial(0, 0));
-	auto renderPage = [&] {
-		CHECK(Status::Ok == f.pool.beginRenderRound(f.audio.manualParticipants()));
-		std::vector<Frame> input(CaptureAdmissionFixture::perPage, Frame{1, -1});
-		std::vector<Frame> output(CaptureAdmissionFixture::perPage);
-		f.audio.render(0, input, output);
-	};
-	renderPage();
-	renderPage();
-	CHECK_EQUAL(2 * CaptureAdmissionFixture::perPage, f.audio.recordedInitialFrames(0));
-	CHECK(f.pool.freePages() < kManualCaptureHeadroomPages);
-	Status headroom = Status::Busy;
-	for (unsigned i = 0; i < 8 && headroom == Status::Busy; ++i)
-		headroom = f.history.ensureCaptureHeadroom(0, kManualCaptureHeadroomPages);
-	CHECK_EQUAL(int(Status::Ok), int(headroom));
-	CHECK(f.pool.freePages() >= kManualCaptureHeadroomPages);
-	renderPage();
+	CHECK(Status::Ok == f.engine.dispatch({CommandType::Press, 0}, 100, f.clock));
+	auto state = f.engine.state(0);
+	CHECK(state.pending);
+	CHECK_FALSE(state.capture);
+	CHECK_EQUAL(int(Status::Ok), int(state.error));
+	for (unsigned i = 0; i < 8 && !f.engine.state(0).capture; ++i)
+		f.engine.serviceCaptureAdmission(100, f.clock);
+	state = f.engine.state(0);
+	CHECK(state.capture);
+	CHECK_FALSE(state.pending);
+	CHECK(f.pool.freePages() >= 3); // one page per participant plus cushion
+	std::array<Frame, 128> input, output;
+	input.fill({1, -1});
+	SampleClock now = 100;
+	for (unsigned window = 0; window < 12; ++window) {
+		size_t count = input.size();
+		f.adapter.finalizeWindow(now, count, f.clock);
+		f.adapter.renderDry(0, std::span(input).first(count), std::span(output).first(count));
+		now += count;
+	}
+	state = f.engine.state(0);
+	CHECK(state.capture);
 	CHECK_EQUAL(3 * CaptureAdmissionFixture::perPage, f.audio.recordedInitialFrames(0));
-	CHECK(Status::Ok == f.audio.setCaptureGate(0, false));
+	CHECK_EQUAL(0, f.pool.freePages());
+}
+// N2: three concurrent real manual participants share the bounded headroom and
+// each must receive a page grant instead of the later tracks capacity-completing.
+TEST(LoopCaptureAdmission, concurrentManualCapturesAllProgressWithParticipantHeadroom) {
+	CaptureAdmissionFixture f;
+	f.setup(4, 16);
+	f.makeRetainedInitial(3, 3 * CaptureAdmissionFixture::perPage);
+	CHECK_EQUAL(1, f.pool.freePages());
+	for (SlotId slot = 0; slot < 3; ++slot) {
+		CHECK(Status::Ok == f.engine.dispatch({CommandType::Press, slot}, 100, f.clock));
+		for (unsigned i = 0; i < 8 && !f.engine.state(slot).capture; ++i)
+			f.engine.serviceCaptureAdmission(100, f.clock);
+		CHECK(f.engine.state(slot).capture);
+	}
+	std::array<Frame, 128> input, output;
+	input.fill({2, -2});
+	SampleClock now = 100;
+	for (unsigned window = 0; window < 4; ++window) {
+		size_t count = input.size();
+		f.adapter.finalizeWindow(now, count, f.clock);
+		for (SlotId slot = 0; slot < 3; ++slot)
+			f.adapter.renderDry(slot, std::span(input).first(count), std::span(output).first(count));
+		now += count;
+	}
+	for (SlotId slot = 0; slot < 3; ++slot) {
+		CHECK(f.engine.state(slot).capture);
+		CHECK_EQUAL(1 * CaptureAdmissionFixture::perPage, f.audio.recordedInitialFrames(slot));
+	}
 }
 // N3: a deferred Initial must not hide another slot's future quantized Start in
 // the audio adapter's exact sample-boundary selection.

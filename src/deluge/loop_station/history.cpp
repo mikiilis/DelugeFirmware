@@ -92,7 +92,7 @@ bool History::hasReclaimableBoundary() const {
 	return false;
 }
 
-Status History::reclaimForCapture(SlotId slot, FrameIndex frames) {
+Status History::reclaimForCapture(SlotId slot, FrameIndex frames, uint32_t minimumFreePages) {
 	if (!validSlot(slot))
 		return Status::Invalid;
 	if (!pages_.ready()) {
@@ -109,7 +109,7 @@ Status History::reclaimForCapture(SlotId slot, FrameIndex frames) {
 	// optional history can supply more, admission also builds a small cushion so
 	// the next page boundary does not strand an already-admitted take.
 	const uint32_t needed = frames ? pagesForCapture(frames) : 1;
-	const uint32_t desired = frames ? needed : std::max(needed, kManualCaptureHeadroomPages);
+	const uint32_t desired = frames ? needed : std::max(needed, minimumFreePages);
 	// Descriptor exhaustion is final once the identity sequence itself is spent;
 	// capture still proceeds untracked rather than being refused for optional history.
 	const bool descriptorsPossible = sequence_ != std::numeric_limits<Generation>::max();
@@ -158,8 +158,8 @@ Status History::reclaimForCapture(SlotId slot, FrameIndex frames) {
 	return Status::Ok;
 }
 
-Status History::ensureCaptureHeadroom(SlotId slot, uint32_t minimumFreePages) {
-	if (!validSlot(slot) || minimumFreePages == 0)
+Status History::ensureCaptureHeadroom(uint32_t minimumFreePages) {
+	if (minimumFreePages == 0)
 		return Status::Ok;
 	// Optional history owns nothing to reclaim, and no work is needed when the
 	// cushion already exists.

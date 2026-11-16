@@ -28,6 +28,9 @@ public:
 	// Bounded foreground admission for a new initial take. Delegates to the
 	// installed History observer; without history it cannot be resource-starved.
 	Status prepareInitialCapture(SlotId slot, FrameIndex frames);
+	// A new manual participant must wait for foreground reclamation when the
+	// participant-aware cushion cannot yet be funded by optional history.
+	bool manualAdmissionNeedsReclamation() const;
 	// Constant-time, allocation-free admission preflight used on every path.
 	bool canBeginInitialCapture(SlotId slot, FrameIndex frames) const { return pool_.canBeginCapture(slot, frames); }
 	bool canEverAdmitInitialCapture(FrameIndex frames) const { return pool_.captureSizePossible(frames); }

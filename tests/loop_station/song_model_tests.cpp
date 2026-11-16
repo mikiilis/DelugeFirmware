@@ -4,6 +4,7 @@
 #include "deluge/loop_station/song_model.h"
 #include "mocks/audio_clip.h"
 #include "mocks/storage.h"
+#include "navigation/checkpoint_owner_probe_support.h"
 #include <cstdlib>
 #include <cstring>
 #include <functional>
@@ -1831,6 +1832,100 @@ TEST(LoopBindings, AcceptedCheckpointRestoreSurvivesViewExitButNotTeardown) {
 	loaded.model->requestRelease();
 	CHECK_EQUAL(int(Status::Stale), int(loaded.driveRestore(second, 512)));
 	CHECK_FALSE(loaded.model->checkpointRestorePending(0));
+}
+
+// N5: the real extracted FirmwareOwner mask drives an actual checkpoint read
+// through SongModel, survives root exit/return, restores exact audio and one
+// Undo boundary, and is canceled by a real edit/teardown.
+TEST(LoopBindings, FirmwareOwnerCheckpointMaskSurvivesRealReadExitAndEdit) {
+	archive_mock::storage = {};
+	ArchiveCandidate checkpoint{};
+	{
+		FatFsArchiveStorage writerStorage;
+		Fixture source;
+		source.model->archive().setStorage(&writerStorage);
+		source.start();
+		source.record(0, {256, -256});
+		CHECK(Status::Ok == source.model->requestArchive(0));
+		for (unsigned i = 0; i < 20 && source.model->archive().state(0) != ArchiveState::ReadyForPublication; ++i)
+			source.model->serviceArchive(4096);
+		CHECK(source.model->archive().take(0, checkpoint));
+	}
+
+	Manifest manifest{};
+	manifest.generation = 1;
+	manifest.phraseCount = 1;
+	manifest.phrases[0].slot = checkpoint.slot;
+	manifest.phrases[0].identity = checkpoint.identity;
+	manifest.phrases[0].frames = checkpoint.frames;
+	manifest.phrases[0].path = checkpoint.path;
+	PersistenceState persistence;
+	CHECK(Status::Ok == persistence.installLoaded(defaultSettings(), manifest));
+	CHECK(Status::Ok == persistence.prepareLoadAdmission(MemoryProfile::Preferred));
+	CHECK(persistence.loadAdmission().admitted[0]);
+
+	FatFsArchiveStorage readerStorage;
+	Fixture loaded;
+	loaded.model->archive().setStorage(&readerStorage);
+	loaded.start();
+	CHECK(Status::Ok
+	      == readerStorage.registerPublishedFile(checkpoint.slot, checkpoint.identity, checkpoint.path.data()));
+	CheckpointOwnerProbe owner(*loaded.model);
+	owner.beginCheckpointRestores(persistence);
+	CHECK_EQUAL(1, owner.restoreMask);
+	CHECK(owner.activeRestore.valid());
+	CHECK_EQUAL(0, owner.activeRestoreSlot);
+
+	// Partial real checkpoint read, then a harmless root exit and return. The
+	// accepted owner restore must remain active while model foreground work runs.
+	loaded.model->serviceArchive(50);
+	CHECK(loaded.model->checkpointRestorePending(0));
+	CHECK(Status::Ok == loaded.model->requestViewExit());
+	CHECK(owner.activeRestore.valid());
+	for (unsigned i = 0; i < 200 && owner.activeRestore.valid(); ++i) {
+		loaded.model->serviceArchive(4096);
+		owner.serviceCheckpointRestore();
+	}
+	CHECK_EQUAL(0, owner.restoreMask);
+	CHECK_FALSE(owner.activeRestore.valid());
+	CHECK(loaded.model->engine().state(0).hasPhrase);
+	CHECK_FALSE(loaded.model->engine().state(0).playing);
+	CHECK_EQUAL(checkpoint.frames, loaded.model->engine().state(0).phraseFrames);
+	CHECK(Status::Ok == loaded.model->dispatch({CommandType::StartAll}));
+	loaded.expectUniformBacking(0, checkpoint.frames, {256, 256});
+	CHECK_EQUAL(int(HistoryNavigationState::Complete), int(loaded.undo(0, false).state));
+	CHECK_FALSE(loaded.model->engine().state(0).hasPhrase);
+	CHECK_FALSE(loaded.model->canUndo(0));
+	CHECK(loaded.model->canRedo(0));
+	CHECK_EQUAL(int(HistoryNavigationState::Complete), int(loaded.undo(0, true).state));
+	CHECK(loaded.model->engine().state(0).hasPhrase);
+
+	// A real edit cancels a new accepted owner restore before any stale publish.
+	CHECK(Status::Ok == loaded.model->dispatch({CommandType::StartAll}));
+	owner.beginCheckpointRestores(persistence);
+	CHECK(owner.activeRestore.valid());
+	loaded.model->serviceArchive(50);
+	CHECK(loaded.model->checkpointRestorePending(0));
+	CHECK(Status::Ok == loaded.model->dispatch({CommandType::Press, 0}));
+	for (unsigned i = 0; i < 100 && owner.activeRestore.valid(); ++i) {
+		loaded.model->serviceArchive(4096);
+		loaded.model->serviceRetirement();
+		owner.serviceCheckpointRestore();
+	}
+	CHECK_EQUAL(0, owner.restoreMask);
+	CHECK_FALSE(owner.activeRestore.valid());
+	CHECK_FALSE(loaded.model->checkpointRestorePending(0));
+	loaded.host.time += GestureRollback::kProvisionalSamples;
+	CHECK(Status::Ok == loaded.model->dispatch({CommandType::Press, 0}));
+	CHECK_FALSE(loaded.model->engine().state(0).capture);
+
+	// Teardown cancels a third accepted owner restore too.
+	owner.beginCheckpointRestores(persistence);
+	CHECK(owner.activeRestore.valid());
+	loaded.model->requestRelease();
+	owner.serviceCheckpointRestore();
+	CHECK_EQUAL(0, owner.restoreMask);
+	CHECK_FALSE(owner.activeRestore.valid());
 }
 
 // Undoing the only layer to empty and saving must omit the old audio checkpoint

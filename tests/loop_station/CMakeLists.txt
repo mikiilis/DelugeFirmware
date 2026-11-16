@@ -180,8 +180,20 @@ add_custom_command(
     VERBATIM
 )
 
+set(CHECKPOINT_OWNER_PROBE "${CMAKE_CURRENT_BINARY_DIR}/generated/checkpoint_owner_probe.cpp")
+add_custom_command(
+    OUTPUT "${CHECKPOINT_OWNER_PROBE}"
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/navigation/generate_checkpoint_owner_probe.py"
+            --firmware "${CMAKE_CURRENT_SOURCE_DIR}/../../src/deluge/loop_station/song_model_firmware.cpp"
+            --support "${CMAKE_CURRENT_SOURCE_DIR}/navigation/checkpoint_owner_probe_support.h"
+            --output "${CHECKPOINT_OWNER_PROBE}"
+    DEPENDS navigation/generate_checkpoint_owner_probe.py navigation/checkpoint_owner_probe_support.h
+            ../../src/deluge/loop_station/song_model_firmware.cpp
+    VERBATIM
+)
 add_executable(LoopStationTests
     "${CMAKE_CURRENT_BINARY_DIR}/generated/real_canvas.cpp"
+    "${CHECKPOINT_OWNER_PROBE}"
     ../../src/deluge/gui/fonts/fonts.c
     "${LOOP_UI_PROBE}"
     "${STUTTER_LIFECYCLE_PROBE}"
