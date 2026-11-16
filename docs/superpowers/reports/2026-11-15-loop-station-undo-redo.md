@@ -96,12 +96,12 @@ Observed nonfatal UBSan-tree warnings: ETL's invalid git-derived version during 
 (`verification/ubsan-configure.log`), `-Wenum-compare` at `src/fatfs/ff.c:5432`, and
 `-Wasm-operand-widths` at `src/deluge/util/functions.h:392,398` during the build.
 
-## Final consolidated fix wave (product HEAD 66c197fa)
+## Final consolidated fix wave (product HEAD a9452ab6)
 
-The final review findings from `final-review.md` were implemented in this same wave. Final product state is
-`66c197fa` on `feature/loop-station-implementation`; the reviewed-wave base is
-`2517e57c688fe8c976dbbf422d45902af4730e74`. Evidence commits `42358d8b` (this report) and `63610f42`
-(removal of the accidentally tracked scratch report) follow with no product/test changes. The committed
+The final review findings from `final-review.md` and the scoped re-review findings N1–N6 were implemented in
+this same wave. Final product state is `a9452ab6` on `feature/loop-station-implementation`; the reviewed-wave base is
+`2517e57c688fe8c976dbbf422d45902af4730e74`. Evidence/scratch-removal commits after the product fix follow
+without product/test changes. The committed
 evidence below is the final suite; the named RED/GREEN counts quoted in earlier sections and in the
 fix-wave checkpoint are historical slice evidence, not substitutes for these final reruns.
 
@@ -122,6 +122,12 @@ fix-wave checkpoint are historical slice evidence, not substitutes for these fin
 | M5 | `66c197fa` | Real model/view NoMemory under actual detached-record pressure (no fake status) | `LoopSettingsDisplay.RealDetachedPressureReportsNoMemoryAndPreservesCapture` |
 | M6 | `66c197fa` | Evidence-only corrections (`LoopAudio`, initial Task 2 ownership, 444/464 totals) | This report |
 | M7 | `66c197fa` | Identity-current confirmation separately rechecks eligibility and replaces stale instruction with the honest status | `LoopSettingsDisplay.EligibilityLossReplacesCurrentConfirmationWithHonestReason` |
+| N1 | `a9452ab6` | Temporary PagePool record exhaustion is reclaimed in bounded foreground for an empty target; only structural size impossibility fails immediately | `LoopCaptureAdmission.temporaryRecordExhaustionReclaimsOptionalHistory` |
+| N2 | `a9452ab6` | Admission builds bounded manual page headroom; foreground service maintains it without stopping the capture or working in the audio callback | `LoopCaptureAdmission.manualCaptureMaintainsHeadroomAcrossMultiplePages` |
+| N3 | `a9452ab6` | Deferred Initial is excluded from audio deadline selection so another track's exact future boundary is preserved | `LoopCaptureAdmission.deferredAdmissionDoesNotMaskAnotherSlotFutureDeadline` |
+| N4 | `a9452ab6` | Save-between-Undo-and-Redo proves nonuniform stereo archive data, revision separation, and eventual pin/page reclamation | `LoopBindings.SaveStartedBetweenUndoAndRedoPublishesAfterRetirement` |
+| N5 | `a9452ab6` | Extracted FirmwareOwner restore-mask methods prove two-slot handoff/failure/cancellation; real model test adds one-boundary Undo and edit cancellation | `LoopStationForegroundServiceProbe`; `LoopBindings.AcceptedCheckpointRestoreSurvivesViewExitButNotTeardown` |
+| N6 | `a9452ab6` | Two released BACK edges accept a real request, then foreground NoMemory is correlated on both displays without false completion | `LoopSettingsDisplay.AcceptedForegroundFailureCorrelatesOnBothDisplays` |
 
 Final verification at HEAD `66c197fa`:
 
@@ -142,27 +148,30 @@ DBT_NO_SYNC=1 ./dbt build Release
 DBT_NO_SYNC=1 ./dbt build Debug
 ```
 
-- Complete host build: PASS (exit 0). CTest: **27/27 pass**, 12.70 s, including OLED suites,
+- Complete host build: PASS (exit 0). CTest: **27/27 pass**, 12.78 s, including OLED suites,
   target-stack/physical-button/modal-handoff/save-load handoff/foreground/encoder/seven-segment probes,
   `LoopStationTests`, `LoopStationDemoContract`, all allocation guards and `LoopFatFsAllocationTests`.
-- `LoopStationTests`: **527 tests, 527 ran, 3,910,043 checks, 0 ignored, 0 filtered**, 5.29 s.
+- `LoopStationTests`: **531 tests, 531 ran, 3,910,753 checks, 0 ignored, 0 filtered**, 4.79 s.
 - `selection_preview_test.py`: **7/7 pass**.
 - `git diff --check` (working tree and index): clean.
 - Separate UBSan configuration at `build/tests-loop-ubsan` (existing offline deps, no downloads):
-  build PASS; **6/6 pass**, 10.91 s. Instrumented `LoopStationTests`: 527/527, 3,910,043 checks, no
+  build PASS; **6/6 pass**, 10.69 s. Instrumented `LoopStationTests`: 531/531, 3,910,753 checks, no
   sanitizer report. Instrumentation remains limited by `tests/loop_station/CMakeLists.txt` to
   `LoopStationTests`, `LoopGestureAllocationGuard`, `LoopHistorySnapshotAllocationGuard` and
   `LoopFatFsAllocationTests`; the page/audio allocation guards are built and run in that tree but are not
   UBSan-instrumented.
 - Release firmware: `DBT_NO_SYNC=1 ./dbt build Release` PASS; BIN
-  `build/Release/deluge-v1_3_0-dev+2026_11_14-43f7427a.bin`, 1,946,960 bytes, sha256
-  `7cecf0cc06ac2d390c787a4a4b59f3706feb949f18f1f55ba90397d55b7c6a49`; embedded version
-  `1.3.0-dev-66c197fa-dirty`; ELF text 1,876,076, data 70,832, BSS 402,708. Not flashed.
+  `build/Release/deluge-v1_3_0-dev+2026_11_14-43f7427a.bin`, 1,947,248 bytes, sha256
+  `91663078c4a4370643b0ef4b0894da79a674116154bb449bdc1cc583ebf73764`; embedded version
+  `1.3.0-dev-a9452ab6-dirty`; ELF text 1,876,388, data 70,832, BSS 402,708. Not flashed.
 - Debug: all 330 build steps compile (including every current loop-station and view object), then the
   **known baseline link failure** reproduces: undefined `_close`, `_fstat`, `_isatty`, `_lseek`, `_read`,
   `_sbrk`, `_write`. No Debug artifact exists; no linker/toolchain change was made.
 - Hardware acceptance remains **NOT_RUN**; no host probe or Release link is treated as physical acceptance.
 - No final-review-passed claim is made here. The controller's single GPT-6.1 Terra review is still pending.
+- Re-review RED for N1–N3 (temporary revert of only the record/headroom/deadline changes) produced 3 failures
+  in 219 checks; the fixes were restored. N4–N6 are coverage refinements over the already-correct I6/I8
+  behavior. Final re-review after this round remains pending.
 
 ## Named TDD evidence, fix rounds and bounds (from this plan's task reports)
 
